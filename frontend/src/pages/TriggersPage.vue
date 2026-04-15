@@ -1,0 +1,734 @@
+<script setup lang="ts">
+import { ref, onMounted, watch, nextTick, computed } from "vue";
+import { useRouter } from "vue-router";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
+import VaultIcon from "@/components/icons/VaultIcon.vue";
+import {
+  Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown,
+} from "lucide-vue-next";
+
+const triggerRouter = useRouter();
+type SourceType = "dynamodb" | "s3";
+const sources = [
+  { type: "dynamodb" as SourceType, label: "DynamoDB", icon: Database, enabled: true },
+  { type: "s3" as SourceType, label: "S3 Bucket", icon: HardDrive, enabled: false, tooltip: "Available in a future release" },
+];
+
+// Toast
+const toastMessage = ref("");
+const toastError = ref(false);
+function showToast(msg: string, isError = false) {
+  toastMessage.value = msg; toastError.value = isError;
+  setTimeout(() => { toastMessage.value = ""; }, 4000);
+}
+
+// View + wizard state
+const view = ref<"list" | "wizard">("list");
+const stepIndex = ref(0);
+watch(stepIndex, () => window.scrollTo({ top: 0, behavior: "smooth" }));
+const selectedSource = ref<SourceType | null>(null);
+
+// DynamoDB
+interface DynamoTable { name: string; status: string; itemCount?: number; sizeBytes?: number; keySchema?: { name: string; type: string }[]; streamEnabled: boolean; streamViewType?: string | null; streamArn?: string | null; }
+const tables = ref<DynamoTable[]>([]);
+const loading = ref(false);
+const selectedTable = ref<DynamoTable | null>(null);
+const showCreate = ref(false);
+const newTableName = ref(""); const newPartitionKey = ref(""); const newPartitionKeyType = ref("S");
+const newSortKey = ref(""); const newSortKeyType = ref("S"); const creating = ref(false);
+const enablingStream = ref("");
+
+// SNS
+interface SnsTopic { arn: string; name: string; }
+const topics = ref<SnsTopic[]>([]);
+const loadingTopics = ref(false);
+const selectedTopic = ref<SnsTopic | null>(null);
+const showCreateTopic = ref(false);
+const newTopicName = ref(""); const creatingTopic = ref(false);
+
+// SQS
+interface SqsQueue { name: string; url: string; arn: string | null; messageCount: number; }
+const queues = ref<SqsQueue[]>([]);
+const loadingQueues = ref(false);
+const selectedQueue = ref<SqsQueue | null>(null);
+const showCreateQueue = ref(false);
+const newQueueName = ref(""); const creatingQueue = ref(false); const createDlq = ref(true); const maxReceiveCount = ref(3);
+
+// Lambda + templates
+interface LambdaFunc { name: string; runtime: string; handler: string; arn: string; templateId?: string | null; outdated?: boolean; }
+interface Template { id: string; name: string; description: string; envVars: string[]; hash: string; }
+const functions = ref<LambdaFunc[]>([]);
+const templates = ref<Template[]>([]);
+const loadingFunctions = ref(false);
+const selectedGlueFunction = ref<LambdaFunc | null>(null);
+const selectedTargetFunction = ref<LambdaFunc | null>(null);
+const showDeployTemplate = ref(false);
+const deployTemplateName = ref(""); const deployingTemplate = ref(false);
+
+// Wire
+const wiring = ref(false);
+const wireResult = ref<{ wired: boolean; results: { step: string; detail: string }[] } | null>(null);
+const wireError = ref("");
+const wireButtonRef = ref<HTMLElement | null>(null);
+const pipelineName = ref("");
+
+watch([selectedGlueFunction, selectedTargetFunction], ([g, t]) => {
+  if (g && t) nextTick(() => wireButtonRef.value?.scrollIntoView({ behavior: "smooth", block: "center" }));
+});
+
+// Mappings
+interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; }
+const mappings = ref<Pipeline[]>([]);
+const loadingMappings = ref(false);
+
+// Resources already used by existing pipelines
+const usedTables = computed(() => new Set(mappings.value.map(m => m.tableName)));
+const usedTopics = computed(() => new Set(mappings.value.map(m => m.topicName)));
+const usedQueues = computed(() => new Set(mappings.value.map(m => m.queueName)));
+const usedFunctions = computed(() => new Set(mappings.value.flatMap(m => [m.glueFunctionName, m.targetFunctionName])));
+const deletingMapping = ref(""); const expandedAddons = ref("");
+const selectedPipelines = ref<Set<string>>(new Set());
+const showActionsMenu = ref(false);
+const showDeleteConfirm = ref(false);
+const showStepsModal = ref(false);
+const stepsPipeline = ref<Pipeline | null>(null);
+
+function openStepsModal() {
+  const id = [...selectedPipelines.value][0];
+  stepsPipeline.value = mappings.value.find(m => m.id === id) ?? null;
+  showStepsModal.value = true; showActionsMenu.value = false;
+}
+
+// Quick test
+const showQuickTest = ref(false);
+
+// Env var editor
+const showEnvEditor = ref(false);
+const envEditorPipelineId = ref("");
+const envEditorPipelineName = ref("");
+const envVars = ref<{ key: string; value: string }[]>([]);
+const savingEnv = ref(false);
+
+async function openEnvEditor(id: string, name: string) {
+  envEditorPipelineId.value = id;
+  envEditorPipelineName.value = name;
+  try { envVars.value = await (await fetch(`/api/triggers/pipelines/${id}/env`)).json(); } catch { envVars.value = []; }
+  if (!envVars.value.length) envVars.value.push({ key: "", value: "" });
+  showEnvEditor.value = true;
+}
+function addEnvVar() { envVars.value.push({ key: "", value: "" }); }
+function removeEnvVar(i: number) { envVars.value.splice(i, 1); }
+async function saveEnvVars() {
+  savingEnv.value = true;
+  await fetch(`/api/triggers/pipelines/${envEditorPipelineId.value}/env`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ envVars: envVars.value.filter(e => e.key) }),
+  });
+  savingEnv.value = false;
+  showEnvEditor.value = false;
+}
+
+// Vault add-on
+const showVaultSheet = ref(false);
+const vaultEnabled = ref(false);
+const vaultUrl = ref("");
+const vaultToken = ref("");
+const vaultSecrets = ref<{ path: string; entries: { key: string; value: string }[] }[]>([]);
+const vaultTesting = ref(false);
+const vaultTestResult = ref<{ ok: boolean; message: string } | null>(null);
+const vaultApplying = ref(false);
+
+function openVault(id: string, name: string) {
+  vaultTestResult.value = null; vaultApplying.value = false;
+  if (!vaultSecrets.value.length) vaultSecrets.value.push({ path: "", entries: [{ key: "", value: "" }] });
+  showVaultSheet.value = true;
+}
+
+async function testVaultConnection() {
+  vaultTesting.value = true; vaultTestResult.value = null;
+  try {
+    const res = await fetch("/api/vault/test-connection", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: vaultUrl.value, token: vaultToken.value }) });
+    vaultTestResult.value = await res.json();
+  } catch (e: any) { vaultTestResult.value = { ok: false, message: e.message }; }
+  vaultTesting.value = false;
+}
+
+async function applyVaultSecrets() {
+  vaultApplying.value = true;
+  try {
+    // Create secrets in Vault
+    const secretsPayload = vaultSecrets.value.filter(s => s.path).map(s => ({ path: s.path, value: JSON.stringify(Object.fromEntries(s.entries.filter(e => e.key).map(e => [e.key, e.value]))) }));
+    const setupRes = await fetch("/api/vault/setup-secrets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets: secretsPayload }) });
+    if (!setupRes.ok) { const err = await setupRes.json().catch(() => ({ error: "Unknown" })); showToast(`Vault setup failed: ${err.error}`, true); vaultApplying.value = false; return; }
+    showToast("Vault secrets created. They will be applied as env vars when the pipeline is wired.");
+    showVaultSheet.value = false;
+  } catch (e: any) { showToast(`Error: ${e.message}`, true); }
+  vaultApplying.value = false;
+}
+const quickTestTable = ref(""); const quickTestJson = ref("");
+const quickTestLoading = ref(false);
+const quickTestResult = ref<{ ok: boolean; message: string } | null>(null);
+
+// Pipeline execution
+const showExecution = ref(false);
+const executionPipelineId = ref("");
+const executionPipelineName = ref("");
+interface ExecStep { id: string; label: string; icon: string; status: "pending" | "running" | "success" | "timeout" | "error" | "unknown"; logs: string[]; }
+const execSteps = ref<ExecStep[]>([]);
+const execExpandedStep = ref<string | null>(null);
+
+function initExecSteps(): ExecStep[] {
+  return [
+    { id: "dynamodb", label: "DynamoDB Insert", icon: "database", status: "pending", logs: [] },
+    { id: "glue", label: "Stream Handler", icon: "zap", status: "pending", logs: [] },
+    { id: "sns", label: "SNS Publish", icon: "bell", status: "pending", logs: [] },
+    { id: "sqs", label: "SQS Deliver", icon: "inbox", status: "pending", logs: [] },
+    { id: "target", label: "Target Lambda", icon: "zap", status: "pending", logs: [] },
+  ];
+}
+
+async function executePipeline() {
+  if (!quickTestJson.value || !executionPipelineId.value) return;
+  execSteps.value = initExecSteps();
+  execExpandedStep.value = null;
+
+  let item: any;
+  try { item = JSON.parse(quickTestJson.value); } catch { return; }
+
+  const res = await fetch(`/api/triggers/pipelines/${executionPipelineId.value}/execute`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item }),
+  });
+
+  const reader = res.body?.getReader();
+  if (!reader) return;
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const { step, status, logs } = JSON.parse(line.slice(6));
+        if (step === "done" || step === "error") continue;
+        const s = execSteps.value.find(s => s.id === step);
+        if (s) { s.status = status; if (logs?.length) s.logs = logs; }
+      } catch {}
+    }
+  }
+}
+
+function openExecution(pipelineId: string, pipelineName: string, tableName: string) {
+  executionPipelineId.value = pipelineId;
+  executionPipelineName.value = pipelineName;
+  quickTestTable.value = tableName;
+  quickTestResult.value = null;
+  execSteps.value = initExecSteps();
+  showExecution.value = true;
+  // Load key schema for template
+  fetch(`/api/dynamodb/tables/${tableName}/describe`).then(r => r.json()).then(({ keys }) => {
+    const t: Record<string, any> = {}; for (const k of keys) t[k.name] = k.attributeType === "N" ? 0 : "value";
+    quickTestJson.value = JSON.stringify(t, null, 2);
+  }).catch(() => { quickTestJson.value = "{}"; });
+}
+
+// Navigation
+function selectSource(s: typeof sources[0]) { if (s.enabled) selectedSource.value = s.type; }
+function goToStep(n: number) { stepIndex.value = n; }
+function goToStep2() { if (!selectedSource.value) return; stepIndex.value = 1; if (!tables.value.length) loadTables(); }
+function goToStep3() { if (!selectedTable.value) return; stepIndex.value = 2; if (!topics.value.length) loadTopics(); }
+function goToStep4() { if (!selectedTopic.value) return; stepIndex.value = 3; if (!queues.value.length) loadQueues(); }
+function goToStep5() { if (!selectedQueue.value) return; stepIndex.value = 4; loadFunctions(); loadTemplates(); }
+
+// Data loaders
+async function loadTables() { loading.value = true; try { tables.value = await (await fetch("/api/dynamodb/tables")).json(); } catch { tables.value = []; } loading.value = false; }
+async function loadTopics() { loadingTopics.value = true; try { topics.value = await (await fetch("/api/sns/topics")).json(); } catch { topics.value = []; } loadingTopics.value = false; }
+async function loadQueues() { loadingQueues.value = true; try { queues.value = await (await fetch("/api/sqs/queues")).json(); } catch { queues.value = []; } loadingQueues.value = false; }
+async function loadFunctions() { loadingFunctions.value = true; try { functions.value = await (await fetch("/api/triggers/functions")).json(); } catch { functions.value = []; } loadingFunctions.value = false; }
+async function loadTemplates() { try { templates.value = await (await fetch("/api/triggers/templates")).json(); } catch { templates.value = []; } }
+async function loadMappings() { loadingMappings.value = true; try { mappings.value = await (await fetch("/api/triggers/pipelines")).json(); } catch { mappings.value = []; } loadingMappings.value = false; }
+
+// Create actions
+async function createTable() {
+  creating.value = true;
+  try {
+    const res = await fetch("/api/dynamodb/tables", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tableName: newTableName.value, partitionKey: newPartitionKey.value, partitionKeyType: newPartitionKeyType.value, sortKey: newSortKey.value || undefined, sortKeyType: newSortKey.value ? newSortKeyType.value : undefined }) });
+    if (res.ok) { showCreate.value = false; newTableName.value = ""; newPartitionKey.value = ""; newSortKey.value = ""; await loadTables(); }
+    else { const d = await res.json(); showToast(d.error || "Failed to create table", true); }
+  } catch {} creating.value = false;
+}
+async function enableStream(name: string) { enablingStream.value = name; try { await fetch(`/api/dynamodb/tables/${name}/enable-stream`, { method: "POST" }); await loadTables(); } catch {} enablingStream.value = ""; }
+async function createTopic() {
+  creatingTopic.value = true;
+  try { const res = await fetch("/api/sns/topics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topicName: newTopicName.value }) });
+    if (res.ok) { showCreateTopic.value = false; newTopicName.value = ""; await loadTopics(); }
+    else { const d = await res.json(); showToast(d.error || "Failed to create topic", true); }
+  } catch {} creatingTopic.value = false;
+}
+async function createQueue() {
+  creatingQueue.value = true;
+  try { const res = await fetch("/api/sqs/queues", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ queueName: newQueueName.value, createDlq: createDlq.value, maxReceiveCount: maxReceiveCount.value }) });
+    if (res.ok) { showCreateQueue.value = false; newQueueName.value = ""; createDlq.value = true; maxReceiveCount.value = 3; await loadQueues(); }
+    else { const d = await res.json(); showToast(d.error || "Failed to create queue", true); }
+  } catch {} creatingQueue.value = false;
+}
+async function deployTemplate(t: Template) {
+  deployingTemplate.value = true;
+  const name = deployTemplateName.value || `mouseketool-${t.id}`;
+  const envVars: Record<string, string> = {};
+  if (t.envVars.includes("SNS_TOPIC_ARN") && selectedTopic.value) envVars.SNS_TOPIC_ARN = selectedTopic.value.arn;
+  try {
+    const res = await fetch("/api/triggers/templates/deploy", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: t.id, functionName: name, envVars }) });
+    if (res.ok) { showDeployTemplate.value = false; deployTemplateName.value = ""; await loadFunctions(); }
+  } catch {} deployingTemplate.value = false;
+}
+
+// Wire pipeline
+async function wirePipeline() {
+  if (!selectedTable.value?.streamArn || !selectedGlueFunction.value || !selectedTopic.value || !selectedQueue.value || !selectedTargetFunction.value) return;
+  wiring.value = true; wireError.value = ""; wireResult.value = null;
+  try {
+    const res = await fetch("/api/triggers/wire", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamArn: selectedTable.value.streamArn, glueFunctionName: selectedGlueFunction.value.name, topicArn: selectedTopic.value.arn, queueUrl: selectedQueue.value.url, targetFunctionName: selectedTargetFunction.value.name, pipelineName: pipelineName.value, addons: vaultEnabled.value ? ["vault"] : [] }) });
+    const data = await res.json();
+    if (res.ok) {
+      wireResult.value = data;
+      // Apply vault secrets as env vars to the target Lambda
+    } else wireError.value = data.error || "Failed to wire";
+  } catch (e: any) { wireError.value = e.message; }
+  wiring.value = false;
+}
+
+// Mappings actions
+async function deleteMapping(id: string) { deletingMapping.value = id; try { await fetch(`/api/triggers/pipelines/${id}`, { method: "DELETE" }); await loadMappings(); } catch {} deletingMapping.value = ""; }
+async function deleteSelected() {
+  showDeleteConfirm.value = false;
+  for (const id of selectedPipelines.value) { deletingMapping.value = id; try { await fetch(`/api/triggers/pipelines/${id}`, { method: "DELETE" }); } catch {} }
+  selectedPipelines.value = new Set(); deletingMapping.value = ""; await loadMappings();
+}
+function toggleSelect(id: string) { selectedPipelines.value.has(id) ? selectedPipelines.value.delete(id) : selectedPipelines.value.add(id); selectedPipelines.value = new Set(selectedPipelines.value); }
+
+// Quick test
+async function openQuickTest(tableName: string) {
+  quickTestTable.value = tableName; quickTestResult.value = null;
+  try { const { keys } = await (await fetch(`/api/dynamodb/tables/${tableName}/describe`)).json();
+    const t: Record<string, any> = {}; for (const k of keys) t[k.name] = k.attributeType === "N" ? 0 : "value";
+    quickTestJson.value = JSON.stringify(t, null, 2);
+  } catch { quickTestJson.value = "{}"; }
+  showQuickTest.value = true;
+}
+async function runQuickTest() {
+  quickTestLoading.value = true; quickTestResult.value = null;
+  try { const item = JSON.parse(quickTestJson.value);
+    const res = await fetch(`/api/dynamodb/tables/${quickTestTable.value}/put-item`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item }) });
+    const data = await res.json();
+    quickTestResult.value = res.ok ? { ok: true, message: "Item inserted. The pipeline should trigger shortly." } : { ok: false, message: data.error || "Failed" };
+  } catch (e: any) { quickTestResult.value = { ok: false, message: e.message || "Invalid JSON" }; }
+  quickTestLoading.value = false;
+}
+
+function selectTable(t: DynamoTable) { if (t.streamEnabled) selectedTable.value = t; }
+function formatBytes(b: number) { if (b < 1024) return `${b} B`; if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`; return `${(b / 1048576).toFixed(1)} MB`; }
+function startWizard() { view.value = "wizard"; stepIndex.value = 0; selectedSource.value = null; selectedTable.value = null; selectedTopic.value = null; selectedQueue.value = null; selectedGlueFunction.value = null; selectedTargetFunction.value = null; wireResult.value = null; wireError.value = ""; pipelineName.value = ""; vaultEnabled.value = false; vaultUrl.value = ""; vaultToken.value = ""; vaultSecrets.value = []; vaultTestResult.value = null; }
+function isTemplateDeployed(t: Template) { return functions.value.some(f => f.templateId === t.id); }
+function startOver() { loadMappings(); view.value = "list"; }
+
+onMounted(loadMappings);
+</script>
+
+<template>
+  <div class="space-y-3 overflow-hidden">
+    <div class="flex items-center justify-between">
+      <div><h1 class="text-2xl font-bold tracking-tight">Triggers</h1><p class="text-muted-foreground">Configure event source triggers for your Lambda functions.</p></div>
+      <Button v-if="view === 'list'" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startWizard"><Plus class="size-4" /> New Pipeline</Button>
+      <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
+    </div>
+    <template v-if="view === 'list'">
+      <div v-if="loadingMappings" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading pipelines...</p></div>
+      <div v-else-if="!mappings.length" class="text-center py-16 text-muted-foreground"><Cable class="size-12 mx-auto mb-4 opacity-30" /><p>No active pipelines.</p><p class="text-xs mt-1">Click "New Pipeline" to set up a trigger chain.</p></div>
+      <div v-else class="space-y-2">
+        <div class="flex items-center gap-2 mb-3">
+          <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-3.5" /> Refresh</Button>
+          <template v-if="selectedPipelines.size">
+            <span class="text-xs text-muted-foreground">{{ selectedPipelines.size }} selected</span>
+            <div class="relative">
+              <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showActionsMenu = !showActionsMenu"><ChevronDown class="size-3.5" /> Actions</Button>
+              <div v-if="showActionsMenu" class="fixed inset-0 z-40" @click="showActionsMenu = false" />
+              <div v-if="showActionsMenu" class="absolute left-0 top-full mt-1 w-48 rounded-md border bg-popover shadow-md z-50 py-1">
+                <button class="w-full text-left px-3 py-1.5 text-sm hover:bg-muted transition-colors flex items-center gap-2" :class="selectedPipelines.size > 1 ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'" :disabled="selectedPipelines.size > 1" @click="selectedPipelines.size === 1 && openStepsModal()"><Cable class="size-3.5" /> See steps</button>
+                <div class="border-t my-1" />
+                <button class="w-full text-left px-3 py-1.5 text-sm text-destructive hover:bg-muted transition-colors flex items-center gap-2 cursor-pointer" @click="showDeleteConfirm = true; showActionsMenu = false"><Trash2 class="size-3.5" /> Delete selected</button>
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" class="text-xs cursor-pointer" @click="selectedPipelines = new Set()">Clear</Button>
+          </template>
+        </div>
+        <Card v-for="m in mappings" :key="m.id" class="!py-3" :class="selectedPipelines.has(m.id) ? 'border-primary ring-1 ring-primary/20' : ''"><CardContent class="py-3 space-y-2"><div class="flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <input type="checkbox" :checked="selectedPipelines.has(m.id)" @change="toggleSelect(m.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
+            <div class="min-w-0 flex-1 space-y-1">
+              <p class="font-semibold text-sm">{{ m.name }}</p>
+              <div class="flex items-center gap-1.5 text-muted-foreground">
+                <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <Tooltip v-if="m.sourceType==='dynamodb'"><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></TooltipTrigger><TooltipContent>Run pipeline with a test item</TooltipContent></Tooltip>
+            <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/history`)"><Clock class="size-3.5" /> History</Button></TooltipTrigger><TooltipContent>View invocation history from CloudWatch logs</TooltipContent></Tooltip>
+            <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="openEnvEditor(m.id, m.name)"><Settings2 class="size-3.5" /> Env Vars</Button></TooltipTrigger><TooltipContent>Configure environment variables for the target Lambda</TooltipContent></Tooltip>
+          </div>
+        </div>
+          <!-- Configured add-ons -->
+          <div v-if="m.addons?.length" class="pt-2 border-t mt-2">
+            <button class="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" @click="expandedAddons = expandedAddons === m.id ? '' : m.id">
+              <ChevronRight class="size-3 transition-transform" :class="expandedAddons === m.id ? 'rotate-90' : ''" />
+              Configured add-ons ({{ m.addons.length }})
+            </button>
+            <div v-if="expandedAddons === m.id" class="mt-2 flex flex-wrap gap-2">
+              <div v-if="m.addons.includes('vault')" class="flex items-center gap-1.5 rounded-md border px-2 py-1 bg-muted/50 text-xs"><VaultIcon class="size-3" /><span>Vault</span></div>
+            </div>
+          </div>
+        </CardContent></Card>
+      </div>
+    </template>
+    <template v-if="view === 'wizard'">
+    <div class="overflow-hidden"><div class="flex transition-transform duration-300 ease-in-out" :style="{ transform: `translateX(-${stepIndex * 100}%)` }">
+        <!-- Step 1: Source -->
+        <div class="min-w-full space-y-4 px-px shrink-0" style="width: 0">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 1</Badge><span>Choose an event source</span></div>
+          <div class="flex items-center gap-4 pt-4">
+            <Tooltip v-for="s in sources" :key="s.type"><TooltipTrigger as-child><button class="flex flex-col items-center justify-center gap-3 w-36 h-36 rounded-xl transition-all" :class="[s.enabled?selectedSource===s.type?'border-2 border-primary bg-primary/5 ring-2 ring-primary/20 cursor-pointer active:scale-95':'border border-border hover:border-primary/50 bg-card cursor-pointer active:scale-95':'border-2 border-dashed border-muted-foreground/30 bg-muted/20 opacity-50 cursor-not-allowed']" @click="selectSource(s)"><component :is="s.icon" class="size-10" :class="s.enabled?'text-foreground':'text-muted-foreground'" /><span class="text-sm font-medium" :class="s.enabled?'':'text-muted-foreground'">{{ s.label }}</span></button></TooltipTrigger><TooltipContent v-if="!s.enabled">{{ s.tooltip }}</TooltipContent></Tooltip>
+          </div>
+          <div v-if="selectedSource" class="pt-2"><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep2">Next <ArrowRight class="size-4" /></Button></div>
+        </div>
+        <!-- Step 2: DynamoDB -->
+        <div class="min-w-full space-y-3 px-px" style="width: 0">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 2</Badge><span>Select a DynamoDB table</span></div>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(0);selectedTable=null"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTables"><RefreshCw class="size-3.5" /> Refresh</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreate=true"><Plus class="size-3.5" /> Create Table</Button>
+          </div>
+          <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading tables...</p></div>
+          <div v-else-if="!tables.length" class="text-center py-16 text-muted-foreground"><Database class="size-12 mx-auto mb-4 opacity-30" /><p>No DynamoDB tables found.</p></div>
+          <div v-else class="space-y-2">
+            <Card v-for="t in tables" :key="t.name" class="!py-3 transition-all" :class="[selectedTable?.name===t.name?'border-primary ring-1 ring-primary/20':'',usedTables.has(t.name)?'border-dashed opacity-50 cursor-not-allowed':t.streamEnabled?'hover:border-primary/50 cursor-pointer':'opacity-75']" @click="!usedTables.has(t.name)&&selectTable(t)"><CardContent class="py-3 space-y-2"><div class="flex items-center justify-between gap-4"><div class="min-w-0 flex-1 space-y-1"><div class="flex items-center gap-2"><Database class="size-4 text-muted-foreground shrink-0" /><span class="font-mono text-sm font-semibold truncate">{{ t.name }}</span><Badge variant="secondary" class="text-[10px]">{{ t.status }}</Badge>
+              <Tooltip v-if="t.streamEnabled"><TooltipTrigger as-child><Badge class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px] gap-1"><Radio class="size-3" /> Stream</Badge></TooltipTrigger><TooltipContent>Streams enabled ({{ t.streamViewType }})</TooltipContent></Tooltip>
+              <Tooltip v-else><TooltipTrigger as-child><Badge class="bg-zinc-500/20 text-zinc-400 border-zinc-500/40 text-[10px] gap-1"><CircleOff class="size-3" /> No Stream</Badge></TooltipTrigger><TooltipContent>Streams not enabled</TooltipContent></Tooltip>
+              <Badge v-if="usedTables.has(t.name)" class="bg-amber-500/20 text-amber-500 border-amber-500/40 text-[10px]">In use</Badge>
+            </div><div class="flex items-center gap-3 text-xs text-muted-foreground"><span v-if="t.keySchema?.length">Keys: {{ t.keySchema.map(k=>`${k.name} (${k.type})`).join(', ') }}</span><span>{{ t.itemCount??0 }} items</span><span v-if="t.sizeBytes">{{ formatBytes(t.sizeBytes) }}</span></div></div>
+            <div class="flex items-center gap-2 shrink-0">
+              <template v-if="!t.streamEnabled"><Button @click.stop="enableStream(t.name)" :disabled="enablingStream===t.name" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform text-xs"><Loader2 v-if="enablingStream===t.name" class="size-3.5 animate-spin" /><Radio v-else class="size-3.5" />Enable Stream</Button></template>
+              <template v-else><Button v-if="selectedTable?.name===t.name" variant="default" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click.stop="goToStep3">Next <ArrowRight class="size-3.5" /></Button></template>
+            </div></div>
+            <div v-if="!t.streamEnabled" class="flex items-center gap-2 text-xs text-amber-500 bg-amber-500/5 border border-amber-500/20 rounded-md px-3 py-1.5"><AlertTriangle class="size-3.5 shrink-0" /><span>Streams must be enabled. Click "Enable Stream".</span></div>
+            </CardContent></Card>
+          </div>
+        </div>
+        <!-- Step 3: SNS Topic -->
+        <div class="min-w-full space-y-3 px-px" style="width: 0">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 3</Badge><span>Select an SNS topic</span></div>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(1);selectedTopic=null"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTopics"><RefreshCw class="size-3.5" /> Refresh</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreateTopic=true"><Plus class="size-3.5" /> Create Topic</Button>
+          </div>
+          <div v-if="loadingTopics" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading SNS topics...</p></div>
+          <div v-else-if="!topics.length" class="text-center py-16 text-muted-foreground"><Bell class="size-12 mx-auto mb-4 opacity-30" /><p>No SNS topics found.</p><p class="text-xs mt-1">Create one for the stream handler to publish to.</p></div>
+          <div v-else class="space-y-2">
+            <Card v-for="t in topics" :key="t.arn" class="!py-3 transition-all" :class="usedTopics.has(t.name)?'border-dashed opacity-50 cursor-not-allowed':selectedTopic?.arn===t.arn?'border-primary ring-1 ring-primary/20':'hover:border-primary/50 cursor-pointer'" @click="!usedTopics.has(t.name)&&(selectedTopic=t)"><CardContent class="py-3"><div class="flex items-center justify-between gap-4"><div class="min-w-0 flex-1 space-y-1"><div class="flex items-center gap-2"><Bell class="size-4 text-muted-foreground shrink-0" /><span class="font-mono text-sm font-semibold truncate">{{ t.name }}</span><Badge v-if="usedTopics.has(t.name)" class="bg-amber-500/20 text-amber-500 border-amber-500/40 text-[10px]">In use</Badge></div><div class="text-xs text-muted-foreground truncate">{{ t.arn }}</div></div>
+            <div class="shrink-0"><Button v-if="selectedTopic?.arn===t.arn" variant="default" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click.stop="goToStep4">Next <ArrowRight class="size-3.5" /></Button></div>
+            </div></CardContent></Card>
+          </div>
+        </div>
+        <!-- Step 4: SQS Queue -->
+        <div class="min-w-full space-y-3 px-px" style="width: 0">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 4</Badge><span>Select an SQS queue</span></div>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(2);selectedQueue=null"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadQueues"><RefreshCw class="size-3.5" /> Refresh</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreateQueue=true"><Plus class="size-3.5" /> Create Queue</Button>
+          </div>
+          <div v-if="loadingQueues" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading SQS queues...</p></div>
+          <div v-else-if="!queues.length" class="text-center py-16 text-muted-foreground"><Inbox class="size-12 mx-auto mb-4 opacity-30" /><p>No SQS queues found.</p></div>
+          <div v-else class="space-y-2">
+            <Card v-for="q in queues.filter(q => !q.name.endsWith('-dlq'))" :key="q.url" class="!py-3 transition-all" :class="usedQueues.has(q.name)?'border-dashed opacity-50 cursor-not-allowed':selectedQueue?.url===q.url?'border-primary ring-1 ring-primary/20':'hover:border-primary/50 cursor-pointer'" @click="!usedQueues.has(q.name)&&(selectedQueue=q)"><CardContent class="py-3"><div class="flex items-center justify-between gap-4"><div class="min-w-0 flex-1 space-y-1"><div class="flex items-center gap-2"><Inbox class="size-4 text-muted-foreground shrink-0" /><span class="font-mono text-sm font-semibold truncate">{{ q.name }}</span><Badge v-if="usedQueues.has(q.name)" class="bg-amber-500/20 text-amber-500 border-amber-500/40 text-[10px]">In use</Badge></div><div class="text-xs text-muted-foreground">{{ q.messageCount }} messages</div></div>
+            <div class="shrink-0"><Button v-if="selectedQueue?.url===q.url" variant="default" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click.stop="goToStep5">Next <ArrowRight class="size-3.5" /></Button></div>
+            </div></CardContent></Card>
+            <template v-if="queues.some(q => q.name.endsWith('-dlq'))">
+              <div class="text-xs text-muted-foreground font-medium pt-3">Dead Letter Queues</div>
+              <Card v-for="q in queues.filter(q => q.name.endsWith('-dlq'))" :key="q.url" class="!py-3 border-dashed opacity-60"><CardContent class="py-3"><div class="flex items-center gap-2"><Inbox class="size-4 text-muted-foreground shrink-0" /><span class="font-mono text-sm truncate">{{ q.name }}</span><span class="text-xs text-muted-foreground ml-auto">{{ q.messageCount }} messages</span></div></CardContent></Card>
+            </template>
+          </div>
+        </div>
+        <!-- Step 5: Lambda selection + wire -->
+        <div class="min-w-full space-y-3 px-px" style="width: 0">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 5</Badge><span>Select Lambdas &amp; wire pipeline</span></div>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(3);selectedGlueFunction=null;selectedTargetFunction=null;wireResult=null;wireError=''"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadFunctions"><RefreshCw class="size-3.5" /> Refresh</Button>
+          </div>
+          <!-- Summary -->
+          <div class="flex flex-wrap items-center gap-2 text-xs bg-muted/50 border rounded-lg px-3 py-2">
+            <Badge variant="secondary" class="gap-1 text-[10px]"><Database class="size-3" />{{ selectedTable?.name }}</Badge><ArrowRight class="size-3 text-muted-foreground" />
+            <Badge variant="outline" class="gap-1 text-[10px]"><Zap class="size-3" />Glue</Badge><ArrowRight class="size-3 text-muted-foreground" />
+            <Badge variant="secondary" class="gap-1 text-[10px]"><Bell class="size-3" />{{ selectedTopic?.name }}</Badge><ArrowRight class="size-3 text-muted-foreground" />
+            <Badge variant="secondary" class="gap-1 text-[10px]"><Inbox class="size-3" />{{ selectedQueue?.name }}</Badge><ArrowRight class="size-3 text-muted-foreground" />
+            <Badge variant="outline" class="gap-1 text-[10px]"><Zap class="size-3" />Target</Badge>
+          </div>
+          <!-- Templates -->
+          <div v-if="templates.length && !wireResult" class="space-y-2">
+            <p class="text-xs text-muted-foreground font-medium">Template Lambdas:</p>
+            <div v-for="t in templates" :key="t.id" class="flex items-center gap-3 bg-muted/30 border rounded-lg px-3 py-2">
+              <Package class="size-4 text-muted-foreground shrink-0" />
+              <div class="flex-1 min-w-0"><p class="text-xs font-semibold">{{ t.name }}</p><p class="text-[10px] text-muted-foreground">{{ t.description }}</p></div>
+              <Badge v-if="isTemplateDeployed(t)" class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px] gap-1"><Check class="size-3" />Deployed</Badge>
+              <Button v-else variant="outline" size="sm" class="gap-1.5 text-xs cursor-pointer active:scale-95 transition-transform" @click="showDeployTemplate=true;deployTemplateName=`mouseketool-${t.id}`"><Plus class="size-3.5" />Deploy</Button>
+            </div>
+          </div>
+          <div v-if="loadingFunctions" class="flex flex-col items-center justify-center py-12 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading functions...</p></div>
+          <div v-else-if="!functions.length && !wireResult" class="text-center py-12 text-muted-foreground"><Zap class="size-12 mx-auto mb-4 opacity-30" /><p>No Lambda functions found.</p><p class="text-xs mt-1">Deploy one from Deployments or use a template above.</p></div>
+          <template v-else-if="!wireResult">
+            <!-- Stream Handler -->
+            <div class="border rounded-lg p-3 space-y-2" :class="selectedGlueFunction ? 'border-green-500/40 bg-green-500/5' : 'border-dashed'">
+              <div class="flex items-center justify-between">
+                <div><p class="text-xs font-semibold flex items-center gap-1.5"><span class="inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">1</span> Stream Handler</p><p class="text-[10px] text-muted-foreground mt-0.5">Triggered by DynamoDB Stream. Forwards records to SNS.</p></div>
+                <Badge v-if="selectedGlueFunction" class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px] gap-1"><Check class="size-3" />{{ selectedGlueFunction.name }}</Badge>
+              </div>
+              <div class="space-y-1">
+              <Card v-for="f in functions" :key="'glue-'+f.arn" class="!py-2 transition-all" :class="usedFunctions.has(f.name)?'border-dashed opacity-50 cursor-not-allowed':selectedGlueFunction?.name===f.name?'border-primary ring-1 ring-primary/20':'hover:border-primary/50 cursor-pointer'" @click="!usedFunctions.has(f.name)&&(selectedGlueFunction=f,selectedTargetFunction?.name===f.name&&(selectedTargetFunction=null))"><CardContent class="py-2"><div class="flex items-center gap-2"><Zap class="size-3.5 text-muted-foreground shrink-0" /><span class="font-mono text-xs font-semibold truncate">{{ f.name }}</span><Badge variant="secondary" class="text-[10px]">{{ f.runtime }}</Badge><Badge v-if="f.templateId" variant="outline" class="text-[10px] gap-1"><Package class="size-3" />template</Badge><Tooltip v-if="f.outdated"><TooltipTrigger as-child><Badge class="bg-amber-500/20 text-amber-500 border-amber-500/40 text-[10px] gap-1"><AlertTriangle class="size-3" />outdated</Badge></TooltipTrigger><TooltipContent>Template source has changed. Redeploy to update.</TooltipContent></Tooltip></div></CardContent></Card>
+            </div></div>
+            <!-- Target Lambda -->
+            <div class="border rounded-lg p-3 space-y-2" :class="[selectedTargetFunction ? 'border-green-500/40 bg-green-500/5' : 'border-dashed', !selectedGlueFunction ? 'opacity-50 pointer-events-none' : '']">
+              <div class="flex items-center justify-between">
+                <div><p class="text-xs font-semibold flex items-center gap-1.5"><span class="inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">2</span> Target Lambda</p><p class="text-[10px] text-muted-foreground mt-0.5">{{ selectedGlueFunction ? 'Triggered by SQS. Your actual business logic handler.' : 'Select a Stream Handler first.' }}</p></div>
+                <Badge v-if="selectedTargetFunction" class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px] gap-1"><Check class="size-3" />{{ selectedTargetFunction.name }}</Badge>
+              </div>
+              <div v-if="selectedGlueFunction" class="space-y-1">
+              <Tooltip v-for="f in functions" :key="'target-'+f.arn"><TooltipTrigger as-child><Card class="!py-2 transition-all" :class="usedFunctions.has(f.name)||f.name===selectedGlueFunction?.name?'border-dashed opacity-50 cursor-not-allowed':selectedTargetFunction?.name===f.name?'border-primary ring-1 ring-primary/20 cursor-pointer':'hover:border-primary/50 cursor-pointer'" @click="!usedFunctions.has(f.name)&&f.name!==selectedGlueFunction?.name&&(selectedTargetFunction=f)"><CardContent class="py-2"><div class="flex items-center gap-2"><Zap class="size-3.5 text-muted-foreground shrink-0" /><span class="font-mono text-xs font-semibold truncate">{{ f.name }}</span><Badge variant="secondary" class="text-[10px]">{{ f.runtime }}</Badge><Badge v-if="f.templateId" variant="outline" class="text-[10px] gap-1"><Package class="size-3" />template</Badge><Tooltip v-if="f.outdated"><TooltipTrigger as-child><Badge class="bg-amber-500/20 text-amber-500 border-amber-500/40 text-[10px] gap-1"><AlertTriangle class="size-3" />outdated</Badge></TooltipTrigger><TooltipContent>Template source has changed. Redeploy to update.</TooltipContent></Tooltip></div></CardContent></Card></TooltipTrigger><TooltipContent v-if="usedFunctions.has(f.name)">Already used by another pipeline</TooltipContent><TooltipContent v-else-if="f.name===selectedGlueFunction?.name">Already selected as the Stream Handler</TooltipContent></Tooltip>
+            </div></div>
+          </template>
+          <!-- Wire button -->
+          <div v-if="selectedGlueFunction && selectedTargetFunction && !wireResult" ref="wireButtonRef" class="pt-2 space-y-3">
+            <div class="space-y-1.5">
+              <Label class="text-xs">Pipeline Name <span class="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input v-model="pipelineName" :placeholder="`${selectedTable?.name ?? 'table'} → ${selectedTargetFunction?.name ?? 'lambda'}`" class="font-mono text-xs" />
+            </div>
+            <Button class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="stepIndex = 5">Next: Add-ons <ArrowRight class="size-3.5" /></Button>
+          </div>
+        </div>
+        <!-- Step 6: Add-ons -->
+        <div class="min-w-full space-y-3 px-px" style="width: 0">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 6</Badge><span>Configure add-ons (optional)</span></div>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="stepIndex = 4"><ArrowLeft class="size-3.5" /> Back</Button>
+          </div>
+
+          <!-- Vault Add-on Card -->
+          <Card class="!py-3">
+            <CardContent class="py-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="size-9 rounded-lg bg-muted flex items-center justify-center"><VaultIcon class="size-4" /></div>
+                  <div>
+                    <p class="text-sm font-medium">Vault</p>
+                    <p class="text-xs text-muted-foreground">Create secrets in Vault and apply as env vars to the target Lambda</p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <Badge v-if="vaultEnabled && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
+                  <span class="text-xs text-muted-foreground">{{ vaultEnabled ? 'Enabled' : 'Disabled' }}</span>
+                  <button type="button" @click="vaultEnabled = !vaultEnabled" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors" :class="vaultEnabled ? 'bg-primary' : 'bg-input'">
+                    <span class="pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform" :class="vaultEnabled ? 'translate-x-4' : 'translate-x-0'" />
+                  </button>
+                  <Button @click="showVaultSheet = true" :disabled="!vaultEnabled" variant="outline" size="sm" class="gap-1.5 cursor-pointer">Configure</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <!-- Info banner -->
+          <div v-if="vaultEnabled" class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 space-y-1">
+            <p class="font-semibold">How add-ons work in pipelines</p>
+            <p>Unlike the Deployments page where Vault secrets are created before each invocation, here secrets are created once and their values are <span class="font-semibold">applied as environment variables</span> to the target Lambda when the pipeline is saved. The event source mapping will use these pre-configured values.</p>
+          </div>
+
+          <!-- Wire button -->
+          <div v-if="!wireResult" class="pt-2">
+            <Button :disabled="wiring" class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="wirePipeline"><Loader2 v-if="wiring" class="size-4 animate-spin" /><Cable v-else class="size-4" />{{ wiring ? 'Wiring...' : 'Wire Pipeline' }}</Button>
+          </div>
+          <div v-if="wireError" class="flex items-center gap-2 text-xs text-red-500 bg-red-500/5 border border-red-500/20 rounded-md px-3 py-2"><AlertTriangle class="size-3.5 shrink-0" /><span>{{ wireError }}</span></div>
+          <div v-if="wireResult" class="space-y-3">
+            <div class="flex items-center gap-2 text-sm text-green-500 bg-green-500/5 border border-green-500/20 rounded-lg px-4 py-3"><Check class="size-5 shrink-0" /><div><p class="font-semibold">Pipeline wired!</p><p class="text-xs text-green-400 mt-1">DynamoDB → Stream Handler → SNS → SQS → Target Lambda</p></div></div>
+            <div class="space-y-1"><div v-for="r in wireResult.results" :key="r.step" class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Cable class="size-3.5 shrink-0" /><span class="font-medium">{{ r.step }}</span><span class="font-mono text-[10px] opacity-60 truncate">{{ r.detail }}</span></div></div>
+            <Button variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform mt-2" @click="startOver"><RotateCcw class="size-4" /> Start Over</Button>
+          </div>
+        </div>
+    </div></div>
+    </template>
+    <!-- Create Table Dialog -->
+    <Dialog v-model:open="showCreate"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Create DynamoDB Table</DialogTitle><DialogDescription>Streams enabled by default (NEW_AND_OLD_IMAGES).</DialogDescription></DialogHeader>
+      <div class="space-y-4"><div class="space-y-2"><Label>Table Name</Label><Input v-model="newTableName" placeholder="my-table" class="font-mono text-xs" /></div>
+        <div class="grid grid-cols-[1fr_auto] gap-2"><div class="space-y-2"><Label>Partition Key</Label><Input v-model="newPartitionKey" placeholder="pk" class="font-mono text-xs" /></div><div class="space-y-2"><Label>Type</Label><Select v-model="newPartitionKeyType"><SelectTrigger class="w-24"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="S">String</SelectItem><SelectItem value="N">Number</SelectItem><SelectItem value="B">Binary</SelectItem></SelectContent></Select></div></div>
+        <div class="grid grid-cols-[1fr_auto] gap-2"><div class="space-y-2"><Label>Sort Key <span class="text-muted-foreground font-normal">(optional)</span></Label><Input v-model="newSortKey" placeholder="sk" class="font-mono text-xs" /></div><div class="space-y-2"><Label>Type</Label><Select v-model="newSortKeyType"><SelectTrigger class="w-24"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="S">String</SelectItem><SelectItem value="N">Number</SelectItem><SelectItem value="B">Binary</SelectItem></SelectContent></Select></div></div>
+      </div>
+      <DialogFooter><Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showCreate=false">Cancel</Button><Button :disabled="!newTableName||!newPartitionKey||creating" class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="createTable"><Loader2 v-if="creating" class="size-4 animate-spin" /><Check v-else class="size-4" />{{ creating?'Creating...':'Create' }}</Button></DialogFooter>
+    </DialogContent></Dialog>
+    <!-- Create Topic Dialog -->
+    <Dialog v-model:open="showCreateTopic"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Create SNS Topic</DialogTitle><DialogDescription>Create a standard SNS topic on LocalStack.</DialogDescription></DialogHeader>
+      <div class="space-y-2"><Label>Topic Name</Label><Input v-model="newTopicName" placeholder="my-topic" class="font-mono text-xs" /></div>
+      <DialogFooter><Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showCreateTopic=false">Cancel</Button><Button :disabled="!newTopicName||creatingTopic" class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="createTopic"><Loader2 v-if="creatingTopic" class="size-4 animate-spin" /><Check v-else class="size-4" />{{ creatingTopic?'Creating...':'Create' }}</Button></DialogFooter>
+    </DialogContent></Dialog>
+    <!-- Create Queue Dialog -->
+    <Dialog v-model:open="showCreateQueue"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Create SQS Queue</DialogTitle><DialogDescription>Create a standard SQS queue on LocalStack.</DialogDescription></DialogHeader>
+      <div class="space-y-2"><Label>Queue Name</Label><Input v-model="newQueueName" placeholder="my-queue" class="font-mono text-xs" /></div>
+      <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="createDlq" class="accent-primary" />Create Dead Letter Queue (<span class="font-mono text-xs">{{ newQueueName ? newQueueName + '-dlq' : '…-dlq' }}</span>)</label>
+      <div v-if="createDlq" class="flex items-center gap-2 text-sm"><Label class="whitespace-nowrap">Max Receive Count</Label><Input v-model.number="maxReceiveCount" type="number" min="1" max="100" class="w-20 font-mono text-xs" /></div>
+      <DialogFooter><Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showCreateQueue=false">Cancel</Button><Button :disabled="!newQueueName||creatingQueue" class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="createQueue"><Loader2 v-if="creatingQueue" class="size-4 animate-spin" /><Check v-else class="size-4" />{{ creatingQueue?'Creating...':'Create' }}</Button></DialogFooter>
+    </DialogContent></Dialog>
+    <!-- Deploy Template Dialog -->
+    <Dialog v-model:open="showDeployTemplate"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Deploy Template Lambda</DialogTitle><DialogDescription>Deploy a glue function to LocalStack. SNS_TOPIC_ARN will be set automatically.</DialogDescription></DialogHeader>
+      <div class="space-y-2"><Label>Function Name</Label><Input v-model="deployTemplateName" placeholder="mouseketool-dynamodb-to-sns" class="font-mono text-xs" /></div>
+      <DialogFooter><Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showDeployTemplate=false">Cancel</Button><Button :disabled="!deployTemplateName||deployingTemplate" class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="deployTemplate(templates[0])"><Loader2 v-if="deployingTemplate" class="size-4 animate-spin" /><Check v-else class="size-4" />{{ deployingTemplate?'Deploying...':'Deploy' }}</Button></DialogFooter>
+    </DialogContent></Dialog>
+    <!-- Env Var Editor Dialog -->
+    <Dialog v-model:open="showEnvEditor"><DialogContent class="!max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogHeader><DialogTitle>Environment Variables</DialogTitle><DialogDescription>Configure env vars for the target Lambda in <span class="font-semibold">{{ envEditorPipelineName }}</span>. Applied before each pipeline execution.</DialogDescription></DialogHeader>
+      <div class="space-y-2">
+        <div v-for="(e, i) in envVars" :key="i" class="flex items-center gap-2">
+          <Input v-model="e.key" placeholder="KEY" class="font-mono text-xs flex-1" />
+          <Input v-model="e.value" placeholder="value" class="font-mono text-xs flex-1" :disabled="e.isNull" :class="e.isNull ? 'opacity-40' : ''" />
+          <Tooltip><TooltipTrigger as-child><label class="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer whitespace-nowrap"><input type="checkbox" v-model="e.isNull" class="accent-primary" />Exclude</label></TooltipTrigger><TooltipContent>Exclude this variable from the Lambda configuration</TooltipContent></Tooltip>
+          <Button variant="ghost" size="sm" class="text-muted-foreground hover:text-destructive shrink-0 cursor-pointer active:scale-95 transition-transform px-2" @click="removeEnvVar(i)">✕</Button>
+        </div>
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="addEnvVar"><Plus class="size-3.5" /> Add Variable</Button>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showEnvEditor=false">Cancel</Button>
+        <Button :disabled="savingEnv" class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="saveEnvVars"><Loader2 v-if="savingEnv" class="size-4 animate-spin" /><Check v-else class="size-4" />{{ savingEnv ? 'Saving...' : 'Save' }}</Button>
+      </DialogFooter>
+    </DialogContent></Dialog>
+    <!-- See Steps Modal -->
+    <Dialog v-model:open="showStepsModal"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Pipeline Steps</DialogTitle><DialogDescription>{{ stepsPipeline?.name }}</DialogDescription></DialogHeader>
+      <div v-if="stepsPipeline" class="space-y-0 py-2">
+        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Database class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">DynamoDB</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.tableName }}</p></div></div>
+        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
+        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Zap class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">Stream Handler</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.glueFunctionName }}</p></div></div>
+        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
+        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Bell class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">SNS Topic</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.topicName }}</p></div></div>
+        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
+        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Inbox class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">SQS Queue</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.queueName }}</p></div></div>
+        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
+        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Zap class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">Target Lambda</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.targetFunctionName }}</p></div></div>
+      </div>
+    </DialogContent></Dialog>
+
+    <!-- Delete Confirmation Modal -->
+    <Dialog v-model:open="showDeleteConfirm"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Delete pipelines</DialogTitle><DialogDescription>Are you sure you want to delete {{ selectedPipelines.size }} selected pipeline{{ selectedPipelines.size > 1 ? 's' : '' }}?</DialogDescription></DialogHeader>
+      <div class="text-xs space-y-2 py-2">
+        <p class="font-medium">The following resources will be deleted:</p>
+        <ul class="list-disc pl-5 space-y-0.5 text-muted-foreground">
+          <li>Event source mappings</li>
+          <li>Stream handler Lambda function</li>
+          <li>SNS topic</li>
+          <li>SQS queue and its dead letter queue</li>
+          <li>CloudWatch log groups (invocation history)</li>
+        </ul>
+        <p class="font-medium pt-1">The following resources will be preserved:</p>
+        <ul class="list-disc pl-5 space-y-0.5 text-muted-foreground">
+          <li>DynamoDB source table</li>
+          <li>Target Lambda function and its deployment</li>
+        </ul>
+      </div>
+      <DialogFooter><Button variant="outline" class="cursor-pointer" @click="showDeleteConfirm = false">Cancel</Button><Button variant="destructive" class="gap-1.5 cursor-pointer" @click="deleteSelected"><Trash2 class="size-3.5" /> Delete</Button></DialogFooter>
+    </DialogContent></Dialog>
+
+    <!-- Deleting toast -->
+    <div v-if="deletingMapping" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm bg-primary text-primary-foreground rounded-lg px-4 py-3 shadow-lg">
+      <Loader2 class="size-4 animate-spin" /> Deleting pipelines...
+    </div>
+
+    <!-- Vault Sheet -->
+    <Sheet v-model:open="showVaultSheet">
+    <SheetContent class="w-[420px] sm:max-w-[420px] overflow-y-auto p-6">
+      <SheetHeader class="mb-4">
+        <SheetTitle class="flex items-center gap-2"><VaultIcon class="size-4" /> Vault Configuration</SheetTitle>
+        <SheetDescription>Configure secrets to create in your Vault instance. Values will be applied as environment variables to the target Lambda.</SheetDescription>
+      </SheetHeader>
+      <div class="space-y-6">
+        <!-- Connection -->
+        <div class="space-y-4 rounded-lg border p-4">
+          <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Connection</p>
+          <div class="space-y-2">
+            <Label>Vault URL</Label>
+            <div class="flex gap-2">
+              <Input v-model="vaultUrl" placeholder="http://localhost:8200" class="font-mono text-xs flex-1" />
+              <Button variant="outline" size="sm" class="shrink-0 text-xs cursor-pointer" @click="vaultUrl = 'http://localhost:8200'">Default</Button>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <div class="flex items-center gap-2"><Label>Root Token</Label><ShieldAlert class="size-3.5 text-yellow-500" /></div>
+            <Input v-model="vaultToken" type="password" placeholder="hvs.xxxxx" class="font-mono text-xs" />
+          </div>
+          <Button @click="testVaultConnection" :disabled="!vaultUrl || !vaultToken || vaultTesting" variant="outline" size="sm" class="w-full gap-2 cursor-pointer">
+            <Loader2 v-if="vaultTesting" class="size-3.5 animate-spin" /><Plug v-else class="size-3.5" />
+            {{ vaultTesting ? "Testing..." : "Test Connection" }}
+          </Button>
+          <div v-if="vaultTestResult" class="flex items-center gap-2 text-xs" :class="vaultTestResult.ok ? 'text-green-500' : 'text-red-500'">
+            <CheckCircle2 v-if="vaultTestResult.ok" class="size-3.5" /><XCircle v-else class="size-3.5" />
+            {{ vaultTestResult.message }}
+          </div>
+        </div>
+        <!-- Secrets -->
+        <div class="space-y-4 rounded-lg border p-4">
+          <div class="flex items-center justify-between">
+            <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Secrets</p>
+            <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click="vaultSecrets.push({ path: '', entries: [{ key: '', value: '' }] })"><Plus class="size-3" /> Add</Button>
+          </div>
+          <div v-if="!vaultSecrets.length" class="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-md">No secrets configured.</div>
+          <div class="space-y-2 max-h-60 overflow-auto scrollbar-thin">
+            <div v-for="(s, i) in vaultSecrets" :key="i" class="space-y-2 p-3 rounded-md border bg-muted/30">
+              <div class="flex items-center gap-2">
+                <Input v-model="s.path" placeholder="dummy/secret" class="font-mono text-xs h-7 flex-1" />
+                <Button variant="ghost" size="icon" class="size-7 shrink-0 text-muted-foreground hover:text-destructive cursor-pointer" @click="vaultSecrets.splice(i, 1)"><X class="size-3" /></Button>
+              </div>
+              <div v-for="(e, j) in s.entries" :key="j" class="flex items-center gap-2">
+                <Input v-model="e.key" placeholder="key" class="font-mono text-xs h-7 flex-1" />
+                <Input v-model="e.value" placeholder="value" class="font-mono text-xs h-7 flex-1" />
+                <Button v-if="s.entries.length > 1" variant="ghost" size="icon" class="size-6 shrink-0 text-muted-foreground hover:text-destructive cursor-pointer" @click="s.entries.splice(j, 1)"><X class="size-2.5" /></Button>
+              </div>
+              <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer w-full" @click="s.entries.push({ key: '', value: '' })"><Plus class="size-3" /> Add field</Button>
+            </div>
+          </div>
+        </div>
+        <Button @click="applyVaultSecrets" :disabled="!vaultUrl || !vaultToken || !vaultSecrets.some(s => s.path) || vaultApplying" class="w-full gap-2 cursor-pointer">
+          <Loader2 v-if="vaultApplying" class="size-3.5 animate-spin" /><Check v-else class="size-3.5" />
+          {{ vaultApplying ? "Applying..." : "Create Secrets & Apply as Env Vars" }}
+        </Button>
+      </div>
+    </SheetContent>
+    </Sheet>
+    <!-- Toast -->
+    <div v-if="toastMessage" :key="toastMessage" :class="toastError ? 'bg-destructive' : 'bg-green-600'" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+      <AlertTriangle v-if="toastError" class="size-4" /><Check v-else class="size-4" />{{ toastMessage }}
+    </div>
+  </div>
+</template>

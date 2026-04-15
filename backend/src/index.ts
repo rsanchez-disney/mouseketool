@@ -7,6 +7,10 @@ import buildsRoutes, { cleanupBuilds } from "./routes/builds.js";
 import deployRoutes from "./routes/deploy.js";
 import deploymentsRoutes from "./routes/deployments.js";
 import vaultRoutes from "./routes/vault.js";
+import dynamodbRoutes from "./routes/dynamodb.js";
+import sqsRoutes from "./routes/sqs.js";
+import triggersRoutes from "./routes/triggers.js";
+import snsRoutes from "./routes/sns.js";
 
 const app = express();
 app.use(cors());
@@ -20,6 +24,10 @@ app.use("/api/builds", buildsRoutes);
 app.use("/api/deploy", deployRoutes);
 app.use("/api/deployments", deploymentsRoutes);
 app.use("/api/vault", vaultRoutes);
+app.use("/api/dynamodb", dynamodbRoutes);
+app.use("/api/sqs", sqsRoutes);
+app.use("/api/triggers", triggersRoutes);
+app.use("/api/sns", snsRoutes);
 
 // Cleanup scheduler
 setInterval(cleanupBuilds, 30 * 60 * 1000);

@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp } from "lucide-vue-next";
+import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow } from "lucide-vue-next";
 
 const route = useRoute();
 const dark = ref(false);
@@ -21,6 +21,7 @@ watchEffect(() => {
 const nav = [
   { label: "Lambda Builder", path: "/builder", icon: Rocket },
   { label: "Deployments", path: "/deployments", icon: CloudCog },
+  { label: "Triggers", path: "/triggers", icon: Workflow },
   { label: "Settings", path: "/settings", icon: Settings },
 ];
 </script>

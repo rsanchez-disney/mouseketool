@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import {
   Rocket, Play, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, ArrowLeft, ArrowRight,
-  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Maximize2, Minimize2, Upload, ArrowDown
+  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Maximize2, Minimize2, Upload, ArrowDown, Square,
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 
@@ -53,9 +53,12 @@ const deployEnvVars = ref<{ key: string; value: string }[]>([]);
 const savingEnvVars = ref(false);
 const envVarsCollapsed = ref(false);
 const invoking = ref(false);
+let invokeAbort: AbortController | null = null;
+function stopInvoke() { invokeAbort?.abort(); invoking.value = false; invokeAbort = null; invokeError.value = "Stopped by user"; }
 const result = ref<InvokeResult | null>(null);
 const invokeError = ref("");
 const copied = ref(false);
+const copyToast = ref("");
 const expandedResult = ref(false);
 const expandedResultInner = ref<HTMLElement | null>(null);
 
@@ -256,9 +259,11 @@ async function invoke(debug = false) {
   }
 
   try {
+    invokeAbort = new AbortController();
     const res = await fetch("/api/deployments/invoke", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ functionName: selected.value.functionName, payload: JSON.parse(payload.value), debug }),
+      signal: invokeAbort.signal,
     });
     const data = await res.json();
     if (!res.ok) {
@@ -295,7 +300,8 @@ async function invoke(debug = false) {
 function copyResult() {
   navigator.clipboard.writeText(JSON.stringify(result.value?.payload, null, 2) || "");
   copied.value = true;
-  setTimeout(() => copied.value = false, 2000);
+  copyToast.value = "Copied to clipboard";
+  setTimeout(() => { copied.value = false; copyToast.value = ""; }, 2000);
 }
 
 function timeAgo(iso: string) {
@@ -495,7 +501,8 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                   <div v-else class="max-h-40 overflow-auto space-y-1.5 scrollbar-thin">
                     <div v-for="(env, i) in deployEnvVars" :key="i" class="flex items-center gap-2">
                       <Input v-model="env.key" placeholder="KEY" class="font-mono text-xs h-7 flex-[2]" />
-                      <Input v-model="env.value" placeholder="value" class="font-mono text-xs h-7 flex-[3]" />
+                      <Input v-model="env.value" placeholder="value" class="font-mono text-xs h-7 flex-[3]" :disabled="env.isNull" :class="env.isNull ? 'opacity-40' : ''" />
+                      <Tooltip><TooltipTrigger as-child><label class="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer whitespace-nowrap"><input type="checkbox" v-model="env.isNull" class="accent-primary" />Exclude</label></TooltipTrigger><TooltipContent>Exclude this variable from the Lambda configuration</TooltipContent></Tooltip>
                       <Button variant="ghost" size="icon" class="size-7 shrink-0 text-muted-foreground hover:text-destructive cursor-pointer" @click="deployEnvVars.splice(i, 1)">×</Button>
                     </div>
                   </div>
@@ -526,16 +533,19 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                     </TooltipTrigger>
                     <TooltipContent>Invoke with verbose JVM logging to capture more error details</TooltipContent>
                   </Tooltip>
+                  <Button variant="destructive" size="icon" class="size-9 cursor-pointer" :disabled="!invoking" @click="stopInvoke"><Square class="size-3.5" /></Button>
                 </div>
               </div>
 
               <div class="space-y-2">
                 <div class="flex items-center justify-between">
                   <label class="text-sm font-medium">Result</label>
-                  <Badge v-if="result && !result.functionError" class="bg-green-500/10 text-green-600 border-green-500/20">{{ result.statusCode }}</Badge>
-                  <Badge v-else-if="result?.functionError || invokeError" variant="destructive">Error</Badge>
+                  <div class="flex items-center gap-2">
+                    <Badge v-if="result && !result.functionError" class="bg-green-500/10 text-green-600 border-green-500/20">{{ result.statusCode }}</Badge>
+                    <Badge v-else-if="result?.functionError || invokeError" variant="destructive">Error</Badge>
+                  </div>
                 </div>
-                <div class="bg-zinc-950 text-zinc-300 rounded-lg p-4 h-72 font-mono text-xs leading-relaxed overflow-hidden relative">
+                <div class="bg-zinc-950 text-zinc-300 rounded-lg p-4 h-72 font-mono text-xs leading-relaxed overflow-hidden relative border border-zinc-800">
                   <div class="h-full overflow-auto scrollbar-thin scrollbar-thumb-zinc-700">
                     <div v-if="!result && !invokeError && !invoking" class="h-full flex items-center justify-center text-zinc-600">Invoke a function to see results here</div>
                     <div v-if="invoking" class="h-full flex items-center justify-center gap-2 text-zinc-500"><Loader2 class="size-4 animate-spin" /> Running...</div>
@@ -708,6 +718,9 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
   <div v-if="deleting" class="fixed bottom-6 right-6 z-50 flex items-center gap-2 text-sm bg-primary text-primary-foreground rounded-lg px-4 py-3 shadow-lg">
     <Loader2 class="size-4 animate-spin" />
     Deleting deployment...
+  </div>
+  <div v-if="copyToast" :key="copyToast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+    <Check class="size-4" />{{ copyToast }}
   </div>
   </div>
 </template>
