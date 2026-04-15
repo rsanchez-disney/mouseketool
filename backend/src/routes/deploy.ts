@@ -32,14 +32,14 @@ router.post("/", async (req, res) => {
       await new Promise(r => setTimeout(r, 1000));
       await client.send(new UpdateFunctionConfigurationCommand({
         FunctionName: functionName, Runtime: runtime, Handler: handler,
-        Timeout: 60, MemorySize: 1024, Environment: envConfig,
+        Timeout: 60, MemorySize: 2048, Environment: envConfig,
       }));
       action = "updated";
     } catch {
       await client.send(new CreateFunctionCommand({
         FunctionName: functionName, Runtime: runtime, Handler: handler,
         Role: "arn:aws:iam::000000000000:role/lambda-role",
-        Code: { ZipFile: jarBytes }, Timeout: 60, MemorySize: 1024, Environment: envConfig,
+        Code: { ZipFile: jarBytes }, Timeout: 60, MemorySize: 2048, Environment: envConfig,
       }));
       action = "created";
     }

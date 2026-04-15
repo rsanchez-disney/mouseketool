@@ -180,13 +180,13 @@ async function invokeFunction(client: any, functionName: string, payload: any, b
 
   let logs: string[] = [];
 
-  // Tail logs from invoke response
-  if (result.LogResult) {
+  // Tail logs from invoke response (skip if function errored — local diagnostic is more reliable)
+  if (result.LogResult && !result.FunctionError) {
     logs.push(...Buffer.from(result.LogResult, "base64").toString("utf-8").split("\n").filter(Boolean));
   }
 
-  // Poll CloudWatch for logs
-  if (!logs.length) {
+  // Poll CloudWatch for logs (skip if function errored — local diagnostic is more reliable)
+  if (!logs.length && !result.FunctionError) {
     for (let i = 0; i < 5 && !logs.length; i++) {
       await new Promise(r => setTimeout(r, 1000 * (i + 1)));
       logs = await fetchLambdaLogs(functionName);
@@ -259,8 +259,8 @@ router.post("/invoke", async (req, res) => {
     let envVars: Record<string, string> = {};
     if (dep?.buildId) {
       try {
-        const saved: { key: string; value: string }[] = JSON.parse(await readFile(envVarsPath(dep.buildId), "utf-8"));
-        envVars = Object.fromEntries(saved.filter(e => e.key).map(e => [e.key, e.value]));
+        const saved: { key: string; value: string; isNull?: boolean }[] = JSON.parse(await readFile(envVarsPath(dep.buildId), "utf-8"));
+        envVars = Object.fromEntries(saved.filter(e => e.key && !e.isNull).map(e => [e.key, e.value]));
       } catch {}
     }
 
@@ -280,6 +280,13 @@ router.post("/invoke", async (req, res) => {
         const cfg = await client.send(new GetFunctionCommand({ FunctionName: functionName }));
         if (cfg.Configuration?.LastUpdateStatus !== "InProgress") break;
       }
+      // Kill warm Lambda containers to ensure fresh execution environment with updated env vars
+      try {
+        const { execSync } = await import("child_process");
+        const ids = execSync(`docker ps --filter "name=lambda-${functionName}" -q`, { encoding: "utf-8" }).trim();
+        if (ids) execSync(`docker rm -f ${ids.split("\n").join(" ")}`, { encoding: "utf-8" });
+        console.log("[invoke] Killed warm containers for", functionName);
+      } catch (e: any) { console.log("[invoke] Container cleanup skipped:", e.message); }
     } catch (e: any) {
       console.error("[invoke] env var update failed:", e.message);
     }

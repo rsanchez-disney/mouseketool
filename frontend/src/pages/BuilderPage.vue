@@ -19,11 +19,13 @@ function scrollExpandedToBottom() {
   if (expandedLogInner.value) expandedLogInner.value.scrollTop = expandedLogInner.value.scrollHeight;
 }
 const buildLogsCopied = ref(false);
+const copyToastMsg = ref("");
 
 function copyBuildLogs() {
   navigator.clipboard.writeText(buildLogs.value.map(l => l.line).join("\n"));
   buildLogsCopied.value = true;
-  setTimeout(() => buildLogsCopied.value = false, 2000);
+  copyToastMsg.value = "Copied to clipboard";
+  setTimeout(() => { buildLogsCopied.value = false; copyToastMsg.value = ""; }, 2000);
 }
 import {
   FolderOpen, FolderUp, Folder, File, Search, Hammer, Rocket, Trash2,
@@ -510,6 +512,9 @@ onMounted(loadBuilds);
       <CheckCircle2 v-if="deploySuccess" class="size-4 shrink-0" />
       <XCircle v-else class="size-4 shrink-0" />
       {{ deployMessage }}
+    </div>
+    <div v-if="copyToastMsg" :key="copyToastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+      <Check class="size-4" />{{ copyToastMsg }}
     </div>
 
     <!-- Deploying overlay -->
