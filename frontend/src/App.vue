@@ -40,7 +40,7 @@ const nav = [
                   </div>
                   <div class="flex flex-col gap-0.5 leading-none">
                     <span class="font-semibold">Mouseketool</span>
-                    <span class="text-xs text-muted-foreground">Lambda Dev Workbench</span>
+                    <span class="text-xs text-muted-foreground">Developer Workbench</span>
                   </div>
                 </router-link>
               </SidebarMenuButton>
