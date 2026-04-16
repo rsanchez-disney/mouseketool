@@ -1,7 +1,14 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { Card, CardContent } from "@/components/ui/card";
 import { encrypt, decrypt } from "@/lib/crypto";
+
+onMounted(() => window.addEventListener("keydown", onKey));
+onUnmounted(() => window.removeEventListener("keydown", onKey));
+function onKey(e: KeyboardEvent) {
+  if (e.key === "Escape") { expandedResult.value = false; return; }
+  if (e.ctrlKey && e.key === "Enter" && !invoking.value && selected.value) { e.preventDefault(); invoke(false); }
+}
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -13,7 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import {
   Rocket, Play, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, ArrowLeft, ArrowRight,
-  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Maximize2, Minimize2, Upload, ArrowDown, Square,
+  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Maximize2, Minimize2, Upload, ArrowDown, Square, RefreshCw, Search,
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 
@@ -33,6 +40,12 @@ interface InvokeResult {
 
 // --- State ---
 const deployments = ref<Deployment[]>([]);
+const searchQuery = ref("");
+const filteredDeployments = computed(() => {
+  if (!searchQuery.value) return deployments.value;
+  const q = searchQuery.value.toLowerCase();
+  return deployments.value.filter(d => d.functionName.toLowerCase().includes(q) || d.handler.toLowerCase().includes(q));
+});
 const loading = ref(true);
 const selected = ref<Deployment | null>(null);
 const step = ref<"list" | "addons" | "invoke">("list");
@@ -51,7 +64,8 @@ function uploadJson(e: Event) {
 }
 const deployEnvVars = ref<{ key: string; value: string }[]>([]);
 const savingEnvVars = ref(false);
-const envVarsCollapsed = ref(false);
+const envVarsCollapsed = ref(localStorage.getItem("mk:envCollapsed") === "true");
+const lambdaMemory = ref(2048);
 const invoking = ref(false);
 let invokeAbort: AbortController | null = null;
 function stopInvoke() { invokeAbort?.abort(); invoking.value = false; invokeAbort = null; invokeError.value = "Stopped by user"; }
@@ -61,6 +75,8 @@ const copied = ref(false);
 const copyToast = ref("");
 const expandedResult = ref(false);
 const expandedResultInner = ref<HTMLElement | null>(null);
+const logSearch = ref("");
+const searchOpen = ref(false);
 
 const rootCauseLines = computed(() => {
   if (!result.value?.logs) return [];
@@ -98,6 +114,7 @@ async function loadDeployments() {
 
 function openAddons(d: Deployment) {
   selected.value = d;
+  lambdaMemory.value = d.config?.memorySize ?? 2048;
   result.value = d.lastInvocationResult || null;
   invokeError.value = "";
   payload.value = d.lastPayload ? JSON.stringify(d.lastPayload, null, 2) : "{}";
@@ -262,7 +279,7 @@ async function invoke(debug = false) {
     invokeAbort = new AbortController();
     const res = await fetch("/api/deployments/invoke", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ functionName: selected.value.functionName, payload: JSON.parse(payload.value), debug }),
+      body: JSON.stringify({ functionName: selected.value.functionName, payload: JSON.parse(payload.value), debug, memorySize: lambdaMemory.value }),
       signal: invokeAbort.signal,
     });
     const data = await res.json();
@@ -338,9 +355,12 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
 
 <template>
   <div class="space-y-3 overflow-hidden">
+    <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-bold tracking-tight">Deployments</h1>
       <p class="text-muted-foreground">Manage and invoke your deployed Lambda functions.</p>
+    </div>
+    <Button v-if="!loading && deployments.length" variant="outline" size="sm" class="gap-2 cursor-pointer" @click="loadDeployments"><RefreshCw class="size-3.5" /> Refresh</Button>
     </div>
 
     <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
@@ -358,7 +378,11 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
 
         <!-- Step 1: List -->
         <div class="min-w-full space-y-3" style="width: 0">
-          <Card v-for="d in deployments" :key="d.functionName" class="!py-3 transition-all hover:border-primary/50">
+          <div class="relative">
+            <Search class="size-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <Input v-model="searchQuery" placeholder="Filter by function name or handler…" class="pl-9 h-8 text-xs focus-visible:ring-0 shadow-none" />
+          </div>
+          <Card v-for="d in filteredDeployments" :key="d.functionName" class="!py-3 transition-all hover:border-primary/50">
             <CardContent class="py-3 space-y-2">
               <div class="flex items-center justify-between gap-4">
                 <div class="min-w-0 flex-1 space-y-1">
@@ -413,6 +437,10 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
               </div>
             </CardContent>
           </Card>
+          <div v-if="searchQuery && !filteredDeployments.length" class="text-center py-10 text-muted-foreground">
+            <Search class="size-8 mx-auto mb-3 opacity-30" />
+            <p class="text-sm">No deployments matching "{{ searchQuery }}"</p>
+          </div>
         </div>
 
         <!-- Step 2: Add-on Settings -->
@@ -482,10 +510,18 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
               </div>
             </div>
 
+            <!-- Lambda Memory -->
+            <div class="flex items-center gap-3">
+              <label class="text-sm font-medium flex items-center gap-1.5 shrink-0"><Cpu class="size-3.5" /> Memory</label>
+              <select v-model.number="lambdaMemory" class="h-7 text-xs bg-zinc-900 border border-zinc-700 rounded-md px-2 text-zinc-200 outline-none">
+                <option v-for="m in [128, 256, 512, 1024, 1536, 2048, 3008]" :key="m" :value="m">{{ m }} MB</option>
+              </select>
+            </div>
+
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <!-- Env Vars -->
               <div class="lg:col-span-2 space-y-2">
-                <div class="flex items-center justify-between cursor-pointer select-none" @click="envVarsCollapsed = !envVarsCollapsed">
+                <div class="flex items-center justify-between cursor-pointer select-none" @click="envVarsCollapsed = !envVarsCollapsed; localStorage.setItem('mk:envCollapsed', String(envVarsCollapsed))">
                   <label class="text-sm font-medium flex items-center gap-2 cursor-pointer">
                     Environment Variables
                     <Badge variant="outline" class="text-[10px]">{{ deployEnvVars.length }}</Badge>
@@ -640,7 +676,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
               </div>
               <div v-for="(e, j) in s.entries" :key="j" class="flex items-center gap-2">
                 <Input v-model="e.key" placeholder="key" class="font-mono text-xs h-7 flex-1" />
-                <Input v-model="e.value" placeholder="value" class="font-mono text-xs h-7 flex-1" />
+                <Input v-model="e.value" type="password" placeholder="value" class="font-mono text-xs h-7 flex-1" />
                 <Button v-if="s.entries.length > 1" variant="ghost" size="icon" class="size-6 shrink-0 text-muted-foreground hover:text-destructive cursor-pointer" @click="s.entries.splice(j, 1)"><X class="size-2.5" /></Button>
               </div>
               <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer w-full" @click="s.entries.push({ key: '', value: '' })"><Plus class="size-3" /> Add field</Button>
@@ -683,6 +719,10 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
       <DialogTitle class="sr-only">Invocation Result</DialogTitle>
       <DialogDescription class="sr-only">Expanded invocation result</DialogDescription>
       <div class="flex items-center justify-end gap-1 px-3 py-2 shrink-0">
+        <div class="mr-auto flex items-center">
+          <Button v-if="!searchOpen" variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="searchOpen = true"><Search class="size-3.5" /></Button>
+          <div v-else class="relative flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-200"><Search class="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" /><input v-model="logSearch" placeholder="Search logs…" class="h-7 w-56 text-xs font-mono bg-zinc-900 border border-zinc-700 rounded-md pl-7 pr-2 text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-zinc-500" @vue:mounted="(e: any) => e.el.focus()" /><Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-400 hover:text-white shrink-0" @click="searchOpen = false; logSearch = ''"><X class="size-3" /></Button></div>
+        </div>
         <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="scrollExpandedResultToBottom">
           <ArrowDown class="size-3.5" />
         </Button>
@@ -705,6 +745,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
           <div v-if="result.logs?.length" class="mt-3 pt-3 border-t border-zinc-800">
             <div class="text-zinc-500 mb-1">Lambda Logs:</div>
             <div v-for="(line, i) in result.logs" :key="i" class="whitespace-nowrap" :class="[
+              logSearch && !line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' :
               line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') ? 'text-red-400' :
               line.startsWith('⚠') ? 'text-yellow-400' :
               line.includes('── Diagnostics') || line.includes('── Vault') ? 'text-blue-400 font-semibold mt-2' :

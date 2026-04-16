@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+
+function onKey(e: KeyboardEvent) { if (e.key === "Escape") expandedLogStep.value = ""; }
+onMounted(() => window.addEventListener("keydown", onKey));
+onUnmounted(() => window.removeEventListener("keydown", onKey));
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
-  Database, Loader2, ArrowLeft, Play, Check, AlertTriangle, Bell, Inbox, Zap, ChevronDown, ChevronRight, Copy, Maximize2, Minimize2, Square,
+  Database, Loader2, ArrowLeft, Play, Check, AlertTriangle, Bell, Inbox, Zap, ChevronDown, ChevronRight, Copy, Maximize2, Minimize2, Square, Search, X,
 } from "lucide-vue-next";
 
 const route = useRoute();
@@ -37,6 +42,8 @@ const allDone = computed(() => steps.value.every(s => s.status !== "pending" && 
 const copiedStep = ref("");
 const expandedLogStep = ref("");
 const expandedLogContent = ref<string[]>([]);
+const logSearch = ref("");
+const searchOpen = ref(false);
 
 function copyStepLogs(logs: string[]) {
   navigator.clipboard.writeText(logs.join("\n"));
@@ -241,11 +248,16 @@ onMounted(loadPipeline);
       <DialogContent class="!max-w-[97vw] w-[97vw] max-h-[90vh] p-0 gap-0 border-zinc-800 bg-zinc-950 shadow-2xl !rounded-lg [&>button]:hidden">
         <DialogTitle class="sr-only">Logs</DialogTitle><DialogDescription class="sr-only">Expanded log output</DialogDescription>
         <div class="flex items-center justify-end gap-1 px-3 py-2">
+          <div class="mr-auto flex items-center">
+            <Button v-if="!searchOpen" variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="searchOpen = true"><Search class="size-3.5" /></Button>
+            <div v-else class="relative flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-200"><Search class="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" /><input v-model="logSearch" placeholder="Search logs…" class="h-7 w-56 text-xs font-mono bg-zinc-900 border border-zinc-700 rounded-md pl-7 pr-2 text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-zinc-500" @vue:mounted="(e: any) => e.el.focus()" /><Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-400 hover:text-white shrink-0" @click="searchOpen = false; logSearch = ''"><X class="size-3" /></Button></div>
+          </div>
           <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="copyStepLogs(expandedLogContent)"><Copy class="size-3.5" /></Button>
           <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="expandedLogStep = ''"><Minimize2 class="size-3.5" /></Button>
         </div>
         <div class="overflow-auto scrollbar-visible px-4 pb-4 h-[80vh]">
-          <pre class="text-xs text-zinc-300 font-mono whitespace-pre leading-relaxed">{{ expandedLogContent.join('\n') }}</pre>
+          <pre class="text-xs text-zinc-300 font-mono whitespace-pre leading-relaxed"><template v-for="(line, i) in expandedLogContent" :key="i"><span :class="logSearch && !line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' : ''">{{ line }}
+</span></template></pre>
         </div>
       </DialogContent>
     </Dialog>

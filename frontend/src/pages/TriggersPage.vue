@@ -712,7 +712,7 @@ onMounted(loadMappings);
               </div>
               <div v-for="(e, j) in s.entries" :key="j" class="flex items-center gap-2">
                 <Input v-model="e.key" placeholder="key" class="font-mono text-xs h-7 flex-1" />
-                <Input v-model="e.value" placeholder="value" class="font-mono text-xs h-7 flex-1" />
+                <Input v-model="e.value" type="password" placeholder="value" class="font-mono text-xs h-7 flex-1" />
                 <Button v-if="s.entries.length > 1" variant="ghost" size="icon" class="size-6 shrink-0 text-muted-foreground hover:text-destructive cursor-pointer" @click="s.entries.splice(j, 1)"><X class="size-2.5" /></Button>
               </div>
               <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer w-full" @click="s.entries.push({ key: '', value: '' })"><Plus class="size-3" /> Add field</Button>

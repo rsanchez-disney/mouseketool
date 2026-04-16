@@ -9,7 +9,7 @@ import { formatAwsError } from "../helpers/aws-error.js";
 const router = Router();
 
 router.post("/", async (req, res) => {
-  const { buildId, handler, runtime = "java21", functionName } = req.body;
+  const { buildId, handler, runtime = "java21", functionName, memorySize = 2048 } = req.body;
   if (!buildId || !handler || !functionName) return res.status(400).json({ error: "buildId, handler, and functionName are required" });
 
   try {
@@ -32,14 +32,14 @@ router.post("/", async (req, res) => {
       await new Promise(r => setTimeout(r, 1000));
       await client.send(new UpdateFunctionConfigurationCommand({
         FunctionName: functionName, Runtime: runtime, Handler: handler,
-        Timeout: 60, MemorySize: 2048, Environment: envConfig,
+        Timeout: 60, MemorySize: memorySize, Environment: envConfig,
       }));
       action = "updated";
     } catch {
       await client.send(new CreateFunctionCommand({
         FunctionName: functionName, Runtime: runtime, Handler: handler,
         Role: "arn:aws:iam::000000000000:role/lambda-role",
-        Code: { ZipFile: jarBytes }, Timeout: 60, MemorySize: 2048, Environment: envConfig,
+        Code: { ZipFile: jarBytes }, Timeout: 60, MemorySize: memorySize, Environment: envConfig,
       }));
       action = "created";
     }

@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
+
+function onKey(e: KeyboardEvent) { if (e.key === "Escape") { expandedConsole.value = false; showBrowser.value = false; } }
+onMounted(() => window.addEventListener("keydown", onKey));
+onUnmounted(() => window.removeEventListener("keydown", onKey));
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +18,8 @@ import ConfirmDialog from "@/components/ConfirmDialog.vue";
 
 const expandedConsole = ref(false);
 const expandedLogInner = ref<HTMLElement | null>(null);
+const logSearch = ref("");
+const searchOpen = ref(false);
 
 function scrollExpandedToBottom() {
   if (expandedLogInner.value) expandedLogInner.value.scrollTop = expandedLogInner.value.scrollHeight;
@@ -30,7 +36,7 @@ function copyBuildLogs() {
 import {
   FolderOpen, FolderUp, Folder, File, Search, Hammer, Rocket, Trash2,
   Loader2, CheckCircle2, XCircle, Package, Clock, RotateCcw, Square, ArrowDown,
-  Feather, Diamond, Maximize2, Minimize2, Copy, Check,
+  Feather, Diamond, Maximize2, Minimize2, Copy, Check, X,
 } from "lucide-vue-next";
 
 // --- Types ---
@@ -538,6 +544,10 @@ onMounted(loadBuilds);
         <DialogTitle class="sr-only">Build Console</DialogTitle>
         <DialogDescription class="sr-only">Expanded build console output</DialogDescription>
         <div class="flex items-center justify-end gap-1 px-3 py-2">
+          <div class="mr-auto flex items-center">
+            <Button v-if="!searchOpen" variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="searchOpen = true"><Search class="size-3.5" /></Button>
+            <div v-else class="relative flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-200"><Search class="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" /><input v-model="logSearch" placeholder="Search logs…" class="h-7 w-56 text-xs font-mono bg-zinc-900 border border-zinc-700 rounded-md pl-7 pr-2 text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-zinc-500" @vue:mounted="(e: any) => e.el.focus()" /><Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-400 hover:text-white shrink-0" @click="searchOpen = false; logSearch = ''"><X class="size-3" /></Button></div>
+          </div>
           <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="scrollExpandedToBottom">
             <ArrowDown class="size-3.5" />
           </Button>
@@ -549,7 +559,7 @@ onMounted(loadBuilds);
           </Button>
         </div>
         <div ref="expandedLogInner" class="overflow-auto scrollbar-visible px-4 pb-4 h-[80vh] text-zinc-300 font-mono text-xs leading-relaxed">
-          <div v-for="(log, i) in buildLogs" :key="i" :class="log.isError ? 'text-red-400' : ''" class="whitespace-nowrap">{{ log.line }}</div>
+          <div v-for="(log, i) in buildLogs" :key="i" :class="[logSearch && !log.line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' : log.isError ? 'text-red-400' : '']" class="whitespace-nowrap">{{ log.line }}</div>
         </div>
       </DialogContent>
     </Dialog>

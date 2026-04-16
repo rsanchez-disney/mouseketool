@@ -1,42 +1,39 @@
-# frontend
+# Mouseketool — Frontend
 
-This template should help get you started developing with Vue 3 in Vite.
+Vue 3 + TypeScript single-page application with Tailwind CSS 4 and shadcn-vue (Reka UI) components.
 
-## Recommended IDE Setup
+## Running
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
-
-## Recommended Browser Setup
-
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
-
-## Type Support for `.vue` Imports in TS
-
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) to make the TypeScript language service aware of `.vue` types.
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
-
-```sh
+```bash
 npm install
+npm run dev          # Development server with HMR
+npm run build        # Production build
+npm run type-check   # TypeScript type checking
 ```
 
-### Compile and Hot-Reload for Development
+The dev server starts on `http://localhost:5173` and proxies `/api` requests to the backend at `http://localhost:3001`.
 
-```sh
-npm run dev
-```
+## Routes
 
-### Type-Check, Compile and Minify for Production
+| Path | Page | Description |
+|---|---|---|
+| `/builder` | BuilderPage | Build Java projects |
+| `/deployments` | DeploymentsPage | Manage and invoke Lambdas |
+| `/triggers` | TriggersPage | Create and manage pipelines |
+| `/triggers/:id/execute` | ExecutionPage | Run a pipeline |
+| `/triggers/:id/history` | HistoryPage | View pipeline run history |
+| `/settings` | SettingsPage | Configure LocalStack connection |
+| `/help` | HelpPage | In-app documentation |
 
-```sh
-npm run build
-```
+Registered via `window.addEventListener("keydown")` in `onMounted`, cleaned up in `onUnmounted`.
+
+## Dependencies
+
+- **vue** 3 + **vue-router** 5 — SPA framework and routing
+- **reka-ui** — Headless UI primitives (shadcn-vue foundation)
+- **tailwindcss** 4 + **tw-animate-css** — Styling and animations
+- **lucide-vue-next** — Icon library
+- **class-variance-authority** + **clsx** + **tailwind-merge** — Class composition utilities
+- **@vueuse/core** — Vue composition utilities
+
+[← Back to README](../README.md)

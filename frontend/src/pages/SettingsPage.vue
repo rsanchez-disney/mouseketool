@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Save, Check, Loader2, Server, KeyRound, Trash2 } from "lucide-vue-next";
 
 const settings = ref({
-  localstack: { host: "localhost", port: 4566 },
+  localstack: { host: "localhost", port: 4566, protocol: "http" },
   aws: { accessKeyId: "test", secretAccessKey: "test", region: "us-east-1" },
   cleanup: { ttlMinutes: 1440 },
 });
@@ -17,7 +17,8 @@ const saving = ref(false);
 const saved = ref(false);
 
 onMounted(async () => {
-  settings.value = await (await fetch("/api/settings")).json();
+  const data = await (await fetch("/api/settings")).json();
+  settings.value = { ...settings.value, ...data, localstack: { ...settings.value.localstack, ...data.localstack } };
 });
 
 async function save() {

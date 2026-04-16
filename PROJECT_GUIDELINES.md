@@ -29,6 +29,20 @@
 3. Developer tells Kiro to commit → Kiro bumps versions + commits.
 4. Developer merges feature branch to `main`.
 
+### Documentation on Commit
+When a feature is complete and the developer confirms it's ready:
+1. **Before committing code**, update the Help page (`HelpPage.vue`) and any relevant `.md` files (README, docs/, project-highlights, proposed-changes) to document the new feature. **Do not use emojis** in any documentation files.
+2. **Commit the code changes first** (without the documentation updates).
+3. **Present a summary** of what was added/changed in the Help page and `.md` files.
+4. **Wait for the developer to review** the documentation changes personally.
+5. **Only after approval**, commit the documentation changes as a separate commit on the same branch.
+
+### Branch Completion (Merge to Main)
+After all commits (code + docs) are on the feature branch:
+1. Scan all new/modified files for sensitive information (tokens, secrets, credentials, API keys). Verify `.gitignore` covers any new generated or data files.
+2. `git checkout main && git merge <branch> --no-ff` with a merge commit message.
+3. Switch back to the feature branch after merging — do NOT delete it.
+
 ## Dependency & Code Quality Standards
 
 ### Always Verify Before Using

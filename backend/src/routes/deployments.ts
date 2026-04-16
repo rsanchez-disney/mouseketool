@@ -245,7 +245,7 @@ router.put("/env/:buildId", async (req, res) => {
 });
 
 router.post("/invoke", async (req, res) => {
-  const { functionName, payload, debug } = req.body;
+  const { functionName, payload, debug, memorySize } = req.body;
   if (!functionName) return res.status(400).json({ error: "functionName is required" });
 
   try {
@@ -274,6 +274,7 @@ router.post("/invoke", async (req, res) => {
       await client.send(new UpdateFunctionConfigurationCommand({
         FunctionName: functionName,
         Environment: { Variables: envVars },
+        ...(memorySize ? { MemorySize: memorySize } : {}),
       }));
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 500));
