@@ -256,11 +256,39 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
           pipeline is wired up. The secret values are applied as env vars on the target Lambda.</li>
         </ul>
 
-        <p class="font-medium text-foreground">Template Lambdas</p>
+        <p class="font-medium text-foreground" id="template-lambda">Template Lambdas</p>
         <p>The Stream Handler Lambda is a template function that Mouseketool manages for you. It's a Node.js function
-        that reads DynamoDB Stream records and publishes them to SNS. Mouseketool tracks the template version using a
+        that reads DynamoDB Stream records, unmarshalls them into plain JSON objects, and publishes them to SNS.
+        For example, if your DynamoDB item is <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": {"S": "amongus"}, "count": {"N": "5"}}</code>,
+        the message published to SNS will be <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": "amongus", "count": 5}</code>.
+        This means SNS filter policies can match directly on your item's field names and values without dealing with
+        DynamoDB's marshalled format.</p>
+        <p>Mouseketool tracks the template version using a
         hash — if the template code changes (e.g. after an app update), the pipeline card will show an "outdated" badge
         and you can redeploy the stream handler with one click.</p>
+
+        <p class="font-medium text-foreground">SNS Filter Policies</p>
+        <p>When selecting an SNS topic in Step 3, you can optionally enable a filter policy. This controls which messages
+        SNS delivers to the SQS queue. The filter policy builder supports 9 operator types: string exact match, prefix,
+        anything-but, anything-but prefix, suffix, wildcard, number exact match, number range, and key exists/not exists.
+        Values are entered as chips (type and press Enter). All rules are combined with AND logic. The filter is applied
+        on the SNS subscription, not the topic itself.</p>
+        <p>You can choose between <strong>Message body</strong> (default) and <strong>Message attributes</strong> as the
+        filter scope. Since the stream handler publishes unmarshalled items as the message body, Message body filtering
+        lets you match directly on your DynamoDB item fields.</p>
+
+        <p class="font-medium text-foreground">Background Pipeline Watcher</p>
+        <p>Mouseketool runs a continuous background worker that monitors CloudWatch logs for all pipeline stream handlers.
+        When a new invocation is detected (whether from a manual execution or an external DynamoDB insert), the watcher
+        spawns an observer that tracks the run through SNS, SQS, and the target Lambda in real-time. This means the
+        History page updates automatically without manual refresh. The observer polling interval is configurable in Settings.</p>
+
+        <p class="font-medium text-foreground">Shadow Infrastructure</p>
+        <p>Behind the scenes, Mouseketool creates a shadow SQS queue, a shadow Lambda, and an S3 bucket on startup.
+        The shadow queue subscribes to every pipeline's SNS topic (without a filter) to capture the exact SQS payload
+        that the target Lambda receives. If the target Lambda fails without producing CloudWatch logs, Mouseketool uses
+        the captured payload to re-invoke the Lambda and extract the full error details. Shadow resources are cleaned up
+        and recreated on every backend restart.</p>
 
         <p class="font-medium text-foreground">Managing pipelines</p>
         <p>After creating a pipeline, it appears as a card on the Triggers page. You can select one or more pipelines

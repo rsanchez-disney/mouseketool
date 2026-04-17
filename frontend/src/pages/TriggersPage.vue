@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
-  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown,
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter,
 } from "lucide-vue-next";
 
 const triggerRouter = useRouter();
@@ -54,7 +54,58 @@ const topics = ref<SnsTopic[]>([]);
 const loadingTopics = ref(false);
 const selectedTopic = ref<SnsTopic | null>(null);
 const showCreateTopic = ref(false);
-const newTopicName = ref(""); const creatingTopic = ref(false);
+const newTopicName = ref(""); const creatingTopic = ref(false); const topicCreatedByUs = ref(false);
+
+// Filter policy
+type FilterOp = "exact-string" | "prefix" | "anything-but" | "anything-but-prefix" | "suffix" | "wildcard" | "exact-number" | "number-range" | "exists";
+interface FilterRule { field: string; op: FilterOp; values: string[]; chipInput: string; rangeMin: string; rangeMax: string; rangeLow: ">" | ">="; rangeHigh: "<" | "<="; existsVal: boolean; }
+const filterEnabled = ref(false);
+const filterScope = ref<"MessageBody" | "MessageAttributes">("MessageBody");
+const filterRules = ref<FilterRule[]>([]);
+const filterOps: { value: FilterOp; label: string }[] = [
+  { value: "exact-string", label: "String — exact match" },
+  { value: "prefix", label: "String — prefix" },
+  { value: "anything-but", label: "String — anything-but" },
+  { value: "anything-but-prefix", label: "String — anything-but prefix" },
+  { value: "suffix", label: "String — suffix" },
+  { value: "wildcard", label: "String — wildcard" },
+  { value: "exact-number", label: "Number — exact match" },
+  { value: "number-range", label: "Number — range" },
+  { value: "exists", label: "Key — exists / not exists" },
+];
+function newRule(): FilterRule { return { field: "", op: "exact-string", values: [], chipInput: "", rangeMin: "", rangeMax: "", rangeLow: ">=", rangeHigh: "<=", existsVal: true }; }
+function addFilterRule() { filterRules.value.push(newRule()); }
+watch(filterEnabled, v => { if (v && !filterRules.value.length) addFilterRule(); });
+function removeFilterRule(i: number) { filterRules.value.splice(i, 1); }
+function addChip(r: FilterRule) { const v = r.chipInput.trim(); if (!v || r.values.includes(v)) return; r.values.push(v); r.chipInput = ""; }
+function removeChip(r: FilterRule, i: number) { r.values.splice(i, 1); }
+function buildFilterPolicy(): Record<string, unknown> | null {
+  if (!filterEnabled.value || !filterRules.value.length) return null;
+  const policy: Record<string, unknown> = {};
+  for (const r of filterRules.value) {
+    if (!r.field) continue;
+    let condition: unknown;
+    switch (r.op) {
+      case "exact-string": condition = r.values; break;
+      case "prefix": condition = r.values.map(v => ({ prefix: v })); break;
+      case "anything-but": condition = [{ "anything-but": r.values }]; break;
+      case "anything-but-prefix": condition = [{ "anything-but": { prefix: r.values.length === 1 ? r.values[0] : r.values } }]; break;
+      case "suffix": condition = r.values.map(v => ({ suffix: v })); break;
+      case "wildcard": condition = r.values.map(v => ({ wildcard: v })); break;
+      case "exact-number": condition = r.values.map(v => ({ numeric: ["=", Number(v)] })); break;
+      case "number-range": {
+        const ops: (string | number)[] = [];
+        if (r.rangeMin) { ops.push(r.rangeLow, Number(r.rangeMin)); }
+        if (r.rangeMax) { ops.push(r.rangeHigh, Number(r.rangeMax)); }
+        condition = ops.length ? [{ numeric: ops }] : [];
+        break;
+      }
+      case "exists": condition = [{ exists: r.existsVal }]; break;
+    }
+    if (condition && (Array.isArray(condition) ? condition.length : true)) policy[r.field] = condition;
+  }
+  return Object.keys(policy).length ? policy : null;
+}
 
 // SQS
 interface SqsQueue { name: string; url: string; arn: string | null; messageCount: number; }
@@ -62,7 +113,7 @@ const queues = ref<SqsQueue[]>([]);
 const loadingQueues = ref(false);
 const selectedQueue = ref<SqsQueue | null>(null);
 const showCreateQueue = ref(false);
-const newQueueName = ref(""); const creatingQueue = ref(false); const createDlq = ref(true); const maxReceiveCount = ref(3);
+const newQueueName = ref(""); const creatingQueue = ref(false); const createDlq = ref(true); const maxReceiveCount = ref(3); const queueCreatedByUs = ref(false);
 
 // Lambda + templates
 interface LambdaFunc { name: string; runtime: string; handler: string; arn: string; templateId?: string | null; outdated?: boolean; }
@@ -87,7 +138,7 @@ watch([selectedGlueFunction, selectedTargetFunction], ([g, t]) => {
 });
 
 // Mappings
-interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; }
+interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; }
 const mappings = ref<Pipeline[]>([]);
 const loadingMappings = ref(false);
 
@@ -100,6 +151,10 @@ const deletingMapping = ref(""); const expandedAddons = ref("");
 const selectedPipelines = ref<Set<string>>(new Set());
 const showActionsMenu = ref(false);
 const showDeleteConfirm = ref(false);
+const deleteExternalResources = ref(false);
+const deleteVaultSecrets = ref(false);
+const selectedHasExternal = computed(() => [...selectedPipelines.value].some(id => { const p = mappings.value.find(m => m.id === id); return p && (p.topicCreatedByUs === false || p.queueCreatedByUs === false); }));
+const selectedHasVault = computed(() => [...selectedPipelines.value].some(id => { const p = mappings.value.find(m => m.id === id); return p?.vaultConfig?.paths?.length; }));
 const showStepsModal = ref(false);
 const stepsPipeline = ref<Pipeline | null>(null);
 
@@ -170,7 +225,7 @@ async function applyVaultSecrets() {
     const secretsPayload = vaultSecrets.value.filter(s => s.path).map(s => ({ path: s.path, value: JSON.stringify(Object.fromEntries(s.entries.filter(e => e.key).map(e => [e.key, e.value]))) }));
     const setupRes = await fetch("/api/vault/setup-secrets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets: secretsPayload }) });
     if (!setupRes.ok) { const err = await setupRes.json().catch(() => ({ error: "Unknown" })); showToast(`Vault setup failed: ${err.error}`, true); vaultApplying.value = false; return; }
-    showToast("Vault secrets created. They will be applied as env vars when the pipeline is wired.");
+    showToast("Vault secrets created successfully.");
     showVaultSheet.value = false;
   } catch (e: any) { showToast(`Error: ${e.message}`, true); }
   vaultApplying.value = false;
@@ -258,8 +313,8 @@ function goToStep5() { if (!selectedQueue.value) return; stepIndex.value = 4; lo
 // Data loaders
 async function loadTables() { loading.value = true; try { tables.value = await (await fetch("/api/dynamodb/tables")).json(); } catch { tables.value = []; } loading.value = false; }
 async function loadTopics() { loadingTopics.value = true; try { topics.value = await (await fetch("/api/sns/topics")).json(); } catch { topics.value = []; } loadingTopics.value = false; }
-async function loadQueues() { loadingQueues.value = true; try { queues.value = await (await fetch("/api/sqs/queues")).json(); } catch { queues.value = []; } loadingQueues.value = false; }
-async function loadFunctions() { loadingFunctions.value = true; try { functions.value = await (await fetch("/api/triggers/functions")).json(); } catch { functions.value = []; } loadingFunctions.value = false; }
+async function loadQueues() { loadingQueues.value = true; try { queues.value = (await (await fetch("/api/sqs/queues")).json()).filter((q: SqsQueue) => !q.name.startsWith("mk-shadow-")); } catch { queues.value = []; } loadingQueues.value = false; }
+async function loadFunctions() { loadingFunctions.value = true; try { functions.value = (await (await fetch("/api/triggers/functions")).json()).filter((f: LambdaFunc) => !f.name.startsWith("mk-shadow-")); } catch { functions.value = []; } loadingFunctions.value = false; }
 async function loadTemplates() { try { templates.value = await (await fetch("/api/triggers/templates")).json(); } catch { templates.value = []; } }
 async function loadMappings() { loadingMappings.value = true; try { mappings.value = await (await fetch("/api/triggers/pipelines")).json(); } catch { mappings.value = []; } loadingMappings.value = false; }
 
@@ -277,14 +332,14 @@ async function enableStream(name: string) { enablingStream.value = name; try { a
 async function createTopic() {
   creatingTopic.value = true;
   try { const res = await fetch("/api/sns/topics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ topicName: newTopicName.value }) });
-    if (res.ok) { showCreateTopic.value = false; newTopicName.value = ""; await loadTopics(); }
+    if (res.ok) { showCreateTopic.value = false; newTopicName.value = ""; topicCreatedByUs.value = true; await loadTopics(); }
     else { const d = await res.json(); showToast(d.error || "Failed to create topic", true); }
   } catch {} creatingTopic.value = false;
 }
 async function createQueue() {
   creatingQueue.value = true;
   try { const res = await fetch("/api/sqs/queues", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ queueName: newQueueName.value, createDlq: createDlq.value, maxReceiveCount: maxReceiveCount.value }) });
-    if (res.ok) { showCreateQueue.value = false; newQueueName.value = ""; createDlq.value = true; maxReceiveCount.value = 3; await loadQueues(); }
+    if (res.ok) { showCreateQueue.value = false; newQueueName.value = ""; createDlq.value = true; maxReceiveCount.value = 3; queueCreatedByUs.value = true; await loadQueues(); }
     else { const d = await res.json(); showToast(d.error || "Failed to create queue", true); }
   } catch {} creatingQueue.value = false;
 }
@@ -306,11 +361,11 @@ async function wirePipeline() {
   wiring.value = true; wireError.value = ""; wireResult.value = null;
   try {
     const res = await fetch("/api/triggers/wire", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ streamArn: selectedTable.value.streamArn, glueFunctionName: selectedGlueFunction.value.name, topicArn: selectedTopic.value.arn, queueUrl: selectedQueue.value.url, targetFunctionName: selectedTargetFunction.value.name, pipelineName: pipelineName.value, addons: vaultEnabled.value ? ["vault"] : [] }) });
+      body: JSON.stringify({ streamArn: selectedTable.value.streamArn, glueFunctionName: selectedGlueFunction.value.name, topicArn: selectedTopic.value.arn, queueUrl: selectedQueue.value.url, targetFunctionName: selectedTargetFunction.value.name, pipelineName: pipelineName.value, addons: vaultEnabled.value ? ["vault"] : [], filterPolicy: buildFilterPolicy(), filterPolicyScope: filterEnabled.value ? filterScope.value : undefined, topicCreatedByUs: topicCreatedByUs.value, queueCreatedByUs: queueCreatedByUs.value, vaultConfig: vaultEnabled.value && vaultSecrets.value.some(s => s.path) ? { url: vaultUrl.value, token: vaultToken.value, paths: vaultSecrets.value.filter(s => s.path).map(s => s.path) } : undefined }) });
     const data = await res.json();
     if (res.ok) {
       wireResult.value = data;
-      // Apply vault secrets as env vars to the target Lambda
+      // Vault secrets were already created in the add-ons step
     } else wireError.value = data.error || "Failed to wire";
   } catch (e: any) { wireError.value = e.message; }
   wiring.value = false;
@@ -320,8 +375,12 @@ async function wirePipeline() {
 async function deleteMapping(id: string) { deletingMapping.value = id; try { await fetch(`/api/triggers/pipelines/${id}`, { method: "DELETE" }); await loadMappings(); } catch {} deletingMapping.value = ""; }
 async function deleteSelected() {
   showDeleteConfirm.value = false;
-  for (const id of selectedPipelines.value) { deletingMapping.value = id; try { await fetch(`/api/triggers/pipelines/${id}`, { method: "DELETE" }); } catch {} }
-  selectedPipelines.value = new Set(); deletingMapping.value = ""; await loadMappings();
+  const params = new URLSearchParams();
+  if (deleteExternalResources.value) params.set("deleteExternal", "true");
+  if (deleteVaultSecrets.value) params.set("deleteVault", "true");
+  const qs = params.toString() ? `?${params}` : "";
+  for (const id of selectedPipelines.value) { deletingMapping.value = id; try { await fetch(`/api/triggers/pipelines/${id}${qs}`, { method: "DELETE" }); } catch {} }
+  selectedPipelines.value = new Set(); deletingMapping.value = ""; deleteExternalResources.value = false; deleteVaultSecrets.value = false; await loadMappings();
 }
 function toggleSelect(id: string) { selectedPipelines.value.has(id) ? selectedPipelines.value.delete(id) : selectedPipelines.value.add(id); selectedPipelines.value = new Set(selectedPipelines.value); }
 
@@ -345,8 +404,8 @@ async function runQuickTest() {
 }
 
 function selectTable(t: DynamoTable) { if (t.streamEnabled) selectedTable.value = t; }
-function formatBytes(b: number) { if (b < 1024) return `${b} B`; if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`; return `${(b / 1048576).toFixed(1)} MB`; }
-function startWizard() { view.value = "wizard"; stepIndex.value = 0; selectedSource.value = null; selectedTable.value = null; selectedTopic.value = null; selectedQueue.value = null; selectedGlueFunction.value = null; selectedTargetFunction.value = null; wireResult.value = null; wireError.value = ""; pipelineName.value = ""; vaultEnabled.value = false; vaultUrl.value = ""; vaultToken.value = ""; vaultSecrets.value = []; vaultTestResult.value = null; }
+import { formatBytes } from "@/lib/format";
+function startWizard() { view.value = "wizard"; stepIndex.value = 0; selectedSource.value = null; selectedTable.value = null; selectedTopic.value = null; selectedQueue.value = null; selectedGlueFunction.value = null; selectedTargetFunction.value = null; wireResult.value = null; wireError.value = ""; pipelineName.value = ""; vaultEnabled.value = false; vaultUrl.value = ""; vaultToken.value = ""; vaultSecrets.value = []; vaultTestResult.value = null; filterEnabled.value = false; filterScope.value = "MessageBody"; filterRules.value = []; topics.value = []; queues.value = []; tables.value = []; topicCreatedByUs.value = false; queueCreatedByUs.value = false; }
 function isTemplateDeployed(t: Template) { return functions.value.some(f => f.templateId === t.id); }
 function startOver() { loadMappings(); view.value = "list"; }
 
@@ -410,7 +469,7 @@ onMounted(loadMappings);
       </div>
     </template>
     <template v-if="view === 'wizard'">
-    <div class="overflow-hidden"><div class="flex transition-transform duration-300 ease-in-out" :style="{ transform: `translateX(-${stepIndex * 100}%)` }">
+    <div class="overflow-x-hidden"><div class="flex transition-transform duration-300 ease-in-out" :style="{ transform: `translateX(-${stepIndex * 100}%)` }">
         <!-- Step 1: Source -->
         <div class="min-w-full space-y-4 px-px shrink-0" style="width: 0">
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 1</Badge><span>Choose an event source</span></div>
@@ -458,6 +517,72 @@ onMounted(loadMappings);
             <div class="shrink-0"><Button v-if="selectedTopic?.arn===t.arn" variant="default" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click.stop="goToStep4">Next <ArrowRight class="size-3.5" /></Button></div>
             </div></CardContent></Card>
           </div>
+
+          <!-- Filter policy (optional) -->
+          <div v-if="selectedTopic" class="space-y-3 pt-2">
+            <div class="flex items-center gap-3">
+              <Switch v-model="filterEnabled" class="cursor-pointer" />
+              <div class="flex items-center gap-1.5 text-sm"><ListFilter class="size-3.5 text-muted-foreground" /> Filter policy <span class="text-xs text-muted-foreground">(optional)</span></div>
+            </div>
+            <template v-if="filterEnabled">
+              <div class="flex items-center gap-2">
+                <Label class="text-xs text-muted-foreground shrink-0">Scope:</Label>
+                <Select v-model="filterScope">
+                  <SelectTrigger class="h-7 text-xs w-52"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MessageBody">Message body</SelectItem>
+                    <SelectItem value="MessageAttributes">Message attributes</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <p class="text-xs text-muted-foreground">All rules are combined with AND logic. OR conditions will be available in a future release.</p>
+              <div class="space-y-3">
+                <Card v-for="(r, i) in filterRules" :key="i" class="!py-3">
+                  <CardContent class="py-3 space-y-2">
+                    <div class="flex items-center gap-2">
+                      <Input v-model="r.field" placeholder="Field name" class="font-mono text-xs h-7 flex-1" />
+                      <Select v-model="r.op" @update:model-value="() => { r.values = []; r.chipInput = ''; }">
+                        <SelectTrigger class="h-7 text-xs w-56"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem v-for="o in filterOps" :key="o.value" :value="o.value">{{ o.label }}</SelectItem></SelectContent>
+                      </Select>
+                      <Button variant="ghost" size="icon" class="size-7 shrink-0 text-muted-foreground hover:text-destructive cursor-pointer" @click="removeFilterRule(i)"><X class="size-3" /></Button>
+                    </div>
+                    <!-- Chip input for string/number exact -->
+                    <div v-if="['exact-string','prefix','anything-but','anything-but-prefix','suffix','wildcard','exact-number'].includes(r.op)" class="space-y-1.5">
+                      <div class="flex items-center gap-1.5">
+                        <Input v-model="r.chipInput" :placeholder="r.op.startsWith('exact-number') ? 'Type a number and press Enter' : 'Type a value and press Enter'" class="font-mono text-xs h-7 flex-1" :type="r.op === 'exact-number' ? 'number' : 'text'" @keydown.enter.prevent="addChip(r)" />
+                      </div>
+                      <div v-if="r.values.length" class="flex flex-wrap gap-1">
+                        <Badge v-for="(v, vi) in r.values" :key="vi" variant="secondary" class="gap-1 text-xs font-mono">{{ v }}<button class="ml-0.5 hover:text-destructive cursor-pointer" @click="removeChip(r, vi)"><X class="size-2.5" /></button></Badge>
+                      </div>
+                    </div>
+                    <!-- Range input for number-range -->
+                    <div v-else-if="r.op === 'number-range'" class="flex items-center gap-2 flex-wrap">
+                      <Select v-model="r.rangeLow">
+                        <SelectTrigger class="h-7 text-xs w-20"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value=">">&#x3E;</SelectItem><SelectItem value=">=">&gt;=</SelectItem></SelectContent>
+                      </Select>
+                      <Input v-model="r.rangeMin" type="number" placeholder="Min" class="font-mono text-xs h-7 w-28" />
+                      <span class="text-xs text-muted-foreground">and</span>
+                      <Select v-model="r.rangeHigh">
+                        <SelectTrigger class="h-7 text-xs w-20"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem value="<">&lt;</SelectItem><SelectItem value="<=">&lt;=</SelectItem></SelectContent>
+                      </Select>
+                      <Input v-model="r.rangeMax" type="number" placeholder="Max" class="font-mono text-xs h-7 w-28" />
+                    </div>
+                    <!-- Exists toggle -->
+                    <div v-else-if="r.op === 'exists'" class="flex items-center gap-2">
+                      <Select v-model="r.existsVal">
+                        <SelectTrigger class="h-7 text-xs w-40"><SelectValue /></SelectTrigger>
+                        <SelectContent><SelectItem :value="true">Exists (true)</SelectItem><SelectItem :value="false">Not exists (false)</SelectItem></SelectContent>
+                      </Select>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+              <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="addFilterRule"><Plus class="size-3.5" /> Add rule</Button>
+            </template>
+          </div>
         </div>
         <!-- Step 4: SQS Queue -->
         <div class="min-w-full space-y-3 px-px" style="width: 0">
@@ -489,7 +614,7 @@ onMounted(loadMappings);
           <!-- Summary -->
           <div class="flex flex-wrap items-center gap-2 text-xs bg-muted/50 border rounded-lg px-3 py-2">
             <Badge variant="secondary" class="gap-1 text-[10px]"><Database class="size-3" />{{ selectedTable?.name }}</Badge><ArrowRight class="size-3 text-muted-foreground" />
-            <Badge variant="outline" class="gap-1 text-[10px]"><Zap class="size-3" />Glue</Badge><ArrowRight class="size-3 text-muted-foreground" />
+            <Badge variant="outline" class="gap-1 text-[10px]"><Zap class="size-3" />Stream Handler</Badge><ArrowRight class="size-3 text-muted-foreground" />
             <Badge variant="secondary" class="gap-1 text-[10px]"><Bell class="size-3" />{{ selectedTopic?.name }}</Badge><ArrowRight class="size-3 text-muted-foreground" />
             <Badge variant="secondary" class="gap-1 text-[10px]"><Inbox class="size-3" />{{ selectedQueue?.name }}</Badge><ArrowRight class="size-3 text-muted-foreground" />
             <Badge variant="outline" class="gap-1 text-[10px]"><Zap class="size-3" />Target</Badge>
@@ -510,7 +635,7 @@ onMounted(loadMappings);
             <!-- Stream Handler -->
             <div class="border rounded-lg p-3 space-y-2" :class="selectedGlueFunction ? 'border-green-500/40 bg-green-500/5' : 'border-dashed'">
               <div class="flex items-center justify-between">
-                <div><p class="text-xs font-semibold flex items-center gap-1.5"><span class="inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">1</span> Stream Handler</p><p class="text-[10px] text-muted-foreground mt-0.5">Triggered by DynamoDB Stream. Forwards records to SNS.</p></div>
+                <div><p class="text-xs font-semibold flex items-center gap-1.5"><span class="inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">1</span> Stream Handler</p><p class="text-[10px] text-muted-foreground mt-0.5">Triggered by DynamoDB Stream. Publishes the unmarshalled item to SNS. <a href="/help#template-lambda" class="underline text-primary hover:text-primary/80">Learn more</a></p></div>
                 <Badge v-if="selectedGlueFunction" class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px] gap-1"><Check class="size-3" />{{ selectedGlueFunction.name }}</Badge>
               </div>
               <div class="space-y-1">
@@ -550,7 +675,7 @@ onMounted(loadMappings);
                   <div class="size-9 rounded-lg bg-muted flex items-center justify-center"><VaultIcon class="size-4" /></div>
                   <div>
                     <p class="text-sm font-medium">Vault</p>
-                    <p class="text-xs text-muted-foreground">Create secrets in Vault and apply as env vars to the target Lambda</p>
+                    <p class="text-xs text-muted-foreground">Create secrets in Vault for the target Lambda to read during initialization</p>
                   </div>
                 </div>
                 <div class="flex items-center gap-3">
@@ -648,15 +773,23 @@ onMounted(loadMappings);
         <ul class="list-disc pl-5 space-y-0.5 text-muted-foreground">
           <li>Event source mappings</li>
           <li>Stream handler Lambda function</li>
-          <li>SNS topic</li>
-          <li>SQS queue and its dead letter queue</li>
+          <li>SNS → SQS subscription</li>
+          <li v-if="!selectedHasExternal">SNS topic (created by Mouseketool)</li>
+          <li v-if="!selectedHasExternal">SQS queue and its dead letter queue (created by Mouseketool)</li>
           <li>CloudWatch log groups (invocation history)</li>
         </ul>
         <p class="font-medium pt-1">The following resources will be preserved:</p>
         <ul class="list-disc pl-5 space-y-0.5 text-muted-foreground">
           <li>DynamoDB source table</li>
           <li>Target Lambda function and its deployment</li>
+          <li v-if="selectedHasExternal">SNS topic and SQS queue (not created by Mouseketool)</li>
         </ul>
+        <div v-if="selectedHasExternal" class="pt-2 border-t border-border mt-2">
+          <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" v-model="deleteExternalResources" class="accent-primary" /><span class="text-muted-foreground">Also delete SNS topics and SQS queues not created by Mouseketool</span></label>
+        </div>
+        <div v-if="selectedHasVault" class="pt-2" :class="selectedHasExternal ? '' : 'border-t border-border mt-2'">
+          <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" v-model="deleteVaultSecrets" class="accent-primary" /><span class="text-muted-foreground">Also delete Vault secrets created during pipeline setup</span></label>
+        </div>
       </div>
       <DialogFooter><Button variant="outline" class="cursor-pointer" @click="showDeleteConfirm = false">Cancel</Button><Button variant="destructive" class="gap-1.5 cursor-pointer" @click="deleteSelected"><Trash2 class="size-3.5" /> Delete</Button></DialogFooter>
     </DialogContent></Dialog>
@@ -721,7 +854,7 @@ onMounted(loadMappings);
         </div>
         <Button @click="applyVaultSecrets" :disabled="!vaultUrl || !vaultToken || !vaultSecrets.some(s => s.path) || vaultApplying" class="w-full gap-2 cursor-pointer">
           <Loader2 v-if="vaultApplying" class="size-3.5 animate-spin" /><Check v-else class="size-3.5" />
-          {{ vaultApplying ? "Applying..." : "Create Secrets & Apply as Env Vars" }}
+          {{ vaultApplying ? "Creating..." : "Create Secrets in Vault" }}
         </Button>
       </div>
     </SheetContent>

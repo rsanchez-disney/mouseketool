@@ -8,6 +8,15 @@ import { formatAwsError } from "../helpers/aws-error.js";
 
 const router = Router();
 
+// GET /api/deploy/check/:name — check if Lambda function exists
+router.get("/check/:name", async (req, res) => {
+  try {
+    const client = await getLambdaClient();
+    await client.send(new GetFunctionCommand({ FunctionName: req.params.name }));
+    res.json({ exists: true });
+  } catch { res.json({ exists: false }); }
+});
+
 router.post("/", async (req, res) => {
   const { buildId, handler, runtime = "java21", functionName, memorySize = 2048 } = req.body;
   if (!buildId || !handler || !functionName) return res.status(400).json({ error: "buildId, handler, and functionName are required" });
@@ -26,16 +35,31 @@ router.post("/", async (req, res) => {
     } catch {}
 
     let action: string;
+    let exists = false;
     try {
       await client.send(new GetFunctionCommand({ FunctionName: functionName }));
+      exists = true;
+    } catch {}
+
+    if (exists) {
+      // Wait for function to be ready before updating
+      async function waitReady() {
+        for (let i = 0; i < 10; i++) {
+          const fn = await client.send(new GetFunctionCommand({ FunctionName: functionName }));
+          const state = fn.Configuration?.LastUpdateStatus;
+          if (!state || state === "Successful" || state === "Failed") return;
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+      await waitReady();
       await client.send(new UpdateFunctionCodeCommand({ FunctionName: functionName, ZipFile: jarBytes }));
-      await new Promise(r => setTimeout(r, 1000));
+      await waitReady();
       await client.send(new UpdateFunctionConfigurationCommand({
         FunctionName: functionName, Runtime: runtime, Handler: handler,
         Timeout: 60, MemorySize: memorySize, Environment: envConfig,
       }));
       action = "updated";
-    } catch {
+    } else {
       await client.send(new CreateFunctionCommand({
         FunctionName: functionName, Runtime: runtime, Handler: handler,
         Role: "arn:aws:iam::000000000000:role/lambda-role",
@@ -44,6 +68,15 @@ router.post("/", async (req, res) => {
       action = "created";
     }
     res.json({ functionName, handler, runtime, action });
+
+    // Kill warm containers so LocalStack picks up the new code immediately
+    try {
+      const { exec } = await import("child_process");
+      exec(`wsl docker ps --filter "name=lambda-${functionName}" -q`, (_, stdout) => {
+        const ids = stdout?.trim();
+        if (ids) exec(`wsl docker rm -f ${ids.split("\n").join(" ")}`);
+      });
+    } catch {}
 
     // Persist deployment metadata
     const deployments = await readFile(DEPLOYMENTS_FILE, "utf-8").then(d => JSON.parse(d)).catch(() => []);

@@ -31,7 +31,7 @@
 
 ### Documentation on Commit
 When a feature is complete and the developer confirms it's ready:
-1. **Before committing code**, update the Help page (`HelpPage.vue`) and any relevant `.md` files (README, docs/, project-highlights, proposed-changes) to document the new feature. **Do not use emojis** in any documentation files.
+1. **Before committing code**, update the Help page (`HelpPage.vue`) and any relevant `.md` files (README, docs/, project-highlights, proposed-changes) to document the new feature. **Do not use emojis** in any documentation files. **Do not add project structure trees** or "What's new" / changelog sections to README files.
 2. **Commit the code changes first** (without the documentation updates).
 3. **Present a summary** of what was added/changed in the Help page and `.md` files.
 4. **Wait for the developer to review** the documentation changes personally.

@@ -13,6 +13,18 @@ Settings page).
 If the function already exists on LocalStack, the deploy updates it with the new code — no need to delete and
 recreate. A toast notification confirms whether the deploy succeeded or failed.
 
+### Deploy override modal
+
+When redeploying a function that already exists, a confirmation modal appears. You can choose to proceed with the
+deploy or skip it. The **Remember my choice** option saves your preference so the modal does not appear on future
+deploys. Reset this preference from the Settings page.
+
+### WSL Docker container cleanup
+
+On deploy, Mouseketool automatically kills any warm Lambda Docker containers associated with the function. This
+prevents stale containers from serving outdated code, which is especially relevant in WSL environments where
+container lifecycle is less predictable.
+
 ### Memory configuration
 
 Java Lambdas on LocalStack need more memory than you might expect due to cold start overhead. Mouseketool defaults to
@@ -74,7 +86,9 @@ the editor.
 After invoking, the response panel shows the status code, function output, and any errors. If the Lambda failed,
 Mouseketool does several things automatically:
 
-- **Root Cause panel** — Extracts all `Caused by` lines from the logs and surfaces them at the top.
+- **Root Cause panel** — Extracts all `Caused by` lines from the logs and surfaces them at the top of the results
+  view. The panel is collapsible and highlighted in red so root causes are immediately visible without scrolling
+  through the full log output.
 - **Diagnostics** — Lists env vars pointing to potentially unreachable services and checks if the handler class exists
   in the jar.
 - **Local Class Diagnostic** — When the error is an `ExceptionInInitializerError` (class crashed during static

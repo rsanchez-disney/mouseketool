@@ -28,11 +28,7 @@ exports.handler = async (event) => {
       else plain[k] = val;
     }
     console.log("Item:", JSON.stringify(plain));
-    const message = JSON.stringify({
-      eventName: record.eventName,
-      dynamodb: record.dynamodb,
-      eventSourceARN: record.eventSourceARN,
-    });
+    const message = JSON.stringify(plain);
 
     await sns.send(new PublishCommand({
       TopicArn: topicArn,
