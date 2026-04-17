@@ -22,7 +22,10 @@ consolidates that entire workflow into one place.
 | Vault secret setup in invoke flow | ✗ | ✗ | ✓ |
 | Debug mode (JVM flags on the fly) | ✗ | ✗ | ✓ |
 | Root cause extraction from error logs | ✗ | ✗ | ✓ |
+| SNS filter policies on subscriptions | YAML config | ✗ | Visual wizard |
 | Create DynamoDB → SNS → SQS → Lambda pipelines | YAML config | ✗ | Visual wizard |
+| Shadow infrastructure for diagnostic replay | ✗ | ✗ | ✓ |
+| Background pipeline watcher | ✗ | ✗ | ✓ |
 | Template Lambda with hash-based versioning | ✗ | ✗ | ✓ |
 | Full build → deploy → configure → wire → test loop | Across 4-5 tools | Partial | Single UI |
 
@@ -83,15 +86,18 @@ Mouseketool is organized into several pages, each focused on a specific part of 
 
 ### [Builder](docs/builder.md)
 Build Java Lambda projects with a live streaming console. Supports Maven and Gradle with auto-detection. Manage
-cached builds, rebuild, or deploy directly to LocalStack.
+cached builds, rebuild, or deploy directly to LocalStack. Each cached build shows a TTL indicator based on the
+cleanup interval configured in Settings.
 
 ### [Deployments](docs/deployments.md)
 Deploy artifacts to LocalStack, manage environment variables, configure Vault secrets, invoke functions with a
-payload editor, and inspect results with root cause extraction and local class diagnostics.
+payload editor, and inspect results with root cause extraction and local class diagnostics. A deploy override modal
+lets you confirm or skip redeployment, with a preference to remember your choice.
 
 ### Triggers (Pipelines)
 Create end-to-end event-driven pipelines through a 6-step visual wizard. Wire up DynamoDB tables, SNS topics, SQS
-queues (with optional DLQ), and Lambda functions — all without touching the CLI.
+queues (with optional DLQ), and Lambda functions — all without touching the CLI. SNS subscriptions support filter
+policies configured through the visual wizard.
 
 ### Execution
 Run a pipeline and watch each step execute in real-time via Server-Sent Events. See DynamoDB inserts, stream handler
@@ -100,9 +106,12 @@ logs, SNS delivery evidence, SQS message arrival, and target Lambda output — a
 ### History
 Track every pipeline invocation with CloudWatch-based history. Runs are persisted, correlated by RequestId, and
 include DLQ detection with diagnostic invoke for failed runs. Live watch mode refreshes silently in the background.
+A background pipeline watcher monitors active pipelines for new events. Shadow infrastructure creates parallel
+diagnostic resources to replay and inspect failed pipeline steps.
 
 ### Settings
-Configure the LocalStack connection (protocol, host, port, credentials) and build cleanup TTL.
+Configure the LocalStack connection (protocol, host, port, credentials), build cleanup TTL, and observer polling
+interval (`observerPollingMs`). A LocalStack health check runs on startup and is accessible from the Settings page.
 
 ### Help & Guides
 In-app documentation covering every feature with detailed explanations, code examples, and troubleshooting tips.

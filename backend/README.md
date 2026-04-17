@@ -63,6 +63,7 @@ Runtime data is stored in `.data/` (gitignored):
 - **@aws-sdk/client-*** — AWS SDK v3 clients for Lambda, DynamoDB, SNS, SQS, CloudWatch Logs, S3
 - **express** 5 — HTTP framework
 - **archiver** — Cross-platform zip creation (avoids WSL dependency)
+- **rxjs** — Reactive streams for the pipeline watcher and SSE event coordination
 - **uuid** — Pipeline and build ID generation
 - **tsx** — TypeScript execution with hot reload for development
 
