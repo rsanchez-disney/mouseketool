@@ -30,12 +30,14 @@
 4. Developer merges feature branch to `main`.
 
 ### Documentation on Commit
-When a feature is complete and the developer confirms it's ready:
-1. **Before committing code**, update the Help page (`HelpPage.vue`) and any relevant `.md` files (README, docs/, project-highlights, proposed-changes) to document the new feature. **Do not use emojis** in any documentation files. **Do not add project structure trees** or "What's new" / changelog sections to README files.
-2. **Commit the code changes first** (without the documentation updates).
-3. **Present a summary** of what was added/changed in the Help page and `.md` files.
-4. **Wait for the developer to review** the documentation changes personally.
-5. **Only after approval**, commit the documentation changes as a separate commit on the same branch.
+When a feature is complete:
+1. **Wait for the developer to review and approve the feature** before any commits.
+2. After feature approval, **commit the code changes** (do not merge yet).
+3. **Write documentation updates** to the Help page (`HelpPage.vue`) and any relevant `.md` files (README, docs/, project-highlights, proposed-changes). **Do not use emojis** in any documentation files. **Do not add project structure trees** or "What's new" / changelog sections to README files.
+4. **Present a summary** of what was added/changed in the Help page and `.md` files.
+5. **Wait for the developer to review and approve the documentation** before committing.
+6. **Only after docs approval**, commit the documentation changes as a separate commit.
+7. **Only after both commits are on the branch**, merge to main.
 
 ### Branch Completion (Merge to Main)
 After all commits (code + docs) are on the feature branch:
