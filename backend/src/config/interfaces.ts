@@ -3,6 +3,7 @@ export interface Settings {
   aws: { accessKeyId: string; secretAccessKey: string; region: string };
   cleanup: { ttlMinutes: number; deleteOnStartup: boolean };
   pipeline: { observerPollingMs: number };
+  lambda: { memoryMB: number };
 }
 
 export const DEFAULTS: Settings = {
@@ -10,6 +11,7 @@ export const DEFAULTS: Settings = {
   aws: { accessKeyId: "test", secretAccessKey: "test", region: "us-east-1" },
   cleanup: { ttlMinutes: 1440, deleteOnStartup: false },
   pipeline: { observerPollingMs: 500 },
+  lambda: { memoryMB: 2048 },
 };
 
 export interface BuildMeta {
