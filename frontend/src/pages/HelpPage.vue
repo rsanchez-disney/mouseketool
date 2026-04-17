@@ -84,9 +84,12 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
 
         <p class="font-medium text-foreground">About environment variables</p>
         <p>During the initial project analysis, Mouseketool will try to detect environment variables from your SAM template
-        or <code class="text-xs bg-muted px-1 rounded">.env</code> file. These are saved as defaults but they are
-        <strong>not applied during deploy</strong>. Instead, env vars are configured and applied on the Deployments page
-        right before each invocation. This means you can tweak values on the fly without having to redeploy every time.</p>
+        or <code class="text-xs bg-muted px-1 rounded">.env</code> file. These are saved as defaults and applied to the
+        Lambda when you configure them on the Deployments page or the pipeline card's env var editor.</p>
+
+        <p>Environment variables are unified across both pages. The Lambda's own configuration is the source of truth
+        for active values. Editing env vars on either the Deployments page or the pipeline card updates the same Lambda.
+        Excluded (grayed-out) env vars are preserved locally so you can re-enable them later without re-entering values.</p>
 
         <p>When you rebuild a project, env vars from the previous build are <strong>automatically carried over</strong>
         to the new build so you don't have to re-enter them.</p>

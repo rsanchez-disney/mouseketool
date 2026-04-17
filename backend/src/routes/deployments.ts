@@ -158,8 +158,64 @@ router.put("/env/:buildId", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
+// GET /api/deployments/lambda-env/:name — read env vars from Lambda config (source of truth)
+router.get("/lambda-env/:name", async (req, res) => {
+  try {
+    const client = await getLambdaClient();
+    const cfg = await client.send(new GetFunctionCommand({ FunctionName: req.params.name }));
+    const lambdaVars = cfg.Configuration?.Environment?.Variables || {};
+    const active = Object.entries(lambdaVars).map(([key, value]) => ({ key, value }));
+
+    // Merge with local cache to preserve excluded (isNull) entries
+    let cached: { key: string; value: string; isNull?: boolean }[] = [];
+    try {
+      const deployments = await loadDeployments();
+      const dep = deployments.find((d: any) => d.functionName === req.params.name);
+      if (dep?.buildId) cached = JSON.parse(await readFile(envVarsPath(dep.buildId), "utf-8"));
+    } catch {}
+    if (!cached.length) {
+      try {
+        const { loadPipelines } = await import("../services/pipeline-watcher.js");
+        const p = loadPipelines().find(pp => pp.targetFunctionName === req.params.name);
+        if (p?.envVars?.length) cached = p.envVars as any;
+      } catch {}
+    }
+
+    // Add back excluded entries that aren't on the Lambda
+    const activeKeys = new Set(active.map(e => e.key));
+    const excluded = cached.filter(e => e.isNull && e.key && !activeKeys.has(e.key));
+    res.json([...active, ...excluded]);
+  } catch { res.json([]); }
+});
+
+// PUT /api/deployments/lambda-env/:name — write env vars to Lambda config + local cache
+router.put("/lambda-env/:name", async (req, res) => {
+  try {
+    const envVars: { key: string; value: string; isNull?: boolean }[] = req.body.envVars ?? [];
+    const entries = envVars.filter(e => e.key && !e.isNull);
+    const client = await getLambdaClient();
+    await client.send(new UpdateFunctionConfigurationCommand({
+      FunctionName: req.params.name,
+      Environment: { Variables: Object.fromEntries(entries.map(e => [e.key, e.value])) },
+    }));
+
+    // Persist locally as fallback (pipeline + build cache)
+    const deployments = await loadDeployments();
+    const dep = deployments.find((d: any) => d.functionName === req.params.name);
+    if (dep?.buildId) {
+      try { await writeFile(envVarsPath(dep.buildId), JSON.stringify(envVars)); } catch {}
+    }
+    const { loadPipelines, savePipelines } = await import("../services/pipeline-watcher.js");
+    const pipelines = loadPipelines();
+    const p = pipelines.find(pp => pp.targetFunctionName === req.params.name);
+    if (p) { p.envVars = envVars; savePipelines(pipelines); }
+
+    res.json({ saved: true });
+  } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
+});
+
 router.post("/invoke", async (req, res) => {
-  const { functionName, payload, debug, memorySize } = req.body;
+  const { functionName, payload, debug } = req.body;
   if (!functionName) return res.status(400).json({ error: "functionName is required" });
 
   try {
@@ -169,54 +225,47 @@ router.post("/invoke", async (req, res) => {
     const deployments = await loadDeployments();
     const dep = deployments.find((d: any) => d.functionName === functionName);
 
-    // Apply env vars from persisted file before invocation
-    let envVars: Record<string, string> = {};
-    if (dep?.buildId) {
-      try {
-        const saved: { key: string; value: string; isNull?: boolean }[] = JSON.parse(await readFile(envVarsPath(dep.buildId), "utf-8"));
-        envVars = Object.fromEntries(saved.filter(e => e.key && !e.isNull).map(e => [e.key, e.value]));
-      } catch {}
-    }
-
-    // Debug adds verbose JVM flags
+    // Only update Lambda config if debug mode or custom memory requested
     if (debug) {
-      envVars._JAVA_OPTIONS = "-verbose:class -Xlog:exceptions=info";
-    }
-
-    // Update Lambda env vars
-    try {
-      await client.send(new UpdateFunctionConfigurationCommand({
-        FunctionName: functionName,
-        Environment: { Variables: envVars },
-        ...(memorySize ? { MemorySize: memorySize } : {}),
-      }));
-      for (let i = 0; i < 10; i++) {
-        await new Promise(r => setTimeout(r, 500));
-        const cfg = await client.send(new GetFunctionCommand({ FunctionName: functionName }));
-        if (cfg.Configuration?.LastUpdateStatus !== "InProgress") break;
-      }
-      // Kill warm Lambda containers to ensure fresh execution environment with updated env vars
       try {
-        const { execSync } = await import("child_process");
-        const ids = execSync(`wsl docker ps --filter "name=lambda-${functionName}" -q`, { encoding: "utf-8" }).trim();
-        if (ids) execSync(`wsl docker rm -f ${ids.split("\n").join(" ")}`, { encoding: "utf-8" });
-        console.log("[invoke] Killed warm containers for", functionName);
-      } catch (e: any) { console.log("[invoke] Container cleanup skipped:", e.message); }
-    } catch (e: any) {
-      console.error("[invoke] env var update failed:", e.message);
+        const fnCfg = await client.send(new GetFunctionCommand({ FunctionName: functionName }));
+        const currentVars = fnCfg.Configuration?.Environment?.Variables || {};
+        const updatedVars = { ...currentVars };
+        if (debug) updatedVars._JAVA_OPTIONS = "-verbose:class -Xlog:exceptions=info";
+        await client.send(new UpdateFunctionConfigurationCommand({
+          FunctionName: functionName,
+          Environment: { Variables: updatedVars },
+        }));
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const cfg = await client.send(new GetFunctionCommand({ FunctionName: functionName }));
+          if (cfg.Configuration?.LastUpdateStatus !== "InProgress") break;
+        }
+        try {
+          const { execSync } = await import("child_process");
+          const ids = execSync(`wsl docker ps --filter "name=lambda-${functionName}" -q`, { encoding: "utf-8" }).trim();
+          if (ids) execSync(`wsl docker rm -f ${ids.split("\n").join(" ")}`, { encoding: "utf-8" });
+        } catch {}
+      } catch (e: any) {
+        console.error("[invoke] config update failed:", e.message);
+      }
     }
 
-    console.log("[invoke] env vars count:", Object.keys(envVars).length, "invoking:", functionName);
+    console.log("[invoke] invoking:", functionName);
     const invokeResult = await invokeFunction(client, functionName, payload, dep?.buildId, dep?.handler);
     console.log("[invoke] result:", invokeResult.statusCode, "error:", invokeResult.functionError, "logs:", invokeResult.logs?.length);
 
     // Remove debug flags after invoke so they don't leak
     if (debug) {
-      envVars._JAVA_OPTIONS = "-Xlog:exceptions=info";
-      await client.send(new UpdateFunctionConfigurationCommand({
-        FunctionName: functionName,
-        Environment: { Variables: envVars },
-      }));
+      try {
+        const fnCfg = await client.send(new GetFunctionCommand({ FunctionName: functionName }));
+        const currentVars = { ...(fnCfg.Configuration?.Environment?.Variables || {}) };
+        delete currentVars._JAVA_OPTIONS;
+        await client.send(new UpdateFunctionConfigurationCommand({
+          FunctionName: functionName,
+          Environment: { Variables: currentVars },
+        }));
+      } catch {}
     }
 
     // Persist last invocation

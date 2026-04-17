@@ -65,7 +65,6 @@ function uploadJson(e: Event) {
 const deployEnvVars = ref<{ key: string; value: string }[]>([]);
 const savingEnvVars = ref(false);
 const envVarsCollapsed = ref(localStorage.getItem("mk:envCollapsed") === "true");
-const lambdaMemory = ref(2048);
 const invoking = ref(false);
 let invokeAbort: AbortController | null = null;
 function stopInvoke() { invokeAbort?.abort(); invoking.value = false; invokeAbort = null; invokeError.value = "Stopped by user"; }
@@ -114,7 +113,6 @@ async function loadDeployments() {
 
 function openAddons(d: Deployment) {
   selected.value = d;
-  lambdaMemory.value = d.config?.memorySize ?? 2048;
   result.value = d.lastInvocationResult || null;
   invokeError.value = "";
   payload.value = d.lastPayload ? JSON.stringify(d.lastPayload, null, 2) : "{}";
@@ -127,19 +125,19 @@ async function goToInvoke() {
 }
 
 async function loadEnvVars() {
-  if (!selected.value?.buildId) return;
+  if (!selected.value?.functionName) return;
   try {
-    const res = await fetch(`/api/deployments/env/${selected.value.buildId}`);
+    const res = await fetch(`/api/deployments/lambda-env/${selected.value.functionName}`);
     deployEnvVars.value = await res.json();
   } catch { deployEnvVars.value = []; }
 }
 
 async function saveEnvVars() {
-  if (!selected.value?.buildId) return;
+  if (!selected.value?.functionName) return;
   savingEnvVars.value = true;
-  await fetch(`/api/deployments/env/${selected.value.buildId}`, {
+  await fetch(`/api/deployments/lambda-env/${selected.value.functionName}`, {
     method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(deployEnvVars.value),
+    body: JSON.stringify({ envVars: deployEnvVars.value }),
   });
   savingEnvVars.value = false;
 }
@@ -279,7 +277,7 @@ async function invoke(debug = false) {
     invokeAbort = new AbortController();
     const res = await fetch("/api/deployments/invoke", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ functionName: selected.value.functionName, payload: JSON.parse(payload.value), debug, memorySize: lambdaMemory.value }),
+      body: JSON.stringify({ functionName: selected.value.functionName, payload: JSON.parse(payload.value), debug }),
       signal: invokeAbort.signal,
     });
     const data = await res.json();
@@ -494,14 +492,6 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                 <span>Vault</span>
                 <span v-if="vaultCleanup" class="text-muted-foreground/60">· auto-cleanup</span>
               </div>
-            </div>
-
-            <!-- Lambda Memory -->
-            <div class="flex items-center gap-3">
-              <label class="text-sm font-medium flex items-center gap-1.5 shrink-0"><Cpu class="size-3.5" /> Memory</label>
-              <select v-model.number="lambdaMemory" class="h-7 text-xs bg-zinc-900 border border-zinc-700 rounded-md px-2 text-zinc-200 outline-none">
-                <option v-for="m in [128, 256, 512, 1024, 1536, 2048, 3008]" :key="m" :value="m">{{ m }} MB</option>
-              </select>
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">

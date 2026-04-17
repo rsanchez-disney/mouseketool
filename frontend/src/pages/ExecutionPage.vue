@@ -262,9 +262,9 @@ onMounted(loadPipeline);
                 </Button>
               </div>
               <div class="px-4 pb-3 max-h-56 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-if="(s.status==='error'||s.status==='timeout') && extractErrors(s.logs).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3">
+                <div v-if="(s.status==='error'||s.status==='timeout') && extractErrors(s.logs).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
                   <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
-                  <div v-for="(line, i) in extractErrors(s.logs)" :key="'rc'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
+                  <div v-for="(line, i) in extractErrors(s.logs)" :key="'rc'+i" class="text-xs font-mono text-red-300 whitespace-pre-wrap leading-relaxed">{{ line.trim() }}</div>
                 </div>
                 <div v-for="(line, i) in s.logs" :key="i" :class="[line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
               </div>
@@ -289,9 +289,9 @@ onMounted(loadPipeline);
           <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="expandedLogStep = ''"><Minimize2 class="size-3.5" /></Button>
         </div>
         <div class="overflow-auto scrollbar-visible px-4 pb-4 h-[80vh]">
-          <div v-if="extractErrors(expandedLogContent).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3">
+          <div v-if="extractErrors(expandedLogContent).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
             <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
-            <div v-for="(line, i) in extractErrors(expandedLogContent)" :key="'erc'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
+            <div v-for="(line, i) in extractErrors(expandedLogContent)" :key="'erc'+i" class="text-xs font-mono text-red-300 whitespace-pre-wrap leading-relaxed">{{ line.trim() }}</div>
           </div>
           <div v-for="(line, i) in expandedLogContent" :key="i" :class="[logSearch && !line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' : line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
         </div>

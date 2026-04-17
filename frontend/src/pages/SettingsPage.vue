@@ -7,13 +7,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye } from "lucide-vue-next";
+import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye, Cpu } from "lucide-vue-next";
 
 const settings = ref({
   localstack: { host: "localhost", port: 4566, protocol: "http" },
   aws: { accessKeyId: "test", secretAccessKey: "test", region: "us-east-1" },
   cleanup: { ttlMinutes: 1440, deleteOnStartup: false },
   pipeline: { observerPollingMs: 500 },
+  lambda: { memoryMB: 2048 },
 });
 const saving = ref(false);
 const saved = ref(false);
@@ -143,6 +144,25 @@ async function save() {
         <Input id="observerPolling" v-model.number="settings.pipeline.observerPollingMs" type="number" min="100" max="5000" step="100" class="max-w-48" />
         <p class="text-xs text-muted-foreground">Default: 500ms. Controls how often observers check SQS queues and CloudWatch logs during pipeline execution.</p>
         <p class="text-xs text-amber-500">Lower values detect changes faster but increase load on LocalStack. Higher values reduce load but may miss fast-moving messages in SQS.</p>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader>
+        <div class="flex items-center gap-2">
+          <Cpu class="size-5 text-muted-foreground" />
+          <div>
+            <CardTitle>Lambda</CardTitle>
+            <CardDescription>Default configuration applied when deploying functions</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-2">
+        <Label for="lambdaMemory">Memory (MB)</Label>
+        <select id="lambdaMemory" v-model.number="settings.lambda.memoryMB" class="h-9 text-sm bg-zinc-900 border border-zinc-700 rounded-md px-3 text-zinc-200 outline-none max-w-48">
+          <option v-for="m in [128, 256, 512, 1024, 1536, 2048, 3008]" :key="m" :value="m">{{ m }} MB</option>
+        </select>
+        <p class="text-xs text-muted-foreground">Applied to every Lambda deployed from the Builder page. Default: 2048 MB.</p>
       </CardContent>
     </Card>
 

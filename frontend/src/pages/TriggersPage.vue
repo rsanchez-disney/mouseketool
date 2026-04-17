@@ -177,7 +177,9 @@ const savingEnv = ref(false);
 async function openEnvEditor(id: string, name: string) {
   envEditorPipelineId.value = id;
   envEditorPipelineName.value = name;
-  try { envVars.value = await (await fetch(`/api/triggers/pipelines/${id}/env`)).json(); } catch { envVars.value = []; }
+  const pipeline = mappings.value.find(p => p.id === id);
+  if (!pipeline) return;
+  try { envVars.value = await (await fetch(`/api/deployments/lambda-env/${pipeline.targetFunctionName}`)).json(); } catch { envVars.value = []; }
   if (!envVars.value.length) envVars.value.push({ key: "", value: "" });
   showEnvEditor.value = true;
 }
@@ -185,7 +187,9 @@ function addEnvVar() { envVars.value.push({ key: "", value: "" }); }
 function removeEnvVar(i: number) { envVars.value.splice(i, 1); }
 async function saveEnvVars() {
   savingEnv.value = true;
-  await fetch(`/api/triggers/pipelines/${envEditorPipelineId.value}/env`, {
+  const pipeline = mappings.value.find(p => p.id === envEditorPipelineId.value);
+  if (!pipeline) { savingEnv.value = false; return; }
+  await fetch(`/api/deployments/lambda-env/${pipeline.targetFunctionName}`, {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ envVars: envVars.value.filter(e => e.key) }),
   });

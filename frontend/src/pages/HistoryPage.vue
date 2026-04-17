@@ -290,7 +290,7 @@ onMounted(async () => { await loadPipeline(); await loadHistory(); startLive(); 
                 <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':target', run.target.logs)"><Maximize2 class="size-3" /></Button>
               </div>
               <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-if="run.target.error && extractErrors(run.target.logs).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3">
+                <div v-if="run.target.error && extractErrors(run.target.logs).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
                   <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
                   <div v-for="(line, i) in extractErrors(run.target.logs)" :key="'err'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
                 </div>
@@ -319,7 +319,7 @@ onMounted(async () => { await loadPipeline(); await loadHistory(); startLive(); 
           <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="expandedLogKey = ''"><Minimize2 class="size-3.5" /></Button>
         </div>
         <div class="overflow-auto scrollbar-visible px-4 pb-4 h-[80vh]">
-          <div v-if="extractErrors(expandedLogContent).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3">
+          <div v-if="extractErrors(expandedLogContent).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
             <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
             <div v-for="(line, i) in extractErrors(expandedLogContent)" :key="'erc'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
           </div>

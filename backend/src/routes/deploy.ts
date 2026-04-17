@@ -4,6 +4,7 @@ import { join } from "path";
 import { CreateFunctionCommand, UpdateFunctionCodeCommand, UpdateFunctionConfigurationCommand, GetFunctionCommand } from "@aws-sdk/client-lambda";
 import { SETTINGS_DIR, BUILDS_DIR, DEPLOYMENTS_FILE } from "../config/constants.js";
 import { getLambdaClient } from "../helpers/lambda-client.js";
+import { loadSettings } from "../helpers/settings.js";
 import { formatAwsError } from "../helpers/aws-error.js";
 
 const router = Router();
@@ -18,13 +19,15 @@ router.get("/check/:name", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const { buildId, handler, runtime = "java21", functionName, memorySize = 2048 } = req.body;
+  const { buildId, handler, runtime = "java21", functionName } = req.body;
   if (!buildId || !handler || !functionName) return res.status(400).json({ error: "buildId, handler, and functionName are required" });
 
   try {
     const meta = JSON.parse(await readFile(join(BUILDS_DIR, buildId, "meta.json"), "utf-8"));
     const jarBytes = await readFile(meta.jarPath);
     const client = await getLambdaClient();
+    const settings = await loadSettings();
+    const memorySize = settings.lambda?.memoryMB ?? 2048;
 
     // Load saved env vars if they exist
     let envConfig: { Variables: Record<string, string> } | undefined;
