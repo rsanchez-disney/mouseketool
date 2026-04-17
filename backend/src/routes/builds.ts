@@ -271,19 +271,26 @@ router.delete("/:id", async (req, res) => {
   catch { res.status(404).json({ error: "Build not found" }); }
 });
 
+let firstRun = true;
 export async function cleanupBuilds() {
   const settings = await loadSettings();
-  const ttlMs = settings.cleanup.ttlMinutes * 60 * 1000;
   try {
     const entries = await readdir(BUILDS_DIR, { withFileTypes: true });
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       try {
-        const meta = JSON.parse(await readFile(join(BUILDS_DIR, e.name, "meta.json"), "utf-8"));
-        if (Date.now() - new Date(meta.createdAt).getTime() > ttlMs) await rm(join(BUILDS_DIR, e.name), { recursive: true });
-      } catch { /* skip */ }
+        if (firstRun && settings.cleanup.deleteOnStartup) {
+          await rm(join(BUILDS_DIR, e.name), { recursive: true });
+        } else {
+          const meta = JSON.parse(await readFile(join(BUILDS_DIR, e.name, "meta.json"), "utf-8"));
+          const ttlMs = settings.cleanup.ttlMinutes * 60 * 1000;
+          if (Date.now() - new Date(meta.createdAt).getTime() > ttlMs) await rm(join(BUILDS_DIR, e.name), { recursive: true });
+        }
+      } catch {}
     }
-  } catch { /* builds dir doesn't exist yet */ }
+    if (firstRun && settings.cleanup.deleteOnStartup) console.log("[cleanup] Deleted all cached builds on startup");
+  } catch {}
+  firstRun = false;
 }
 
 export default router;

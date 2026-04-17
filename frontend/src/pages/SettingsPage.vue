@@ -1,24 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Save, Check, Loader2, Server, KeyRound, Trash2 } from "lucide-vue-next";
+import { Switch } from "@/components/ui/switch";
+import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye } from "lucide-vue-next";
 
 const settings = ref({
   localstack: { host: "localhost", port: 4566, protocol: "http" },
   aws: { accessKeyId: "test", secretAccessKey: "test", region: "us-east-1" },
-  cleanup: { ttlMinutes: 1440 },
+  cleanup: { ttlMinutes: 1440, deleteOnStartup: false },
+  pipeline: { observerPollingMs: 500 },
 });
 const saving = ref(false);
 const saved = ref(false);
+const showElapsed = ref(localStorage.getItem("mk:showElapsed") !== "false");
+watch(showElapsed, v => localStorage.setItem("mk:showElapsed", String(v)));
 
 onMounted(async () => {
   const data = await (await fetch("/api/settings")).json();
-  settings.value = { ...settings.value, ...data, localstack: { ...settings.value.localstack, ...data.localstack } };
+  settings.value = { ...settings.value, ...data, localstack: { ...settings.value.localstack, ...data.localstack }, pipeline: { ...settings.value.pipeline, ...data.pipeline } };
 });
 
 async function save() {
@@ -117,6 +121,46 @@ async function save() {
         <Label for="ttl">Auto-delete after (minutes)</Label>
         <Input id="ttl" v-model.number="settings.cleanup.ttlMinutes" type="number" class="max-w-48" />
         <p class="text-xs text-muted-foreground">Default: 1440 minutes (24 hours)</p>
+        <div class="flex items-center gap-3 pt-3 border-t mt-3">
+          <Switch v-model="settings.cleanup.deleteOnStartup" class="cursor-pointer" />
+          <div><Label class="text-sm">Delete all cached builds on startup</Label><p class="text-xs text-muted-foreground">When enabled, all cached builds are removed every time the backend starts.</p></div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader>
+        <div class="flex items-center gap-2">
+          <Clock class="size-5 text-muted-foreground" />
+          <div>
+            <CardTitle>Observer Polling Interval</CardTitle>
+            <CardDescription>How frequently pipeline observers poll LocalStack for SQS and CloudWatch updates.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-2">
+        <Label for="observerPolling">Interval (milliseconds)</Label>
+        <Input id="observerPolling" v-model.number="settings.pipeline.observerPollingMs" type="number" min="100" max="5000" step="100" class="max-w-48" />
+        <p class="text-xs text-muted-foreground">Default: 500ms. Controls how often observers check SQS queues and CloudWatch logs during pipeline execution.</p>
+        <p class="text-xs text-amber-500">Lower values detect changes faster but increase load on LocalStack. Higher values reduce load but may miss fast-moving messages in SQS.</p>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader>
+        <div class="flex items-center gap-2">
+          <Eye class="size-5 text-muted-foreground" />
+          <div>
+            <CardTitle>UI Preferences</CardTitle>
+            <CardDescription>Customize how information is displayed in the app.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div class="flex items-center gap-3">
+          <Switch v-model="showElapsed" class="cursor-pointer" />
+          <div><Label class="text-sm">Show elapsed time on history cards</Label><p class="text-xs text-muted-foreground">Display how long each pipeline step took to complete.</p></div>
+        </div>
       </CardContent>
     </Card>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watchEffect } from "vue";
+import { ref, watchEffect, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
@@ -9,14 +9,28 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow } from "lucide-vue-next";
+import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff } from "lucide-vue-next";
 
 const route = useRoute();
-const dark = ref(false);
+const dark = ref(localStorage.getItem("mk:theme") === "dark");
 
 watchEffect(() => {
   document.documentElement.classList.toggle("dark", dark.value);
+  localStorage.setItem("mk:theme", dark.value ? "dark" : "light");
 });
+
+// LocalStack health check
+const localstackDown = ref(false);
+let healthInterval: ReturnType<typeof setInterval> | null = null;
+async function checkHealth() {
+  try {
+    const r = await fetch("/api/health");
+    const data = await r.json();
+    localstackDown.value = !data.localstack;
+  } catch { localstackDown.value = true; }
+}
+onMounted(() => { checkHealth(); healthInterval = setInterval(checkHealth, 5000); });
+onUnmounted(() => { if (healthInterval) clearInterval(healthInterval); });
 
 const nav = [
   { label: "Lambda Builder", path: "/builder", icon: Rocket },
@@ -100,7 +114,15 @@ const nav = [
             </Tooltip>
           </div>
         </header>
-        <main class="flex-1 p-6">
+        <main class="flex-1 p-6 relative">
+          <div v-if="localstackDown && route.path !== '/settings' && route.path !== '/help'" class="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <div class="text-center space-y-3 max-w-sm">
+              <WifiOff class="size-12 mx-auto text-muted-foreground opacity-50" />
+              <h2 class="text-lg font-semibold">LocalStack Unavailable</h2>
+              <p class="text-sm text-muted-foreground">Cannot connect to your LocalStack instance. Make sure it's running and the connection settings are correct.</p>
+              <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="$router.push('/settings')"><Settings class="size-3.5" /> Check Settings</Button>
+            </div>
+          </div>
           <router-view v-slot="{ Component }">
             <transition name="fade" mode="out-in">
               <component :is="Component" />

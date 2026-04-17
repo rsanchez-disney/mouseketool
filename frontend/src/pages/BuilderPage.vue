@@ -44,6 +44,25 @@ interface FsItem { name: string; path: string; isDirectory: boolean }
 interface AnalysisResult { projectPath: string; buildTool: string; handlers: string[]; environmentVariables?: Record<string, string>; envSource?: string }
 interface Build { id: string; projectPath: string; buildTool: string; handler: string; jarPath: string; createdAt: string; projectName: string }
 
+// --- Cleanup TTL ---
+const ttlMinutes = ref(1440);
+async function loadTtl() { try { const s = await (await fetch("/api/settings")).json(); ttlMinutes.value = s.cleanup?.ttlMinutes ?? 1440; } catch {} }
+function buildExpiry(b: Build) {
+  const created = new Date(b.createdAt).getTime();
+  const expiresAt = created + ttlMinutes.value * 60000;
+  const remaining = expiresAt - Date.now();
+  const elapsed = Date.now() - created;
+  const total = ttlMinutes.value * 60000;
+  const pct = Math.min(100, Math.max(0, (elapsed / total) * 100));
+  const color = remaining < 900000 ? "bg-red-500" : remaining < 3600000 ? "bg-amber-500" : "bg-green-500";
+  let label: string;
+  if (remaining <= 0) label = "Expired";
+  else if (remaining < 60000) label = `${Math.ceil(remaining / 1000)}s left`;
+  else if (remaining < 3600000) label = `${Math.floor(remaining / 60000)}m left`;
+  else label = `${Math.floor(remaining / 3600000)}h ${Math.floor((remaining % 3600000) / 60000)}m left`;
+  return { pct, color, label, expired: remaining <= 0 };
+}
+
 // --- Directory Browser ---
 const showBrowser = ref(false);
 const browserPath = ref("");
@@ -124,13 +143,7 @@ function stopTimer() {
   buildElapsed.value = buildTotalTime.value;
 }
 
-function formatMs(ms: number) {
-  if (ms < 1000) return `${ms}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${Math.floor(s % 60)}s`;
-}
+import { formatMs, timeAgo } from "@/lib/format";
 
 const cancelling = ref(false);
 
@@ -207,6 +220,35 @@ const deployResult = ref<{ functionName: string; action: string } | null>(null);
 const deployMessage = ref("");
 const deploySuccess = ref(false);
 
+// Override modal
+const showOverrideModal = ref(false);
+const pendingDeployBuild = ref<Build | null>(null);
+const overrideDontAskAgain = ref(false);
+const skipOverrideWarning = ref<Set<string>>(new Set(JSON.parse(localStorage.getItem("mk:skipOverrideWarning") || "[]")));
+
+function saveSkipPreference(name: string) {
+  skipOverrideWarning.value.add(name);
+  localStorage.setItem("mk:skipOverrideWarning", JSON.stringify([...skipOverrideWarning.value]));
+}
+
+async function startDeploy(build: Build) {
+  const name = functionName.value || build.projectName;
+  if (skipOverrideWarning.value.has(name)) { deploy(build); return; }
+  try {
+    const res = await fetch(`/api/deploy/check/${encodeURIComponent(name)}`);
+    const { exists } = await res.json();
+    if (exists) { pendingDeployBuild.value = build; overrideDontAskAgain.value = false; showOverrideModal.value = true; return; }
+  } catch {}
+  deploy(build);
+}
+
+function confirmOverride() {
+  showOverrideModal.value = false;
+  if (overrideDontAskAgain.value && pendingDeployBuild.value) saveSkipPreference(functionName.value || pendingDeployBuild.value.projectName);
+  if (pendingDeployBuild.value) deploy(pendingDeployBuild.value);
+  pendingDeployBuild.value = null;
+}
+
 async function deploy(build: Build) {
   deploying.value = true;
   deployResult.value = null;
@@ -265,16 +307,7 @@ async function deleteBuild(id: string) {
 const confirmDeleteBuild = ref(false);
 const pendingDeleteBuildId = ref("");
 
-function timeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-onMounted(loadBuilds);
+onMounted(() => { loadBuilds(); loadTtl(); });
 </script>
 
 <template>
@@ -399,7 +432,7 @@ onMounted(loadBuilds);
         </CardTitle>
       </CardHeader>
       <CardContent class="space-y-4">
-        <div ref="logContainer" class="bg-zinc-950 text-zinc-300 rounded-lg p-4 h-72 font-mono text-xs leading-relaxed overflow-hidden relative">
+        <div ref="logContainer" class="bg-zinc-950 text-zinc-300 rounded-lg border border-zinc-800 p-4 h-72 font-mono text-xs leading-relaxed overflow-hidden relative">
           <Button variant="ghost" size="icon" class="absolute top-2 right-2 z-10 size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandedConsole = true">
             <Maximize2 class="size-3.5" />
           </Button>
@@ -418,7 +451,7 @@ onMounted(loadBuilds);
             <div class="flex items-center gap-2 text-sm text-green-600">
               <CheckCircle2 class="size-4" /> Build complete
             </div>
-            <Button @click="deploy(buildResult!)" :disabled="deploying" size="sm" class="gap-2 cursor-pointer active:scale-95 transition-transform">
+            <Button @click="startDeploy(buildResult!)" :disabled="deploying" size="sm" class="gap-2 cursor-pointer active:scale-95 transition-transform">
               <Loader2 v-if="deploying" class="size-4 animate-spin" />
               <Rocket v-else class="size-4" />
               {{ deploying ? "Deploying..." : "Deploy to LocalStack" }}
@@ -453,12 +486,21 @@ onMounted(loadBuilds);
               <div class="text-xs text-muted-foreground truncate">
                 {{ b.handler || 'No handler set' }} · {{ timeAgo(b.createdAt) }}
               </div>
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <div class="flex items-center gap-2 mt-1 cursor-default">
+                    <div class="h-1 flex-1 rounded-full bg-muted overflow-hidden"><div class="h-full rounded-full transition-all" :class="buildExpiry(b).color" :style="{ width: buildExpiry(b).pct + '%' }" /></div>
+                    <span class="text-[10px] shrink-0" :class="buildExpiry(b).pct > 90 ? 'text-red-500' : buildExpiry(b).pct > 75 ? 'text-amber-500' : 'text-muted-foreground'">{{ buildExpiry(b).label }}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="left">Auto-cleanup timer</TooltipContent>
+              </Tooltip>
             </div>
             <div class="flex items-center gap-2 ml-4">
               <Button @click="rebuildFromCache(b)" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform">
                 <Hammer class="size-3.5" /> Rebuild
               </Button>
-              <Button @click="deploy(b)" :disabled="deploying" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform">
+              <Button @click="startDeploy(b)" :disabled="deploying" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform">
                 <Rocket class="size-3.5" /> Deploy
               </Button>
               <Button @click="pendingDeleteBuildId = b.id; confirmDeleteBuild = true" variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-destructive cursor-pointer active:scale-95 transition-transform">
@@ -514,12 +556,12 @@ onMounted(loadBuilds);
     </Dialog>
 
     <!-- Deploy toast -->
-    <div v-if="deployMessage" :key="deployMessage" :class="deploySuccess ? 'bg-green-600' : 'bg-destructive'" class="fixed bottom-6 right-6 z-50 flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+    <div v-if="deployMessage" :key="deployMessage" :class="deploySuccess ? 'bg-green-600' : 'bg-destructive'" class="fixed bottom-6 right-6 z-50 flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in">
       <CheckCircle2 v-if="deploySuccess" class="size-4 shrink-0" />
       <XCircle v-else class="size-4 shrink-0" />
       {{ deployMessage }}
     </div>
-    <div v-if="copyToastMsg" :key="copyToastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+    <div v-if="copyToastMsg" :key="copyToastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in">
       <Check class="size-4" />{{ copyToastMsg }}
     </div>
 
@@ -561,6 +603,23 @@ onMounted(loadBuilds);
         <div ref="expandedLogInner" class="overflow-auto scrollbar-visible px-4 pb-4 h-[80vh] text-zinc-300 font-mono text-xs leading-relaxed">
           <div v-for="(log, i) in buildLogs" :key="i" :class="[logSearch && !log.line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' : log.isError ? 'text-red-400' : '']" class="whitespace-nowrap">{{ log.line }}</div>
         </div>
+      </DialogContent>
+    </Dialog>
+    <!-- Override confirm modal -->
+    <Dialog v-model:open="showOverrideModal">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Lambda already exists</DialogTitle>
+          <DialogDescription>A Lambda function with the name <span class="font-mono font-semibold">{{ functionName || pendingDeployBuild?.projectName }}</span> already exists on LocalStack.</DialogDescription>
+        </DialogHeader>
+        <div class="text-xs space-y-3 py-2">
+          <p class="text-muted-foreground">Deploying will override the existing function code and configuration. Any event source mappings (pipelines) pointing to this function will continue to work.</p>
+          <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" v-model="overrideDontAskAgain" class="accent-primary" /><span class="text-muted-foreground">Don't ask again for this function</span></label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" class="cursor-pointer" @click="showOverrideModal = false; pendingDeployBuild = null">Cancel</Button>
+          <Button class="gap-1.5 cursor-pointer" @click="confirmOverride">Override</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   </div>

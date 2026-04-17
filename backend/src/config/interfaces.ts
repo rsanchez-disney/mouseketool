@@ -1,13 +1,15 @@
 export interface Settings {
   localstack: { protocol: string; host: string; port: number };
   aws: { accessKeyId: string; secretAccessKey: string; region: string };
-  cleanup: { ttlMinutes: number };
+  cleanup: { ttlMinutes: number; deleteOnStartup: boolean };
+  pipeline: { observerPollingMs: number };
 }
 
 export const DEFAULTS: Settings = {
   localstack: { protocol: "http", host: "localhost", port: 4566 },
   aws: { accessKeyId: "test", secretAccessKey: "test", region: "us-east-1" },
-  cleanup: { ttlMinutes: 1440 },
+  cleanup: { ttlMinutes: 1440, deleteOnStartup: false },
+  pipeline: { observerPollingMs: 500 },
 };
 
 export interface BuildMeta {
