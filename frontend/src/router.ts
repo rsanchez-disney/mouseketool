@@ -9,6 +9,7 @@ export default createRouter({
     { path: "/triggers", component: () => import("./pages/TriggersPage.vue") },
     { path: "/triggers/:id/execute", component: () => import("./pages/ExecutionPage.vue") },
     { path: "/triggers/:id/history", component: () => import("./pages/HistoryPage.vue") },
+    { path: "/triggers/:id/edit", component: () => import("./pages/PipelineEditPage.vue") },
     { path: "/settings", component: () => import("./pages/SettingsPage.vue") },
     { path: "/help", component: () => import("./pages/HelpPage.vue") },
   ],

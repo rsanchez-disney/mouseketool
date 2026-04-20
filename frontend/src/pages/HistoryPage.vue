@@ -19,10 +19,10 @@ const route = useRoute();
 const router = useRouter();
 const pipelineId = route.params.id as string;
 
-interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; }
+interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
 interface RunStep { requestId: string; logs: string[]; error: boolean; }
 interface InferredStep { status: string; logs: string[]; elapsed?: number; }
-interface Run { id: string; timestamp: number; item?: string | null; source?: "manual" | "external"; handler: RunStep; sns?: InferredStep | null; sqs?: InferredStep | null; target: RunStep & { elapsed?: number } | null; status: string; diagAvailable?: boolean; totalElapsed?: number; }
+interface Run { id: string; timestamp: number; item?: string | null; items?: string[]; source?: "manual" | "external"; handler: RunStep; sns?: InferredStep | null; sqs?: InferredStep | null; target: RunStep & { elapsed?: number } | null; status: string; diagAvailable?: boolean; totalElapsed?: number; }
 
 const pipeline = ref<Pipeline | null>(null);
 const runs = ref<Run[]>([]);
@@ -33,6 +33,9 @@ const copiedKey = ref("");
 const expandedLogKey = ref("");
 const expandedLogContent = ref<string[]>([]);
 const logSearch = ref("");
+
+// Heavy load batch counter
+const batchCount = ref(0);
 const searchOpen = ref(false);
 
 function copyLogs(logs: string[]) {
@@ -69,7 +72,8 @@ function startLive() {
   eventSource = new EventSource(`/api/triggers/pipelines/${pipelineId}/history/live`);
   eventSource.onmessage = (e) => {
     const data = JSON.parse(e.data);
-    if (data.type === "new-run") loadHistory(true);
+    if (data.type === "batch-count") { batchCount.value = data.count; }
+    else if (data.type === "new-run") { batchCount.value = 0; loadHistory(true); }
     else if (data.type === "step-update") {
       const run = runs.value.find(r => r.id === data.runId);
       if (run) {
@@ -112,7 +116,10 @@ function statusColor(status: string) {
 
 import { formatTime, formatDate, formatMs, extractErrors } from "@/lib/format";
 
-onMounted(async () => { await loadPipeline(); await loadHistory(); startLive(); });
+onMounted(async () => {
+  await loadPipeline(); await loadHistory(); startLive();
+
+});
 </script>
 
 <template>
@@ -129,13 +136,21 @@ onMounted(async () => { await loadPipeline(); await loadHistory(); startLive(); 
 
     <div v-if="loading" class="flex items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading history...</p></div>
 
-    <div v-else-if="!runs.length" class="text-center py-16 text-muted-foreground">
+
+    <template v-else>
+    <div v-if="pipeline?.heavyLoad && batchCount > 0" class="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/5 px-4 py-2.5 mb-3">
+      <div class="size-2 rounded-full bg-orange-500 animate-pulse" />
+      <span class="text-xs text-orange-400 font-mono">Batching {{ batchCount }} new item{{ batchCount !== 1 ? 's' : '' }}...</span>
+    </div>
+
+    <div v-if="!runs.length" class="text-center py-16 text-muted-foreground">
       <Clock class="size-12 mx-auto mb-4 opacity-30" />
       <p>No invocations found in the last hour.</p>
       <p class="text-xs mt-1">Insert items into <span class="font-mono font-semibold">{{ pipeline?.tableName }}</span> to trigger the pipeline, or use the Execute page.</p>
     </div>
 
-    <div v-else class="space-y-2">
+    
+    <div class="space-y-2">
       <Card v-for="run in runs" :key="run.id" class="!py-0 !gap-0 overflow-hidden transition-all" :class="expandedRun === run.id ? 'border-primary/40' : ''">
         <!-- Run header -->
         <button class="w-full flex items-center gap-3 px-4 py-3 text-left cursor-pointer hover:bg-muted/30 transition-colors" @click="toggleRun(run.id)">
@@ -165,19 +180,23 @@ onMounted(async () => { await loadPipeline(); await loadHistory(); startLive(); 
                 <p class="text-xs font-semibold">DynamoDB Insert</p>
                 <p class="text-[10px] text-muted-foreground">{{ formatTime(run.timestamp) }}</p>
               </div>
+              <Badge v-if="run.items?.length" variant="outline" class="text-[10px]">{{ run.items.length }} items</Badge>
               <Badge class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px]">success</Badge>
               <ChevronDown v-if="expandedStep===run.id+':dynamo'" class="size-3.5 text-muted-foreground" />
               <ChevronRight v-else class="size-3.5 text-muted-foreground" />
             </button>
             <div v-if="expandedStep===run.id+':dynamo'" class="border-t bg-zinc-950">
               <div class="flex items-center justify-end gap-1 px-2 pt-1">
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs([`Received: ${new Date(run.timestamp).toISOString()}`, '', run.item || 'No item data available'])"><Copy class="size-3" /></Button>
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':dynamo', [`Received: ${new Date(run.timestamp).toISOString()}`, '', run.item || 'No item data available'])"><Maximize2 class="size-3" /></Button>
+                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs(run.items?.length ? [`Received: ${new Date(run.timestamp).toISOString()}`, '', `Batched ${run.items.length} items:`, ...run.items.flatMap((it, i) => [`[${i+1}] ${it}`])] : [`Received: ${new Date(run.timestamp).toISOString()}`, '', run.item || 'No item data available'])"><Copy class="size-3" /></Button>
+                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':dynamo', run.items?.length ? [`Received: ${new Date(run.timestamp).toISOString()}`, '', `Batched ${run.items.length} items:`, ...run.items.flatMap((it, i) => [`[${i+1}] ${it}`])] : [`Received: ${new Date(run.timestamp).toISOString()}`, '', run.item || 'No item data available'])"><Maximize2 class="size-3" /></Button>
               </div>
               <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
                 <pre class="text-xs text-zinc-300 font-mono whitespace-pre leading-relaxed">Received: {{ new Date(run.timestamp).toISOString() }}
-
-{{ run.item || 'No item data available' }}</pre>
+<template v-if="run.items?.length">
+Batched {{ run.items.length }} items:
+<template v-for="(it, idx) in run.items" :key="idx">[{{ idx + 1 }}] {{ it }}
+</template></template><template v-else>
+{{ run.item || 'No item data available' }}</template></pre>
               </div>
             </div>
           </div>
@@ -305,6 +324,7 @@ onMounted(async () => { await loadPipeline(); await loadHistory(); startLive(); 
         </div>
       </Card>
     </div>
+    </template>
 
     <!-- Expanded log modal -->
     <Dialog :open="!!expandedLogKey" @update:open="expandedLogKey = ''">

@@ -60,3 +60,16 @@ After all commits (code + docs) are on the feature branch:
 - When implementing features that depend on external services (LocalStack, Vault, AWS SDK), verify tier availability and API compatibility.
 - If a dependency or pattern is found to be deprecated during implementation, flag it immediately and suggest the replacement.
 - Prefer `@aws-sdk/client-*` v3 modular imports over v2 monolithic imports.
+
+## Platform Notes (Windows)
+
+### Shell
+- The development environment runs on **Windows with PowerShell** as the default shell.
+- Use semicolons (`;`) instead of `&&` to chain commands in PowerShell.
+- Docker is installed in WSL, so Docker commands must use `wsl docker`.
+- LocalStack and other services on `localhost` are directly reachable from Windows.
+
+### File Editing
+- **Never use PowerShell `Set-Content` or `Get-Content | Set-Content` to edit source files.** These commands can corrupt UTF-8 encoding by writing UTF-16 BOM or mangling multi-byte characters (em dashes, arrows, etc.) into mojibake.
+- Always use the `write` tool (strReplace, insert, create) for all file modifications.
+- PowerShell is acceptable for reading files, running git commands, and executing build tools — just not for writing source files.

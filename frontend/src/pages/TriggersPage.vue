@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
-  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter,
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save,
 } from "lucide-vue-next";
 
 const triggerRouter = useRouter();
@@ -47,6 +47,45 @@ const showCreate = ref(false);
 const newTableName = ref(""); const newPartitionKey = ref(""); const newPartitionKeyType = ref("S");
 const newSortKey = ref(""); const newSortKeyType = ref("S"); const creating = ref(false);
 const enablingStream = ref("");
+// Schema save/restore
+const showRestore = ref(false);
+const savedSchemas = ref<{ tableName: string; hasSeed: boolean }[]>([]);
+const restoreSchema = ref("");
+const restoreSeedJson = ref("");
+const restoring = ref(false);
+const schemaSavedWizard = ref(false);
+const showSaveSchema = ref(false);
+watch(restoreSchema, async (name) => {
+  if (!name) { restoreSeedJson.value = ""; return; }
+  try {
+    const schema = await (await fetch(`/api/dynamodb/schemas/${name}`)).json();
+    restoreSeedJson.value = schema.seedItem ? JSON.stringify(schema.seedItem, null, 2) : "";
+  } catch { restoreSeedJson.value = ""; }
+});
+const saveSeedJson = ref("");
+async function saveTableSchema() {
+  if (!selectedTable.value) return;
+  const body: any = {};
+  if (saveSeedJson.value.trim()) { try { body.seedItem = JSON.parse(saveSeedJson.value); } catch {} }
+  await fetch(`/api/dynamodb/tables/${selectedTable.value.name}/save-schema`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  showSaveSchema.value = false; saveSeedJson.value = "";
+  schemaSavedWizard.value = true; setTimeout(() => schemaSavedWizard.value = false, 3000);
+}
+async function loadSchemas() { try { savedSchemas.value = await (await fetch("/api/dynamodb/schemas")).json(); } catch {} }
+async function restoreTable() {
+  if (!restoreSchema.value) return;
+  restoring.value = true;
+  try {
+    const body: any = {};
+    if (restoreSeedJson.value.trim()) body.seedItem = JSON.parse(restoreSeedJson.value);
+    await fetch(`/api/dynamodb/schemas/${restoreSchema.value}/restore`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    showRestore.value = false; restoreSchema.value = ""; restoreSeedJson.value = "";
+    await loadTables();
+  } catch {}
+  restoring.value = false;
+}
+
+
 
 // SNS
 interface SnsTopic { arn: string; name: string; }
@@ -138,7 +177,7 @@ watch([selectedGlueFunction, selectedTargetFunction], ([g, t]) => {
 });
 
 // Mappings
-interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; }
+interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; heavyLoad?: boolean; }
 const mappings = ref<Pipeline[]>([]);
 const loadingMappings = ref(false);
 
@@ -199,6 +238,7 @@ async function saveEnvVars() {
 
 // Vault add-on
 const showVaultSheet = ref(false);
+const heavyLoad = ref(false);
 const vaultEnabled = ref(false);
 const vaultUrl = ref("");
 const vaultToken = ref("");
@@ -365,7 +405,7 @@ async function wirePipeline() {
   wiring.value = true; wireError.value = ""; wireResult.value = null;
   try {
     const res = await fetch("/api/triggers/wire", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ streamArn: selectedTable.value.streamArn, glueFunctionName: selectedGlueFunction.value.name, topicArn: selectedTopic.value.arn, queueUrl: selectedQueue.value.url, targetFunctionName: selectedTargetFunction.value.name, pipelineName: pipelineName.value, addons: vaultEnabled.value ? ["vault"] : [], filterPolicy: buildFilterPolicy(), filterPolicyScope: filterEnabled.value ? filterScope.value : undefined, topicCreatedByUs: topicCreatedByUs.value, queueCreatedByUs: queueCreatedByUs.value, vaultConfig: vaultEnabled.value && vaultSecrets.value.some(s => s.path) ? { url: vaultUrl.value, token: vaultToken.value, paths: vaultSecrets.value.filter(s => s.path).map(s => s.path) } : undefined }) });
+      body: JSON.stringify({ streamArn: selectedTable.value.streamArn, glueFunctionName: selectedGlueFunction.value.name, topicArn: selectedTopic.value.arn, queueUrl: selectedQueue.value.url, targetFunctionName: selectedTargetFunction.value.name, pipelineName: pipelineName.value, addons: vaultEnabled.value ? ["vault"] : [], filterPolicy: buildFilterPolicy(), filterPolicyScope: filterEnabled.value ? filterScope.value : undefined, topicCreatedByUs: topicCreatedByUs.value, queueCreatedByUs: queueCreatedByUs.value, heavyLoad: heavyLoad.value, vaultConfig: vaultEnabled.value && vaultSecrets.value.some(s => s.path) ? { url: vaultUrl.value, token: vaultToken.value, paths: vaultSecrets.value.filter(s => s.path).map(s => s.path) } : undefined }) });
     const data = await res.json();
     if (res.ok) {
       wireResult.value = data;
@@ -409,7 +449,7 @@ async function runQuickTest() {
 
 function selectTable(t: DynamoTable) { if (t.streamEnabled) selectedTable.value = t; }
 import { formatBytes } from "@/lib/format";
-function startWizard() { view.value = "wizard"; stepIndex.value = 0; selectedSource.value = null; selectedTable.value = null; selectedTopic.value = null; selectedQueue.value = null; selectedGlueFunction.value = null; selectedTargetFunction.value = null; wireResult.value = null; wireError.value = ""; pipelineName.value = ""; vaultEnabled.value = false; vaultUrl.value = ""; vaultToken.value = ""; vaultSecrets.value = []; vaultTestResult.value = null; filterEnabled.value = false; filterScope.value = "MessageBody"; filterRules.value = []; topics.value = []; queues.value = []; tables.value = []; topicCreatedByUs.value = false; queueCreatedByUs.value = false; }
+function startWizard() { view.value = "wizard"; stepIndex.value = 0; selectedSource.value = null; selectedTable.value = null; selectedTopic.value = null; selectedQueue.value = null; selectedGlueFunction.value = null; selectedTargetFunction.value = null; wireResult.value = null; wireError.value = ""; pipelineName.value = ""; heavyLoad.value = false; vaultEnabled.value = false; vaultUrl.value = ""; vaultToken.value = ""; vaultSecrets.value = []; vaultTestResult.value = null; filterEnabled.value = false; filterScope.value = "MessageBody"; filterRules.value = []; topics.value = []; queues.value = []; tables.value = []; topicCreatedByUs.value = false; queueCreatedByUs.value = false; }
 function isTemplateDeployed(t: Template) { return functions.value.some(f => f.templateId === t.id); }
 function startOver() { loadMappings(); view.value = "list"; }
 
@@ -447,7 +487,7 @@ onMounted(loadMappings);
           <div class="flex items-center gap-3 min-w-0 flex-1">
             <input type="checkbox" :checked="selectedPipelines.has(m.id)" @change="toggleSelect(m.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
             <div class="min-w-0 flex-1 space-y-1">
-              <p class="font-semibold text-sm">{{ m.name }}</p>
+              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip></p>
               <div class="flex items-center gap-1.5 text-muted-foreground">
                 <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span>
               </div>
@@ -456,7 +496,7 @@ onMounted(loadMappings);
           <div class="flex items-center gap-1 shrink-0">
             <Tooltip v-if="m.sourceType==='dynamodb'"><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></TooltipTrigger><TooltipContent>Run pipeline with a test item</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/history`)"><Clock class="size-3.5" /> History</Button></TooltipTrigger><TooltipContent>View invocation history from CloudWatch logs</TooltipContent></Tooltip>
-            <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="openEnvEditor(m.id, m.name)"><Settings2 class="size-3.5" /> Env Vars</Button></TooltipTrigger><TooltipContent>Configure environment variables for the target Lambda</TooltipContent></Tooltip>
+            <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/edit`)"><Pencil class="size-3.5" /> Edit</Button></TooltipTrigger><TooltipContent>Edit pipeline settings</TooltipContent></Tooltip>
           </div>
         </div>
           <!-- Configured add-ons -->
@@ -489,6 +529,9 @@ onMounted(loadMappings);
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(0);selectedTable=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTables"><RefreshCw class="size-3.5" /> Refresh</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreate=true"><Plus class="size-3.5" /> Create Table</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadSchemas(); showRestore=true"><HardDrive class="size-3.5" /> Restore Table</Button>
+            <Button v-if="selectedTable" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="() => showSaveSchema = true"><Save class="size-3.5" /> Save Schema</Button>
+            <span v-if="schemaSavedWizard" class="text-xs text-green-500">Saved!</span>
           </div>
           <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading tables...</p></div>
           <div v-else-if="!tables.length" class="text-center py-16 text-muted-foreground"><Database class="size-12 mx-auto mb-4 opacity-30" /><p>No DynamoDB tables found.</p></div>
@@ -639,11 +682,11 @@ onMounted(loadMappings);
             <!-- Stream Handler -->
             <div class="border rounded-lg p-3 space-y-2" :class="selectedGlueFunction ? 'border-green-500/40 bg-green-500/5' : 'border-dashed'">
               <div class="flex items-center justify-between">
-                <div><p class="text-xs font-semibold flex items-center gap-1.5"><span class="inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">1</span> Stream Handler</p><p class="text-[10px] text-muted-foreground mt-0.5">Triggered by DynamoDB Stream. Publishes the unmarshalled item to SNS. <a href="/help#template-lambda" class="underline text-primary hover:text-primary/80">Learn more</a></p></div>
+                <div><p class="text-xs font-semibold flex items-center gap-1.5"><span class="inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">1</span> Stream Handler</p><p class="text-[10px] text-muted-foreground mt-0.5">Triggered by DynamoDB Stream. Publishes the unmarshalled item to SNS.</p></div>
                 <Badge v-if="selectedGlueFunction" class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px] gap-1"><Check class="size-3" />{{ selectedGlueFunction.name }}</Badge>
               </div>
               <div class="space-y-1">
-              <Card v-for="f in functions" :key="'glue-'+f.arn" class="!py-2 transition-all" :class="usedFunctions.has(f.name)?'border-dashed opacity-50 cursor-not-allowed':selectedGlueFunction?.name===f.name?'border-primary ring-1 ring-primary/20':'hover:border-primary/50 cursor-pointer'" @click="!usedFunctions.has(f.name)&&(selectedGlueFunction=f,selectedTargetFunction?.name===f.name&&(selectedTargetFunction=null))"><CardContent class="py-2"><div class="flex items-center gap-2"><Zap class="size-3.5 text-muted-foreground shrink-0" /><span class="font-mono text-xs font-semibold truncate">{{ f.name }}</span><Badge variant="secondary" class="text-[10px]">{{ f.runtime }}</Badge><Badge v-if="f.templateId" variant="outline" class="text-[10px] gap-1"><Package class="size-3" />template</Badge><Tooltip v-if="f.outdated"><TooltipTrigger as-child><Badge class="bg-amber-500/20 text-amber-500 border-amber-500/40 text-[10px] gap-1"><AlertTriangle class="size-3" />outdated</Badge></TooltipTrigger><TooltipContent>Template source has changed. Redeploy to update.</TooltipContent></Tooltip></div></CardContent></Card>
+              <Card v-for="f in functions" :key="'glue-'+f.arn" class="!py-2 transition-all" :class="usedFunctions.has(f.name)?'border-dashed opacity-50 cursor-not-allowed':selectedGlueFunction?.name===f.name?'border-primary ring-1 ring-primary/20':'hover:border-primary/50 cursor-pointer'" @click="!usedFunctions.has(f.name)&&(selectedGlueFunction=f,selectedTargetFunction?.name===f.name&&(selectedTargetFunction=null))"><CardContent class="py-2"><div class="flex items-center gap-2"><Zap class="size-3.5 text-muted-foreground shrink-0" /><span class="font-mono text-xs font-semibold truncate">{{ f.name }}</span><Badge variant="secondary" class="text-[10px]">{{ f.runtime }}</Badge><Badge v-if="f.templateId" variant="outline" class="text-[10px] gap-1"><Package class="size-3" />template</Badge><Tooltip v-if="f.templateId"><TooltipTrigger as-child><Info class="size-3 text-muted-foreground cursor-help shrink-0" /></TooltipTrigger><TooltipContent class="max-w-[250px]">This template processes all DynamoDB stream events by default (INSERT, MODIFY, REMOVE). You can filter to inserts only from the pipeline edit page after creation.</TooltipContent></Tooltip><Tooltip v-if="f.outdated"><TooltipTrigger as-child><Badge class="bg-amber-500/20 text-amber-500 border-amber-500/40 text-[10px] gap-1"><AlertTriangle class="size-3" />outdated</Badge></TooltipTrigger><TooltipContent>Template source has changed. Redeploy to update.</TooltipContent></Tooltip></div></CardContent></Card>
             </div></div>
             <!-- Target Lambda -->
             <div class="border rounded-lg p-3 space-y-2" :class="[selectedTargetFunction ? 'border-green-500/40 bg-green-500/5' : 'border-dashed', !selectedGlueFunction ? 'opacity-50 pointer-events-none' : '']">
@@ -695,6 +738,27 @@ onMounted(loadMappings);
           </Card>
 
           <!-- Info banner -->
+          <!-- Heavy Load Card -->
+          <Card class="!py-3">
+            <CardContent class="py-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="size-9 rounded-lg bg-muted flex items-center justify-center"><Flame class="size-4" /></div>
+                  <div>
+                    <p class="text-sm font-medium">Heavy Load</p>
+                    <p class="text-xs text-muted-foreground">Increase batch size and window for high-throughput DynamoDB streams</p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="text-xs text-muted-foreground">{{ heavyLoad ? 'Enabled' : 'Disabled' }}</span>
+                  <button type="button" @click="heavyLoad = !heavyLoad" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors" :class="heavyLoad ? 'bg-primary' : 'bg-input'">
+                    <span class="pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform" :class="heavyLoad ? 'translate-x-4' : 'translate-x-0'" />
+                  </button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <div v-if="vaultEnabled" class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 space-y-1">
             <p class="font-semibold">How add-ons work in pipelines</p>
             <p>Unlike the Deployments page where Vault secrets are created before each invocation, here secrets are created once and their values are <span class="font-semibold">applied as environment variables</span> to the target Lambda when the pipeline is saved. The event source mapping will use these pre-configured values.</p>
@@ -721,6 +785,30 @@ onMounted(loadMappings);
       </div>
       <DialogFooter><Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showCreate=false">Cancel</Button><Button :disabled="!newTableName||!newPartitionKey||creating" class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="createTable"><Loader2 v-if="creating" class="size-4 animate-spin" /><Check v-else class="size-4" />{{ creating?'Creating...':'Create' }}</Button></DialogFooter>
     </DialogContent></Dialog>
+    <!-- Restore Table Dialog -->
+    <Dialog v-model:open="showRestore"><DialogContent class="sm:max-w-lg"><DialogHeader><DialogTitle>Restore Table from Schema</DialogTitle><DialogDescription>Recreate a previously saved table. Optionally provide a seed item in DynamoDB JSON format.</DialogDescription></DialogHeader>
+      <div class="space-y-4">
+        <div class="space-y-2">
+          <Label>Saved Schema</Label>
+          <Select v-model="restoreSchema"><SelectTrigger><SelectValue placeholder="Select a schema..." /></SelectTrigger><SelectContent><SelectItem v-for="s in savedSchemas" :key="s.tableName" :value="s.tableName">{{ s.tableName }}</SelectItem></SelectContent></Select>
+        </div>
+        <div class="space-y-2">
+          <Label>Seed Item <span class="text-muted-foreground font-normal">{{ restoreSeedJson ? '(saved seed loaded, you may edit)' : '(optional, DynamoDB JSON)' }}</span></Label>
+          <textarea v-model="restoreSeedJson" placeholder='{"pk": {"S": "example"}, "sk": {"S": "item-1"}}' class="w-full h-32 font-mono text-xs bg-zinc-900 border border-zinc-700 rounded-md p-3 text-zinc-200 outline-none resize-y" />
+        </div>
+      </div>
+      <DialogFooter><Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showRestore=false">Cancel</Button><Button :disabled="!restoreSchema||restoring" class="gap-2 cursor-pointer active:scale-95 transition-transform min-w-[120px]" @click="restoreTable"><Loader2 v-if="restoring" class="size-4 animate-spin" /><HardDrive v-else class="size-4" />{{ restoring?'Restoring...':'Restore' }}</Button></DialogFooter>
+    </DialogContent></Dialog>
+    <!-- Save Schema Dialog -->
+    <Dialog v-model:open="showSaveSchema"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Save Table Schema</DialogTitle><DialogDescription>Save the schema for <span class="font-mono font-semibold">{{ selectedTable?.name }}</span>. Optionally include a seed item to insert on restore.</DialogDescription></DialogHeader>
+      <div class="space-y-2">
+        <Label>Seed Item <span class="text-muted-foreground font-normal">(optional, DynamoDB JSON)</span></Label>
+        <textarea v-model="saveSeedJson" placeholder='{"pk": {"S": "example"}, "sk": {"S": "item-1"}}' class="w-full h-32 font-mono text-xs bg-zinc-900 border border-zinc-700 rounded-md p-3 text-zinc-200 outline-none resize-y" />
+      </div>
+      <DialogFooter><Button variant="outline" class="cursor-pointer active:scale-95 transition-transform" @click="showSaveSchema=false">Cancel</Button><Button class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="saveTableSchema"><Save class="size-4" /> Save</Button></DialogFooter>
+    </DialogContent></Dialog>
+
+
     <!-- Create Topic Dialog -->
     <Dialog v-model:open="showCreateTopic"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Create SNS Topic</DialogTitle><DialogDescription>Create a standard SNS topic on LocalStack.</DialogDescription></DialogHeader>
       <div class="space-y-2"><Label>Topic Name</Label><Input v-model="newTopicName" placeholder="my-topic" class="font-mono text-xs" /></div>

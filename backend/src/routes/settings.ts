@@ -9,7 +9,28 @@ router.get("/", async (_req, res) => {
 });
 
 router.put("/", async (req, res) => {
-  res.json(await saveSettings({ ...DEFAULTS, ...req.body }));
+  const settings = await saveSettings({ ...DEFAULTS, ...req.body });
+
+  // Re-apply heavy load settings to all pipelines with heavyLoad enabled
+  try {
+    const { loadPipelines } = await import("../services/pipeline-watcher.js");
+    const { getLambdaClient } = await import("../helpers/lambda-client.js");
+    const { UpdateEventSourceMappingCommand } = await import("@aws-sdk/client-lambda");
+    const pipelines = loadPipelines().filter(p => p.heavyLoad);
+    if (pipelines.length) {
+      const client = await getLambdaClient();
+      const batch = settings.heavyLoad?.batchSize ?? 1000;
+      const window = settings.heavyLoad?.batchWindowSeconds ?? 300;
+      for (const p of pipelines) {
+        const uuid = p.uuids[0];
+        if (uuid) {
+          try { await client.send(new UpdateEventSourceMappingCommand({ UUID: uuid, BatchSize: batch, MaximumBatchingWindowInSeconds: window })); } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  res.json(settings);
 });
 
 export default router;
