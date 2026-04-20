@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") expandedLogKey.value = ""; }
@@ -37,6 +37,19 @@ const logSearch = ref("");
 // Heavy load batch counter
 const batchCount = ref(0);
 const searchOpen = ref(false);
+const stateFilter = ref<string>("all");
+const timeRange = ref<string>("all");
+
+const filteredRuns = computed(() => {
+  let result = runs.value;
+  if (stateFilter.value !== "all") result = result.filter(r => r.status === stateFilter.value);
+  if (timeRange.value !== "all") {
+    const now = Date.now();
+    const ms = timeRange.value === "5m" ? 300000 : timeRange.value === "15m" ? 900000 : timeRange.value === "1h" ? 3600000 : timeRange.value === "6h" ? 21600000 : 0;
+    if (ms) result = result.filter(r => now - r.timestamp < ms);
+  }
+  return result;
+});
 
 function copyLogs(logs: string[]) {
   navigator.clipboard.writeText(logs.join("\n"));
@@ -148,10 +161,24 @@ onMounted(async () => {
       <p>No invocations found in the last hour.</p>
       <p class="text-xs mt-1">Insert items into <span class="font-mono font-semibold">{{ pipeline?.tableName }}</span> to trigger the pipeline, or use the Execute page.</p>
     </div>
+    <!-- Filters toolbar -->
+    <div v-if="runs.length" class="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2">
+      <div class="flex items-center gap-1.5">
+        <button v-for="s in [{v:'all',l:'All'},{v:'success',l:'Success'},{v:'error',l:'Error'},{v:'filtered',l:'Filtered'},{v:'diagnosing',l:'Diagnosing'}]" :key="s.v" @click="stateFilter = s.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="stateFilter === s.v ? s.v === 'success' ? 'bg-green-500/20 text-green-400 ring-1 ring-green-500/40' : s.v === 'error' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/40' : s.v === 'filtered' ? 'bg-blue-400/20 text-blue-400 ring-1 ring-blue-400/40' : s.v === 'diagnosing' ? 'bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/40' : 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+          {{ s.l }}
+        </button>
+      </div>
+      <div class="h-4 w-px bg-border" />
+      <div class="flex items-center gap-1.5">
+        <button v-for="t in [{v:'all',l:'All'},{v:'5m',l:'5m'},{v:'15m',l:'15m'},{v:'1h',l:'1h'},{v:'6h',l:'6h'}]" :key="t.v" @click="timeRange = t.v" class="px-2 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="timeRange === t.v ? 'bg-primary/20 text-primary ring-1 ring-primary/40' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+          {{ t.l }}
+        </button>
+      </div>
+      <span class="ml-auto text-[11px] text-muted-foreground font-mono tabular-nums">{{ filteredRuns.length }}<span class="text-muted-foreground/40">/{{ runs.length }}</span></span>
+    </div>
 
-    
     <div class="space-y-2">
-      <Card v-for="run in runs" :key="run.id" class="!py-0 !gap-0 overflow-hidden transition-all" :class="expandedRun === run.id ? 'border-primary/40' : ''">
+      <Card v-for="run in filteredRuns" :key="run.id" class="!py-0 !gap-0 overflow-hidden transition-all" :class="expandedRun === run.id ? 'border-primary/40' : ''">
         <!-- Run header -->
         <button class="w-full flex items-center gap-3 px-4 py-3 text-left cursor-pointer hover:bg-muted/30 transition-colors" @click="toggleRun(run.id)">
           <div class="flex items-center justify-center size-8 rounded-full shrink-0" :class="[run.status==='success'?'bg-green-500/20':run.status==='error'?'bg-red-500/20':run.status==='filtered'?'bg-blue-400/20':run.status==='diagnosing'?'bg-purple-500/20':'bg-amber-500/20']">
