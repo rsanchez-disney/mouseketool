@@ -427,6 +427,12 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
         spinner, no blink. This is useful when you're inserting items into DynamoDB from another terminal and want to
         see the results appear in real-time.</p>
 
+        <p class="font-medium text-foreground">Filtering runs</p>
+        <p>The toolbar at the top of the runs list lets you filter by state (Success, Error, Filtered, Diagnosing) and
+        time range (5 min, 15 min, 1 hour, 6 hours). Both filters work together. The run count on the right shows how
+        many runs match the current filters out of the total.</p>
+
+
         <p class="font-medium text-foreground">Expanding a run</p>
         <p>Click on any run to expand it and see the full logs for both the Stream Handler and Target Lambda. The logs
         are color-coded the same way as on the Deployments page: <span class="text-red-400">red</span> for errors and
