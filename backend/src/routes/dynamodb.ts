@@ -1,11 +1,14 @@
 import { Router } from "express";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "fs";
+import { join } from "path";
 import {
   ListTablesCommand, DescribeTableCommand, CreateTableCommand,
-  UpdateTableCommand, PutItemCommand,
+  UpdateTableCommand, PutItemCommand, ScanCommand,
   KeyType, ScalarAttributeType, StreamViewType,
 } from "@aws-sdk/client-dynamodb";
 import { getDynamoClient } from "../helpers/dynamo-client.js";
 import { formatAwsError } from "../helpers/aws-error.js";
+import { SCHEMAS_DIR } from "../config/constants.js";
 
 const router = Router();
 
@@ -104,6 +107,16 @@ router.get("/tables/:name/describe", async (req, res) => {
 });
 
 // POST /api/dynamodb/tables/:name/put-item — insert item (accepts plain JSON, converts to DynamoDB format)
+// GET /api/dynamodb/tables/:name/count — live item count
+router.get("/tables/:name/count", async (req, res) => {
+  try {
+    const client = await getDynamoClient();
+    const { Count = 0 } = await client.send(new ScanCommand({ TableName: req.params.name, Select: "COUNT" }));
+    res.json({ count: Count });
+  } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
+});
+
+
 router.post("/tables/:name/put-item", async (req, res) => {
   const { item } = req.body;
   if (!item || typeof item !== "object") return res.status(400).json({ error: "item object is required" });
@@ -130,3 +143,90 @@ router.post("/tables/:name/put-item", async (req, res) => {
 });
 
 export default router;
+
+// POST /api/dynamodb/tables/:name/save-schema — save table schema + optional seed item
+router.post("/tables/:name/save-schema", async (req, res) => {
+  try {
+    const client = await getDynamoClient();
+    const { Table } = await client.send(new DescribeTableCommand({ TableName: req.params.name }));
+    if (!Table) return res.status(404).json({ error: "Table not found" });
+    const schema: any = {
+      tableName: Table.TableName,
+      keySchema: Table.KeySchema,
+      attributeDefinitions: Table.AttributeDefinitions,
+      streamEnabled: !!Table.StreamSpecification?.StreamEnabled,
+      streamViewType: Table.StreamSpecification?.StreamViewType,
+    };
+    if (Table.GlobalSecondaryIndexes?.length) {
+      schema.globalSecondaryIndexes = Table.GlobalSecondaryIndexes.map(g => ({
+        IndexName: g.IndexName, KeySchema: g.KeySchema, Projection: g.Projection,
+      }));
+    }
+    if (Table.LocalSecondaryIndexes?.length) {
+      schema.localSecondaryIndexes = Table.LocalSecondaryIndexes.map(l => ({
+        IndexName: l.IndexName, KeySchema: l.KeySchema, Projection: l.Projection,
+      }));
+    }
+    if (req.body.seedItem) schema.seedItem = req.body.seedItem;
+    mkdirSync(SCHEMAS_DIR, { recursive: true });
+    writeFileSync(join(SCHEMAS_DIR, `${Table.TableName}.json`), JSON.stringify(schema, null, 2));
+    res.json({ saved: true, tableName: Table.TableName });
+  } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
+});
+
+// GET /api/dynamodb/schemas — list saved schemas
+router.get("/schemas", (_req, res) => {
+  mkdirSync(SCHEMAS_DIR, { recursive: true });
+  const files = readdirSync(SCHEMAS_DIR).filter(f => f.endsWith(".json"));
+  const schemas = files.map(f => {
+    const data = JSON.parse(readFileSync(join(SCHEMAS_DIR, f), "utf-8"));
+    return { tableName: data.tableName, hasSeed: !!data.seedItem, keySchema: data.keySchema };
+  });
+  res.json(schemas);
+});
+
+// GET /api/dynamodb/schemas/:name — get a saved schema
+router.get("/schemas/:name", (req, res) => {
+  const file = join(SCHEMAS_DIR, `${req.params.name}.json`);
+  if (!existsSync(file)) return res.status(404).json({ error: "Schema not found" });
+  res.json(JSON.parse(readFileSync(file, "utf-8")));
+});
+
+// POST /api/dynamodb/schemas/:name/restore — create table from saved schema + optional seed
+router.post("/schemas/:name/restore", async (req, res) => {
+  const file = join(SCHEMAS_DIR, `${req.params.name}.json`);
+  if (!existsSync(file)) return res.status(404).json({ error: "Schema not found" });
+  const schema = JSON.parse(readFileSync(file, "utf-8"));
+  const seedItem = req.body.seedItem ?? schema.seedItem;
+  try {
+    const client = await getDynamoClient();
+    const createParams: any = {
+      TableName: schema.tableName,
+      KeySchema: schema.keySchema,
+      AttributeDefinitions: schema.attributeDefinitions,
+      BillingMode: "PAY_PER_REQUEST",
+    };
+    if (schema.streamEnabled) {
+      createParams.StreamSpecification = { StreamEnabled: true, StreamViewType: schema.streamViewType || "NEW_AND_OLD_IMAGES" };
+    }
+    if (schema.globalSecondaryIndexes?.length) createParams.GlobalSecondaryIndexes = schema.globalSecondaryIndexes;
+    if (schema.localSecondaryIndexes?.length) createParams.LocalSecondaryIndexes = schema.localSecondaryIndexes;
+    await client.send(new CreateTableCommand(createParams));
+    if (seedItem) {
+      await client.send(new PutItemCommand({ TableName: schema.tableName, Item: seedItem }));
+    }
+    res.json({ restored: true, tableName: schema.tableName, seeded: !!seedItem });
+  } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
+});
+
+// PUT /api/dynamodb/schemas/:name/seed — update seed item for a saved schema
+router.put("/schemas/:name/seed", (req, res) => {
+  const file = join(SCHEMAS_DIR, `${req.params.name}.json`);
+  if (!existsSync(file)) return res.status(404).json({ error: "Schema not found" });
+  const schema = JSON.parse(readFileSync(file, "utf-8"));
+  schema.seedItem = req.body.seedItem || null;
+  writeFileSync(file, JSON.stringify(schema, null, 2));
+  res.json({ updated: true });
+});
+
+

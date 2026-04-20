@@ -4,6 +4,7 @@ export interface Settings {
   cleanup: { ttlMinutes: number; deleteOnStartup: boolean };
   pipeline: { observerPollingMs: number };
   lambda: { memoryMB: number };
+  heavyLoad: { batchSize: number; batchWindowSeconds: number };
 }
 
 export const DEFAULTS: Settings = {
@@ -12,6 +13,7 @@ export const DEFAULTS: Settings = {
   cleanup: { ttlMinutes: 1440, deleteOnStartup: false },
   pipeline: { observerPollingMs: 500 },
   lambda: { memoryMB: 2048 },
+  heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
 };
 
 export interface BuildMeta {

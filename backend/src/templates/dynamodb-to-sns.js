@@ -15,7 +15,12 @@ exports.handler = async (event) => {
   });
 
   const results = [];
+  const onlyInserts = process.env.STREAM_INSERTS_ONLY === "true";
   for (const record of event.Records) {
+    if (onlyInserts && record.eventName !== "INSERT") {
+      console.log(`Skipping ${record.eventName} event (STREAM_INSERTS_ONLY=true)`);
+      continue;
+    }
     console.log("DynamoDB Record:", JSON.stringify(record.dynamodb?.NewImage || record.dynamodb?.Keys || {}));
     // Also log unmarshalled version for readability
     const img = record.dynamodb?.NewImage || {};

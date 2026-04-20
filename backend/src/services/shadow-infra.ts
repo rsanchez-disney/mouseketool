@@ -15,6 +15,8 @@ const SHADOW_QUEUE = `mk-shadow-${SHADOW_SUFFIX}`;
 const CAPTURES_BUCKET = `mk-shadow-${SHADOW_SUFFIX}`;
 const SHADOW_PREFIX = "mk-shadow-";
 
+export function getShadowQueueName() { return SHADOW_QUEUE; }
+
 async function getSnsClient() {
   const { getSnsClient: get } = await import("../helpers/sns-client.js");
   return get();
@@ -194,7 +196,7 @@ export async function initShadowInfra() {
     const pipelines = loadPipelines();
     for (const p of pipelines) {
       if (p.topicArn) {
-        const subArn = await subscribeShadowQueue(p.topicArn);
+        const subArn = await subscribeShadowQueue(p.topicArn, p.filterPolicy as any, p.filterPolicyScope);
         if (subArn) {
           const updated = loadPipelines();
           const pp = updated.find(u => u.id === p.id);
@@ -210,7 +212,7 @@ export async function initShadowInfra() {
 }
 
 // Subscribe shadow queue to a pipeline's SNS topic
-export async function subscribeShadowQueue(topicArn: string) {
+export async function subscribeShadowQueue(topicArn: string, filterPolicy?: Record<string, unknown>, filterPolicyScope?: string) {
   try {
     const snsClient = await getSnsClient();
     const sqsClient = await getSqsClient();
@@ -223,6 +225,13 @@ export async function subscribeShadowQueue(topicArn: string) {
 
     const { SubscriptionArn } = await snsClient.send(new SubscribeCommand({ TopicArn: topicArn, Protocol: "sqs", Endpoint: queueArn }));
     console.log(`[shadow] Subscribed shadow queue to ${topicArn} → ${SubscriptionArn}`);
+
+    if (filterPolicy && Object.keys(filterPolicy).length && SubscriptionArn) {
+      const { SetSubscriptionAttributesCommand } = await import("@aws-sdk/client-sns");
+      await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn, AttributeName: "FilterPolicy", AttributeValue: JSON.stringify(filterPolicy) }));
+      if (filterPolicyScope) await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn, AttributeName: "FilterPolicyScope", AttributeValue: filterPolicyScope }));
+      console.log(`[shadow] Applied filter policy to shadow subscription`);
+    }
 
     // Update TOPIC_MAP on the shadow Lambda
     await updateTopicMap();
@@ -271,3 +280,35 @@ export async function getCapturedPayload(pipelineId: string): Promise<any | null
     return body ? JSON.parse(body) : null;
   } catch { return null; }
 }
+
+
+export async function getCapturedItems(pipelineId: string): Promise<string[]> {
+  try {
+    const s3 = await getS3Client();
+    const { ListObjectsV2Command, GetObjectCommand } = await import("@aws-sdk/client-s3");
+    console.log(`[shadow] getCapturedItems: bucket=${CAPTURES_BUCKET}, prefix=captures/${pipelineId}/items/`);
+    const { Contents = [] } = await s3.send(new ListObjectsV2Command({ Bucket: CAPTURES_BUCKET, Prefix: `captures/${pipelineId}/items/` }));
+    console.log(`[shadow] getCapturedItems: found ${Contents.length} items`);
+    if (!Contents.length) return [];
+    const items: string[] = [];
+    for (const obj of Contents) {
+      if (!obj.Key) continue;
+      const r = await s3.send(new GetObjectCommand({ Bucket: CAPTURES_BUCKET, Key: obj.Key }));
+      const body = await r.Body?.transformToString();
+      if (body) items.push(body);
+    }
+    return items;
+  } catch { return []; }
+}
+
+export async function clearCapturedItems(pipelineId: string): Promise<void> {
+  try {
+    const s3 = await getS3Client();
+    const { ListObjectsV2Command, DeleteObjectsCommand } = await import("@aws-sdk/client-s3");
+    const { Contents = [] } = await s3.send(new ListObjectsV2Command({ Bucket: CAPTURES_BUCKET, Prefix: `captures/${pipelineId}/items/` }));
+    if (Contents.length) {
+      await s3.send(new DeleteObjectsCommand({ Bucket: CAPTURES_BUCKET, Delete: { Objects: Contents.map(o => ({ Key: o.Key! })) } }));
+    }
+  } catch {}
+}
+

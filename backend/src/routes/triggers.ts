@@ -45,7 +45,7 @@ const TEMPLATES = [
     id: "dynamodb-to-sns",
     name: "DynamoDB Stream → SNS Forwarder",
     description: "Reads DynamoDB stream records and publishes them to an SNS topic",
-    runtime: "nodejs18.x",
+    runtime: "nodejs20.x",
     handler: "index.handler",
     sourceFile: "dynamodb-to-sns.js",
     envVars: ["SNS_TOPIC_ARN"],
@@ -132,7 +132,7 @@ router.get("/functions", async (_req, res) => {
 
 // POST /api/triggers/wire — full chain: DynamoDB Stream → Stream Handler, SNS→SQS subscription, SQS → target Lambda
 router.post("/wire", async (req, res) => {
-  const { streamArn, glueFunctionName, topicArn, queueUrl, targetFunctionName, pipelineName, addons, filterPolicy, filterPolicyScope, topicCreatedByUs, queueCreatedByUs, vaultConfig } = req.body;
+  const { streamArn, glueFunctionName, topicArn, queueUrl, targetFunctionName, pipelineName, addons, filterPolicy, filterPolicyScope, topicCreatedByUs, queueCreatedByUs, vaultConfig, heavyLoad } = req.body;
   if (!streamArn || !glueFunctionName || !topicArn || !queueUrl || !targetFunctionName)
     return res.status(400).json({ error: "streamArn, glueFunctionName, topicArn, queueUrl, and targetFunctionName are required" });
 
@@ -152,13 +152,16 @@ router.post("/wire", async (req, res) => {
     if (!queueArn) return res.status(400).json({ error: "Could not resolve queue ARN" });
 
     const results: { step: string; detail: string }[] = [];
+    const settings = await loadSettings();
+    const hlBatch = settings.heavyLoad?.batchSize ?? 1000;
+    const hlWindow = settings.heavyLoad?.batchWindowSeconds ?? 300;
 
     // Helper: find existing mapping or create new
     async function findOrCreateMapping(eventSourceArn: string, functionName: string, startingPosition?: string) {
       const { EventSourceMappings = [] } = await lambdaClient.send(new ListEventSourceMappingsCommand({ EventSourceArn: eventSourceArn, FunctionName: functionName }));
       const existing = EventSourceMappings[0];
       if (existing) return existing.UUID!;
-      const cmd: any = { EventSourceArn: eventSourceArn, FunctionName: functionName, BatchSize: 10, Enabled: true, MaximumBatchingWindowInSeconds: 5 };
+      const cmd: any = { EventSourceArn: eventSourceArn, FunctionName: functionName, BatchSize: heavyLoad ? hlBatch : 10, Enabled: true, MaximumBatchingWindowInSeconds: heavyLoad ? hlWindow : 5 };
       if (startingPosition) cmd.StartingPosition = startingPosition;
       const res = await lambdaClient.send(new CreateEventSourceMappingCommand(cmd));
       return res.UUID!;
@@ -203,6 +206,7 @@ router.post("/wire", async (req, res) => {
       topicCreatedByUs: !!topicCreatedByUs,
       queueCreatedByUs: !!queueCreatedByUs,
       ...(vaultConfig ? { vaultConfig } : {}),
+      heavyLoad: !!heavyLoad,
       envVars: [],
       addons: addons ?? [],
       runs: [],
@@ -226,7 +230,7 @@ router.post("/wire", async (req, res) => {
     // Subscribe shadow queue to this pipeline's SNS topic
     try {
       const { subscribeShadowQueue } = await import("../services/shadow-infra.js");
-      const shadowSubArn = await subscribeShadowQueue(topicArn);
+      const shadowSubArn = await subscribeShadowQueue(topicArn, filterPolicy, filterPolicyScope);
       if (shadowSubArn) {
         const updated = loadPipelines();
         const p = updated.find(pp => pp.id === pipeline.id);
@@ -287,6 +291,102 @@ router.put("/pipelines/:id/env", async (req, res) => {
 
   res.json({ saved: true });
 });
+// GET /api/triggers/pipelines/:id/resources — resource metadata for pipeline edit page
+router.get("/pipelines/:id/resources", async (req, res) => {
+  const pipeline = loadPipelines().find(p => p.id === req.params.id);
+  if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+  const results: Record<string, any> = {};
+  try {
+    const { getDynamoClient } = await import("../helpers/dynamo-client.js");
+    const { DescribeTableCommand } = await import("@aws-sdk/client-dynamodb");
+    const ddb = await getDynamoClient();
+    const { Table } = await ddb.send(new DescribeTableCommand({ TableName: pipeline.tableName }));
+    results.dynamodb = { tableName: Table!.TableName, itemCount: Table!.ItemCount ?? 0, sizeBytes: Table!.TableSizeBytes ?? 0, arn: Table!.TableArn, status: Table!.TableStatus, streamArn: Table!.LatestStreamArn, keySchema: Table!.KeySchema, attributeDefinitions: Table!.AttributeDefinitions };
+  } catch { results.dynamodb = null; }
+  try {
+    const lambdaClient = await getLambdaClient();
+    const glue = await lambdaClient.send(new GetFunctionCommand({ FunctionName: pipeline.glueFunctionName }));
+    results.streamHandler = { functionName: glue.Configuration!.FunctionName, runtime: glue.Configuration!.Runtime, handler: glue.Configuration!.Handler, memorySize: glue.Configuration!.MemorySize, timeout: glue.Configuration!.Timeout, arn: glue.Configuration!.FunctionArn, lastModified: glue.Configuration!.LastModified };
+  } catch { results.streamHandler = null; }
+  try {
+    const { getSnsClient } = await import("../helpers/sns-client.js");
+    const { GetTopicAttributesCommand, ListSubscriptionsByTopicCommand } = await import("@aws-sdk/client-sns");
+    const sns = await getSnsClient();
+    const { Attributes = {} } = await sns.send(new GetTopicAttributesCommand({ TopicArn: pipeline.topicArn }));
+    const { Subscriptions = [] } = await sns.send(new ListSubscriptionsByTopicCommand({ TopicArn: pipeline.topicArn }));
+    const subs = Subscriptions.filter(s => !s.Endpoint?.includes("mk-shadow-"));
+    results.sns = { topicName: pipeline.topicName, arn: pipeline.topicArn, subscriptionsConfirmed: String(subs.length), subscriptionsPending: Attributes.SubscriptionsPending, subscriptions: subs.map(s => ({ endpoint: s.Endpoint, protocol: s.Protocol, subscriptionArn: s.SubscriptionArn })) };
+  } catch { results.sns = null; }
+  try {
+    const sqsClient = await getSqsClient();
+    const { Attributes = {} } = await sqsClient.send(new GetQueueAttributesCommand({ QueueUrl: pipeline.queueUrl, AttributeNames: [QueueAttributeName.All] }));
+    results.sqs = { queueName: pipeline.queueName, url: pipeline.queueUrl, arn: Attributes.QueueArn, messagesAvailable: Attributes.ApproximateNumberOfMessages, messagesInFlight: Attributes.ApproximateNumberOfMessagesNotVisible, messagesDelayed: Attributes.ApproximateNumberOfMessagesDelayed, redrivePolicy: Attributes.RedrivePolicy, visibilityTimeout: Attributes.VisibilityTimeout, createdTimestamp: Attributes.CreatedTimestamp, subscribedTopic: { name: pipeline.topicName, arn: pipeline.topicArn }, connectedTarget: { name: pipeline.targetFunctionName } };
+  } catch { results.sqs = null; }
+  try {
+    const lambdaClient = await getLambdaClient();
+    const target = await lambdaClient.send(new GetFunctionCommand({ FunctionName: pipeline.targetFunctionName }));
+    results.target = { functionName: target.Configuration!.FunctionName, runtime: target.Configuration!.Runtime, handler: target.Configuration!.Handler, memorySize: target.Configuration!.MemorySize, timeout: target.Configuration!.Timeout, arn: target.Configuration!.FunctionArn, lastModified: target.Configuration!.LastModified, envVarCount: Object.keys(target.Configuration!.Environment?.Variables ?? {}).length, connectedQueue: { name: pipeline.queueName, url: pipeline.queueUrl } };
+  } catch { results.target = null; }
+  res.json(results);
+});
+
+// PUT /api/triggers/pipelines/:id/edit — save pipeline edits (filter policy, heavy load, add-ons)
+router.put("/pipelines/:id/edit", async (req, res) => {
+  const pipelines = loadPipelines();
+  const pipeline = pipelines.find(p => p.id === req.params.id);
+  if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+  const { filterPolicy, filterPolicyScope, heavyLoad, addons, vaultConfig } = req.body;
+  try {
+    // Update filter policy on SNS subscription
+    if (pipeline.subscriptionArn) {
+      const { getSnsClient } = await import("../helpers/sns-client.js");
+      const { SetSubscriptionAttributesCommand } = await import("@aws-sdk/client-sns");
+      const sns = await getSnsClient();
+      if (filterPolicy && Object.keys(filterPolicy).length) {
+        await sns.send(new SetSubscriptionAttributesCommand({ SubscriptionArn: pipeline.subscriptionArn, AttributeName: "FilterPolicy", AttributeValue: JSON.stringify(filterPolicy) }));
+        await sns.send(new SetSubscriptionAttributesCommand({ SubscriptionArn: pipeline.subscriptionArn, AttributeName: "FilterPolicyScope", AttributeValue: filterPolicyScope || "MessageAttributes" }));
+        pipeline.filterPolicy = filterPolicy;
+        pipeline.filterPolicyScope = filterPolicyScope || "MessageAttributes";
+      } else {
+        await sns.send(new SetSubscriptionAttributesCommand({ SubscriptionArn: pipeline.subscriptionArn, AttributeName: "FilterPolicy", AttributeValue: "{}" }));
+        delete pipeline.filterPolicy;
+        delete pipeline.filterPolicyScope;
+      }
+    }
+    // Update shadow subscription filter to match
+    if (pipeline.shadowSubscriptionArn) {
+      const { SetSubscriptionAttributesCommand: SetSubAttr } = await import("@aws-sdk/client-sns");
+      const { getSnsClient: getSns } = await import("../helpers/sns-client.js");
+      const shadowSns = await getSns();
+      if (filterPolicy && Object.keys(filterPolicy).length) {
+        await shadowSns.send(new SetSubAttr({ SubscriptionArn: pipeline.shadowSubscriptionArn, AttributeName: "FilterPolicy", AttributeValue: JSON.stringify(filterPolicy) }));
+        await shadowSns.send(new SetSubAttr({ SubscriptionArn: pipeline.shadowSubscriptionArn, AttributeName: "FilterPolicyScope", AttributeValue: filterPolicyScope || "MessageAttributes" }));
+      } else {
+        await shadowSns.send(new SetSubAttr({ SubscriptionArn: pipeline.shadowSubscriptionArn, AttributeName: "FilterPolicy", AttributeValue: "{}" }));
+      }
+    }
+    // Update heavy load on ESM
+    if (heavyLoad !== undefined && heavyLoad !== pipeline.heavyLoad) {
+      const { UpdateEventSourceMappingCommand } = await import("@aws-sdk/client-lambda");
+      const lambdaClient = await getLambdaClient();
+      const s = await loadSettings();
+      const uuid = pipeline.uuids[0];
+      if (uuid) {
+        await lambdaClient.send(new UpdateEventSourceMappingCommand({
+          UUID: uuid, BatchSize: heavyLoad ? (s.heavyLoad?.batchSize ?? 1000) : 10, MaximumBatchingWindowInSeconds: heavyLoad ? (s.heavyLoad?.batchWindowSeconds ?? 300) : 5,
+        }));
+      }
+      pipeline.heavyLoad = heavyLoad;
+    }
+    // Update add-ons
+    pipeline.addons = addons ?? pipeline.addons;
+    if (vaultConfig) pipeline.vaultConfig = vaultConfig;
+    else if (addons && !addons.includes("vault")) delete pipeline.vaultConfig;
+    savePipelines(pipelines);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
 
 // DELETE /api/triggers/pipelines/:id — delete pipeline + its event source mappings
 router.delete("/pipelines/:id", async (req, res) => {
@@ -498,7 +598,23 @@ router.get("/pipelines/:id/history/live", async (req, res) => {
     if (typeof (res as any).flush === "function") (res as any).flush();
   });
 
-  req.on("close", () => { runSub.unsubscribe(); stepSub.unsubscribe(); });
+  // Batch count from watcher state for heavy load pipelines
+  let batchInterval: ReturnType<typeof setInterval> | null = null;
+  if (pipeline.heavyLoad) {
+    // Send initial batch count immediately
+    const initial = watcher.getBatchCount(pipeline.id);
+    if (initial > 0) {
+      res.write(`data: ${JSON.stringify({ type: "batch-count", count: initial })}\n\n`);
+      if (typeof (res as any).flush === "function") (res as any).flush();
+    }
+    batchInterval = setInterval(() => {
+      const count = watcher.getBatchCount(pipeline.id);
+      res.write(`data: ${JSON.stringify({ type: "batch-count", count })}\n\n`);
+      if (typeof (res as any).flush === "function") (res as any).flush();
+    }, 1500);
+  }
+
+  req.on("close", () => { runSub.unsubscribe(); stepSub.unsubscribe(); if (batchInterval) clearInterval(batchInterval); });
 });
 
 export default router;

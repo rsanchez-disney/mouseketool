@@ -21,4 +21,21 @@ router.post("/cleanup-secrets", async (req, res) => {
   res.json(await cleanupSecrets(url, token, paths));
 });
 
+// POST /api/vault/read-paths — get key count per path
+router.post("/read-paths", async (req, res) => {
+  const { url, token, paths } = req.body;
+  if (!url || !token || !paths?.length) return res.status(400).json({ error: "url, token, and paths are required" });
+  const results: { path: string; keys: number }[] = [];
+  for (const path of paths) {
+    try {
+      const r = await fetch(`${url}/v1/secret/data/${path}`, { headers: { "X-Vault-Token": token } });
+      if (r.ok) {
+        const data = await r.json();
+        results.push({ path, keys: Object.keys(data?.data?.data ?? {}).length });
+      } else { results.push({ path, keys: 0 }); }
+    } catch { results.push({ path, keys: 0 }); }
+  }
+  res.json(results);
+});
+
 export default router;

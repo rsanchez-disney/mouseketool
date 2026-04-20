@@ -97,7 +97,9 @@ lets you confirm or skip redeployment, with a preference to remember your choice
 ### Triggers (Pipelines)
 Create end-to-end event-driven pipelines through a 6-step visual wizard. Wire up DynamoDB tables, SNS topics, SQS
 queues (with optional DLQ), and Lambda functions — all without touching the CLI. SNS subscriptions support filter
-policies configured through the visual wizard.
+policies configured through the visual wizard. A dedicated pipeline edit page lets you modify filter policies, toggle
+heavy load mode, configure vault add-ons, manage env vars, and inspect each resource's metadata. Table schemas can be
+saved and restored after LocalStack restarts.
 
 ### Execution
 Run a pipeline and watch each step execute in real-time via Server-Sent Events. See DynamoDB inserts, stream handler
@@ -110,8 +112,10 @@ A background pipeline watcher monitors active pipelines for new events. Shadow i
 diagnostic resources to replay and inspect failed pipeline steps.
 
 ### Settings
-Configure the LocalStack connection (protocol, host, port, credentials), build cleanup TTL, and observer polling
-interval (`observerPollingMs`). A LocalStack health check runs on startup and is accessible from the Settings page.
+Configure the LocalStack connection (protocol, host, port, credentials), build cleanup TTL, observer polling
+interval (`observerPollingMs`), Lambda memory, and heavy load batch settings (batch size and window). Changes to
+heavy load settings are applied retroactively to all pipelines with heavy load enabled. A LocalStack health check
+runs on startup and is accessible from the Settings page.
 
 ### Help & Guides
 In-app documentation covering every feature with detailed explanations, code examples, and troubleshooting tips.

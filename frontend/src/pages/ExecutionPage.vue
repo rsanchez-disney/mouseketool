@@ -19,7 +19,7 @@ const route = useRoute();
 const router = useRouter();
 const pipelineId = route.params.id as string;
 
-interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; }
+interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
 interface Step { id: string; label: string; detail: string; status: "pending" | "running" | "success" | "timeout" | "error" | "filtered" | "diagnosing" | "unknown"; logs: string[]; collapsed: boolean; elapsed?: number; }
 
 const pipeline = ref<Pipeline | null>(null);
@@ -45,6 +45,21 @@ const expandedLogStep = ref("");
 const expandedLogContent = ref<string[]>([]);
 const logSearch = ref("");
 const searchOpen = ref(false);
+
+// Heavy load batch counter
+const batchCount = ref(0);
+const batchBaseline = ref(0);
+let batchPoll: ReturnType<typeof setInterval> | null = null;
+function startBatchPoll() {
+  if (!pipeline.value?.heavyLoad || batchPoll) return;
+  batchPoll = setInterval(async () => {
+    try {
+      const { count } = await (await fetch(`/api/dynamodb/tables/${pipeline.value!.tableName}/count`)).json();
+      batchCount.value = count - batchBaseline.value;
+    } catch {}
+  }, 1000);
+}
+function stopBatchPoll() { if (batchPoll) { clearInterval(batchPoll); batchPoll = null; } }
 const autoDiagnose = ref(true);
 const showElapsed = ref(localStorage.getItem("mk:showElapsed") !== "false");
 
@@ -86,6 +101,12 @@ async function execute() {
   if (!pipeline.value) return;
   executing.value = true;
   steps.value = initSteps(pipeline.value);
+  batchCount.value = 0; batchBaseline.value = 0; stopBatchPoll();
+
+  // Capture baseline item count for heavy load
+  if (pipeline.value.heavyLoad) {
+    try { const { count } = await (await fetch(`/api/dynamodb/tables/${pipeline.value.tableName}/count`)).json(); batchBaseline.value = count; } catch {}
+  }
 
   let item: any;
   try { item = JSON.parse(itemJson.value); } catch { return; }
@@ -125,6 +146,9 @@ async function execute() {
           } else {
             s.status = status;
           }
+          // Heavy load batch polling
+          if (step === "dynamodb" && status === "success" && pipeline.value?.heavyLoad) startBatchPoll();
+          if (step === "glue" && status === "running") stopBatchPoll();
           if (logs?.length) s.logs = logs;
           if (elapsed) s.elapsed = elapsed;
           // Auto-collapse completed steps, expand running
@@ -140,12 +164,14 @@ async function execute() {
       } catch {}
     }
   }
+  stopBatchPoll();
   executing.value = false;
   execAbort = null;
 }
 
 function stopExecution() {
   execAbort?.abort();
+  stopBatchPoll();
   steps.value.forEach(s => { if (s.status === "running" || s.status === "pending") { s.status = "error"; s.logs = s.logs.length ? [...s.logs, "Stopped by user"] : ["Stopped by user"]; } });
   executing.value = false;
   execAbort = null;
@@ -224,6 +250,12 @@ onMounted(loadPipeline);
           <!-- Connector line (between nodes) -->
           <div v-if="i > 0" class="flex items-center pl-[19px]">
             <div class="w-0.5 h-6 transition-colors duration-500" :class="connectorColor(s.status === 'pending' ? steps[i-1].status : s.status)" />
+          </div>
+
+          <!-- Heavy load batch indicator -->
+          <div v-if="i === 1 && pipeline?.heavyLoad && steps[0].status === 'success' && s.status === 'pending' && batchCount > 0" class="flex items-center gap-2 pl-10 py-1.5">
+            <div class="size-2 rounded-full bg-orange-500 animate-pulse" />
+            <span class="text-xs text-orange-400 font-mono">Batching {{ batchCount }} new item{{ batchCount !== 1 ? 's' : '' }}...</span>
           </div>
 
           <!-- Node -->

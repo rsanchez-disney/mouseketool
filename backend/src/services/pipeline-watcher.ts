@@ -22,11 +22,12 @@ export interface Pipeline {
   topicCreatedByUs?: boolean; queueCreatedByUs?: boolean;
   vaultConfig?: { url: string; token: string; paths: string[] };
   envVars: { key: string; value: string }[]; addons: string[];
+  heavyLoad?: boolean;
   runs: PipelineRun[]; createdAt: string;
 }
 
 export interface PipelineRun {
-  id: string; timestamp: number; item?: string | null; source: "manual" | "external";
+  id: string; timestamp: number; item?: string | null; items?: string[]; source: "manual" | "external";
   handler: { requestId: string; logs: string[]; error: boolean };
   sns?: { status: string; logs: string[] };
   sqs?: { status: string; logs: string[] };
@@ -81,9 +82,11 @@ class PipelineWatcher {
   private interval: ReturnType<typeof setInterval> | null = null;
   private knownRequestIds = new Set<string>();
   private pollCount = 0;
+  private batchState = new Map<string, { baseline: number; prevCount: number; count: number }>();
 
   get onNewRun(): Observable<{ pipelineId: string; run: PipelineRun }> { return this.newRun$.asObservable(); }
   get onStepUpdate(): Observable<StepUpdate> { return this.stepUpdate$.asObservable(); }
+  getBatchCount(pipelineId: string): number { return this.batchState.get(pipelineId)?.count ?? 0; }
 
   start() {
     if (this.interval) return;
@@ -129,13 +132,30 @@ class PipelineWatcher {
         }
       } catch {}
     }
+    // Batch count polling for heavy load pipelines
+    for (const p of pipelines) {
+      if (!p.heavyLoad) continue;
+      try {
+        const { getDynamoClient } = await import("../helpers/dynamo-client.js");
+        const { ScanCommand } = await import("@aws-sdk/client-dynamodb");
+        const client = await getDynamoClient();
+        const { Count = 0 } = await client.send(new ScanCommand({ TableName: p.tableName, Select: "COUNT" }));
+        let state = this.batchState.get(p.id);
+        if (!state) { state = { baseline: Count, prevCount: Count, count: 0 }; this.batchState.set(p.id, state); continue; }
+        if (Count > state.prevCount) { if (!state.count) state.baseline = state.prevCount; state.count = Count - state.baseline; }
+        state.prevCount = Count;
+      } catch {}
+    }
     } catch (e: any) { /* LocalStack unreachable — silently skip this poll cycle */ }
+
   }
 
   private detected(pipeline: Pipeline, requestId: string, timestamp: number, logs: string[], error: boolean) {
     this.knownRequestIds.add(requestId);
-    const itemLine = logs.find(l => l.includes("Item:")) || logs.find(l => l.includes("DynamoDB Record:"));
-    const item = itemLine ? itemLine.replace(/.*(?:Item|DynamoDB Record):\s*/, "") : null;
+    this.batchState.delete(pipeline.id);
+    const itemLines = logs.filter(l => l.includes("Item:")).map(l => l.replace(/.*Item:\s*/, ""));
+    const item = itemLines[0] ?? null;
+    const items = itemLines.length > 1 ? itemLines : undefined;
     const source = checkManualRun(pipeline.id, timestamp) ? "manual" as const : "external" as const;
 
     console.log(`[watcher] New run detected — pipeline: ${pipeline.name}, requestId: ${requestId.slice(0, 8)}, source: ${source}, error: ${error}`);
@@ -146,7 +166,7 @@ class PipelineWatcher {
     const handlerElapsed = durationMatch ? Math.round(parseFloat(durationMatch[1])) : undefined;
 
     const run: PipelineRun = {
-      id: requestId, timestamp, item, source,
+      id: requestId, timestamp, item, items, source,
       handler: { requestId, logs, error, elapsed: handlerElapsed } as any,
       sns: error ? { status: "skipped", logs: ["Skipped — stream handler failed"] } : undefined,
       sqs: error ? { status: "skipped", logs: ["Skipped — stream handler failed"] } : undefined,
@@ -244,6 +264,27 @@ class PipelineWatcher {
             sqs: { status: "success", logs: ["Consumed immediately"] },
           });
         } else if (pipeline.filterPolicy) {
+          // Before concluding filtered, check S3 captures
+          let shadowCaptured = false;
+          try {
+            await new Promise(r => setTimeout(r, 5000));
+
+            const { getCapturedItems } = await import("./shadow-infra.js");
+            const items = await getCapturedItems(pipeline.id);
+            if (items.length) { shadowCaptured = true; console.log(`${tag} S3 captures found — NOT filtered, consumed too fast`); }
+          } catch {}
+          if (shadowCaptured) {
+            send("sns", "success", [`Published to ${pipeline.topicName}`, `Delivered to SQS (consumed immediately)`]);
+            const capturedLogs: string[] = [];
+            try {
+              const { getCapturedItems: getItems } = await import("./shadow-infra.js");
+              const items = await getItems(pipeline.id);
+              if (items.length) { capturedLogs.push(`${items.length} item${items.length > 1 ? "s" : ""} passed filter:`); items.forEach((m, i) => capturedLogs.push(`[${i + 1}] ${m}`)); }
+            } catch {}
+            if (!capturedLogs.length) capturedLogs.push(`Message arrived in ${pipeline.queueName}`);
+            send("sqs", "success", capturedLogs);
+            updateRun({ sns: { status: "success", logs: ["Delivered (fast path)"] }, sqs: { status: "success", logs: capturedLogs } });
+          } else {
           console.log(`${tag} No SQS activity + filter policy → marking as filtered`);
           send("sns", "filtered", ["SNS publish succeeded but the filter policy blocked delivery.", "", `Filter scope: ${pipeline.filterPolicyScope || "MessageAttributes"}`, `Filter policy: ${JSON.stringify(pipeline.filterPolicy)}`]);
           send("sqs", "filtered", ["No message received — filtered by SNS subscription filter policy."]);
@@ -253,6 +294,8 @@ class PipelineWatcher {
             target: { requestId: "", logs: ["Skipped — filtered"], error: false }, status: "filtered",
           });
           return;
+          }
+
         } else if (!targetAlreadyRan) {
           console.log(`${tag} SQS timeout — no message arrived in ${sqsTimeout / 1000}s`);
           send("sns", "timeout", ["Could not confirm SNS delivery within timeout."]);
@@ -266,13 +309,18 @@ class PipelineWatcher {
         }
       }
 
+      if (sqsResult) {
+
       console.log(`${tag} SNS → SQS confirmed`);
       send("sns", "success", [`Published to ${pipeline.topicName}`, `Delivered to SQS queue ${pipeline.queueName}`]);
-      send("sqs", "success", [`Message arrived in ${pipeline.queueName}`]);
+      const sqsLogs = [`Message arrived in ${pipeline.queueName}`];
+      send("sqs", "success", sqsLogs);
       updateRun({
         sns: { status: "success", logs: [`Delivered to ${pipeline.queueName}`] },
-        sqs: { status: "success", logs: ["Message received"] },
+        sqs: { status: "success", logs: sqsLogs },
       });
+
+      }
 
       // --- Target Lambda: poll CloudWatch logs ---
       send("target", "running", ["Waiting for target Lambda to process message..."]);
@@ -295,16 +343,30 @@ class PipelineWatcher {
             }
           }
         } catch (e: any) {
-          if (!e.message?.includes("ResourceNotFoundException")) console.log(`${tag} Target log poll error: ${e.message}`);
+          if (!e.message?.includes("does not exist")) console.log(`${tag} Target log poll error: ${e.message}`);
         }
         return null;
-      }, Math.max(pollMs, 2000), 60000);
+      }, Math.max(pollMs, 2000), pipeline.heavyLoad ? 120000 : 60000);
 
       if (targetLogs) {
         const hasError = targetLogs.some(l => /\bERROR\b/.test(l) || /Exception/.test(l) || /FunctionError/.test(l));
         console.log(`${tag} Target Lambda ${hasError ? "FAILED" : "succeeded"} — ${targetLogs.length} log line(s)`);
         send("target", hasError ? "error" : "success", targetLogs);
         updateRun({ target: { requestId: "", logs: targetLogs, error: hasError }, status: hasError ? "error" : "success" });
+
+        // Retroactively update SQS logs with captured items from S3
+        try {
+          await new Promise(r => setTimeout(r, 3000)); // Wait for shadow Lambda to write
+          const { getCapturedItems } = await import("./shadow-infra.js");
+          const sqsItems = await getCapturedItems(pipeline.id);
+          if (sqsItems.length) {
+            const updatedSqsLogs = [`Message arrived in ${pipeline.queueName}`, "", `${sqsItems.length} item${sqsItems.length > 1 ? "s" : ""} passed filter:`];
+            sqsItems.forEach((m, i) => updatedSqsLogs.push(`[${i + 1}] ${m}`));
+            send("sqs", "success", updatedSqsLogs);
+            updateRun({ sqs: { status: "success", logs: updatedSqsLogs } });
+          }
+        } catch {}
+
       } else {
         console.log(`${tag} No target Lambda logs after 60s — checking Lambda state`);
         let failReason = "";
@@ -346,7 +408,22 @@ class PipelineWatcher {
             diagLogs.push(...extractLogsFromPayload(responsePayload));
             if (r.LogResult) {
               const tailLogs = Buffer.from(r.LogResult, "base64").toString().split("\n").filter(Boolean);
-              if (tailLogs.length) diagLogs.push("", "── Tail Logs ──", ...tailLogs);
+              if (tailLogs.length) {
+                // LogResult is limited to 4KB — try full CloudWatch logs
+                let usedCW = false;
+                try {
+                  const cw = await getCWClient();
+                  const logGroup = `/aws/lambda/${pipeline.targetFunctionName}`;
+                  const strs = await cw.send(new DescribeLogStreamsCommand({ logGroupName: logGroup, orderBy: "LastEventTime", descending: true, limit: 1 }));
+                  const st = strs.logStreams?.[0];
+                  if (st?.logStreamName) {
+                    const ev = await cw.send(new GetLogEventsCommand({ logGroupName: logGroup, logStreamName: st.logStreamName, startFromHead: false, limit: 200 }));
+                    const cwLogs = (ev.events || []).map(e => e.message?.trimEnd() || "").filter(Boolean);
+                    if (cwLogs.length > tailLogs.length) { diagLogs.push("", ...cwLogs); usedCW = true; }
+                  }
+                } catch {}
+                if (!usedCW) diagLogs.push("", ...tailLogs);
+              }
             }
             if (responsePayload) diagLogs.push("", "── Raw Error Payload ──", JSON.stringify(responsePayload, null, 2));
             // Local class diagnostic for init errors
@@ -384,6 +461,8 @@ class PipelineWatcher {
         }
       } catch (e: any) { console.log(`${tag} SQS cleanup skipped: ${e.message}`); }
 
+      // Clean up S3 captures for this pipeline
+      try { const { clearCapturedItems } = await import("./shadow-infra.js"); await clearCapturedItems(pipeline.id); } catch {}
       console.log(`${tag} Observer complete`);
     } catch (e: any) {
       console.error(`${tag} FATAL ERROR: ${e.message}\n${e.stack}`);

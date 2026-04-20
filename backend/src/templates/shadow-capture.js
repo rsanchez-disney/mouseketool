@@ -27,7 +27,7 @@ exports.handler = async (event) => {
       const capturedPayload = {
         Records: [{
           messageId: record.messageId || `capture-${timestamp}`,
-          body: messageBody,
+          body: record.body,
           eventSource: "aws:sqs",
           awsRegion: process.env.AWS_REGION || "us-east-1",
           attributes: record.attributes || {},
@@ -36,10 +36,17 @@ exports.handler = async (event) => {
       };
 
       const key = `captures/${pipelineId}/latest.json`;
+      const listKey = `captures/${pipelineId}/items/${timestamp}-${record.messageId || 'msg'}.json`;
       await s3.send(new PutObjectCommand({
         Bucket: bucket,
         Key: key,
         Body: JSON.stringify(capturedPayload, null, 2),
+        ContentType: "application/json",
+      }));
+      await s3.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: listKey,
+        Body: messageBody,
         ContentType: "application/json",
       }));
 

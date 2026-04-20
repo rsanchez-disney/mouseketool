@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye, Cpu } from "lucide-vue-next";
+import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye, Cpu, Flame } from "lucide-vue-next";
 
 const settings = ref({
   localstack: { host: "localhost", port: 4566, protocol: "http" },
@@ -15,6 +15,7 @@ const settings = ref({
   cleanup: { ttlMinutes: 1440, deleteOnStartup: false },
   pipeline: { observerPollingMs: 500 },
   lambda: { memoryMB: 2048 },
+  heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
 });
 const saving = ref(false);
 const saved = ref(false);
@@ -169,6 +170,27 @@ async function save() {
     <Card>
       <CardHeader>
         <div class="flex items-center gap-2">
+          <Flame class="size-5 text-muted-foreground" />
+          <div>
+            <CardTitle>Heavy Load</CardTitle>
+            <CardDescription>Batch settings for pipelines with heavy load enabled</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-2">
+        <Label for="hlBatchSize">Batch Size</Label>
+        <Input id="hlBatchSize" v-model.number="settings.heavyLoad.batchSize" type="number" min="1" max="10000" class="max-w-48" />
+        <p class="text-xs text-muted-foreground">Max records per stream handler invocation. Default: 1000.</p>
+        <Label for="hlWindow">Batch Window (seconds)</Label>
+        <Input id="hlWindow" v-model.number="settings.heavyLoad.batchWindowSeconds" type="number" min="1" max="300" class="max-w-48" />
+        <p class="text-xs text-muted-foreground">Max wait time before firing. Default: 300s (5 min). Applied on pipeline creation or edit.</p>
+        <p class="text-xs text-amber-500">Saving these settings will immediately update all pipelines that have heavy load enabled.</p>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader>
+        <div class="flex items-center gap-2">
           <Eye class="size-5 text-muted-foreground" />
           <div>
             <CardTitle>UI Preferences</CardTitle>
@@ -184,7 +206,7 @@ async function save() {
       </CardContent>
     </Card>
 
-    <Button @click="save" :disabled="saving" class="gap-2">
+    <Button @click="save" :disabled="saving" class="gap-2 cursor-pointer active:scale-95 transition-transform">
       <Loader2 v-if="saving" class="size-4 animate-spin" />
       <Check v-else-if="saved" class="size-4" />
       <Save v-else class="size-4" />
