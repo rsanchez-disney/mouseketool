@@ -262,8 +262,8 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
         <p class="font-medium text-foreground" id="template-lambda">Template Lambdas</p>
         <p>The Stream Handler Lambda is a template function that Mouseketool manages for you. It's a Node.js function
         that reads DynamoDB Stream records, unmarshalls them into plain JSON objects, and publishes them to SNS.
-        For example, if your DynamoDB item is <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": {"S": "amongus"}, "count": {"N": "5"}}</code>,
-        the message published to SNS will be <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": "amongus", "count": 5}</code>.
+        For example, if your DynamoDB item is <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": {"S": "order-123"}, "count": {"N": "5"}}</code>,
+        the message published to SNS will be <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": "order-123", "count": 5}</code>.
         This means SNS filter policies can match directly on your item's field names and values without dealing with
         DynamoDB's marshalled format.</p>
         <p>Mouseketool tracks the template version using a
@@ -288,10 +288,11 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
 
         <p class="font-medium text-foreground">Shadow Infrastructure</p>
         <p>Behind the scenes, Mouseketool creates a shadow SQS queue, a shadow Lambda, and an S3 bucket on startup.
-        The shadow queue subscribes to every pipeline's SNS topic (without a filter) to capture the exact SQS payload
-        that the target Lambda receives. If the target Lambda fails without producing CloudWatch logs, Mouseketool uses
-        the captured payload to re-invoke the Lambda and extract the full error details. Shadow resources are cleaned up
-        and recreated on every backend restart.</p>
+        The shadow queue subscribes to every pipeline's SNS topic with the same filter policy as the main subscription,
+        ensuring it only receives items that pass the filter. The shadow Lambda captures each message body to S3 for
+        two purposes: (1) showing which items passed the filter in the SQS step logs, and (2) providing the exact
+        payload for diagnostic replay if the target Lambda fails. Shadow resources are cleaned up and recreated on
+        every backend restart. Captured items are cleaned up after each observer run completes.</p>
 
         <p class="font-medium text-foreground">Managing pipelines</p>
         <p>After creating a pipeline, it appears as a card on the Triggers page. You can select one or more pipelines
@@ -305,9 +306,48 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
         </ul>
 
         <p class="font-medium text-foreground">Environment variables</p>
-        <p>You can configure env vars for the target Lambda directly from the pipeline card. These work the same way as
-        on the Deployments page — they're applied before each invocation and support the <strong>Exclude</strong>
+        <p>You can configure env vars for the target Lambda from the pipeline edit page. These work the same way as
+        on the Deployments page — they're applied to the Lambda configuration and support the <strong>Exclude</strong>
         checkbox to temporarily remove a var without deleting it.</p>
+
+        <p class="font-medium text-foreground">Pipeline Edit Page</p>
+        <p>Click the <strong>Edit</strong> button on a pipeline card to open the edit page. The left sidebar shows
+        clickable step bubbles for each resource in the pipeline (DynamoDB, Stream Handler, SNS, SQS, Target Lambda).
+        Clicking a step shows its read-only metadata on the right panel (ARN, status, item count, connected resources, etc.).
+        The SNS step also includes an editable filter policy builder. Below the step bubbles you'll find buttons for
+        Add-ons and Env Vars configuration.</p>
+        <p>The <strong>Heavy Load</strong> toggle in the top-right header increases the DynamoDB Stream batch size and
+        window for high-throughput scenarios. The <strong>Save</strong> button persists all changes atomically — filter
+        policies are updated on the SNS subscription, heavy load settings update the event source mapping, and vault
+        secrets are created in Vault. Changes are not applied until you click Save.</p>
+
+        <p class="font-medium text-foreground">Heavy Load Mode</p>
+        <p>When enabled (via the wizard Step 6 or the edit page), heavy load mode configures the DynamoDB Stream event
+        source mapping with a larger batch size and batch window. This causes the stream handler to wait longer and
+        collect more records before firing, which is useful when a backend service inserts many items rapidly. The batch
+        size and window are configurable from the Settings page and apply retroactively to all heavy load pipelines when
+        saved. A flickering flame icon appears next to the pipeline name when heavy load is active.</p>
+        <p><strong>Known limitation:</strong> LocalStack does not reliably honor <code class="text-xs bg-muted px-1 rounded">MaximumBatchingWindowInSeconds</code>.
+        Records may arrive split across multiple stream handler invocations regardless of the configured window. This
+        is a LocalStack Community Edition limitation and does not affect real AWS deployments.</p>
+
+        <p class="font-medium text-foreground">Inserts Only</p>
+        <p>By default, the template stream handler processes all DynamoDB Stream event types (INSERT, MODIFY, REMOVE).
+        If you only want to process new insertions, enable the <strong>Inserts only</strong> toggle on the Stream Handler
+        step of the edit page. This sets the <code class="text-xs bg-muted px-1 rounded">STREAM_INSERTS_ONLY</code> env
+        var on the stream handler Lambda, which skips MODIFY and REMOVE events.</p>
+
+        <p class="font-medium text-foreground">Batch Indicator</p>
+        <p>On the History page, a pulsating orange banner appears when items are actively being inserted into the
+        DynamoDB table for a heavy load pipeline. The count shows how many new items have landed since the last pipeline
+        run. The indicator persists across page navigations (it's tracked by the backend watcher) and disappears when
+        the stream handler fires and a new run appears in the history.</p>
+
+        <p class="font-medium text-foreground">Table Schema Save/Restore</p>
+        <p>You can save a DynamoDB table's schema (key schema, GSIs, LSIs, stream settings) for later restoration after
+        a LocalStack restart. Click <strong>Save Schema</strong> on the edit page's DynamoDB step or in the wizard's
+        table selection toolbar. Optionally include a seed item in DynamoDB JSON format that will be inserted when the
+        table is restored. Use <strong>Restore Table</strong> in the wizard to recreate a saved table.</p>
       </CardContent>
     </Card>
 
