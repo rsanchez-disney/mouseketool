@@ -62,7 +62,7 @@ After all commits (code + docs) are on the feature branch:
 - If a dependency or pattern is found to be deprecated during implementation, flag it immediately and suggest the replacement.
 - Prefer `@aws-sdk/client-*` v3 modular imports over v2 monolithic imports.
 
-## Platform Notes (Windows)
+## Platform Notes
 ## Resource Reconciliation
 
 ### Rule
@@ -86,7 +86,7 @@ Every AWS resource created by Mouseketool on LocalStack must be recoverable afte
 ### Shell
 - The development environment runs on **Windows with PowerShell** as the default shell.
 - Use semicolons (`;`) instead of `&&` to chain commands in PowerShell.
-- Docker is installed in WSL, so Docker commands must use `wsl docker`.
+- Docker is installed in WSL on Windows, so Docker commands must use `wsl docker` on Windows and `docker` on macOS/Linux/WSL. Always gate OS-specific shell commands behind `process.platform` checks (e.g., `process.platform === "win32" ? "wsl docker" : "docker"`).
 - LocalStack and other services on `localhost` are directly reachable from Windows.
 
 ### File Editing
