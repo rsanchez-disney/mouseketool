@@ -243,8 +243,9 @@ router.post("/invoke", async (req, res) => {
         }
         try {
           const { execSync } = await import("child_process");
-          const ids = execSync(`wsl docker ps --filter "name=lambda-${functionName}" -q`, { encoding: "utf-8" }).trim();
-          if (ids) execSync(`wsl docker rm -f ${ids.split("\n").join(" ")}`, { encoding: "utf-8" });
+          const dk = process.platform === "win32" ? "wsl docker" : "docker";
+          const ids = execSync(`${dk} ps --filter "name=lambda-${functionName}" -q`, { encoding: "utf-8" }).trim();
+          if (ids) execSync(`${dk} rm -f ${ids.split("\n").join(" ")}`, { encoding: "utf-8" });
         } catch {}
       } catch (e: any) {
         console.error("[invoke] config update failed:", e.message);
