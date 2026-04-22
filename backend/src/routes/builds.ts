@@ -247,6 +247,18 @@ public class PluginMerger {
           }
         } catch { /* non-fatal */ }
 
+
+        // If no envvars.json yet, detect from SAM template / .env files
+        try {
+          await readFile(join(buildDir, "envvars.json"), "utf-8");
+        } catch {
+          try {
+            const { analyzeEnvVars } = await import("./analyze.js");
+            const detected = await analyzeEnvVars(projectPath);
+            if (detected.length) await writeFile(join(buildDir, "envvars.json"), JSON.stringify(detected));
+          } catch {}
+        }
+
         send("complete", meta);
       } catch (e: any) { send("error", { message: e.message }); }
       finish();

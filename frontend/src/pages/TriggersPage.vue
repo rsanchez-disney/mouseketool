@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { Switch } from "@/components/ui/switch";
+import Toggle from "@/components/ui/Toggle.vue";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
@@ -177,7 +177,7 @@ watch([selectedGlueFunction, selectedTargetFunction], ([g, t]) => {
 });
 
 // Mappings
-interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; heavyLoad?: boolean; }
+interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; heavyLoad?: boolean; targetMissing?: boolean; vaultIncomplete?: boolean; }
 const mappings = ref<Pipeline[]>([]);
 const loadingMappings = ref(false);
 
@@ -487,14 +487,14 @@ onMounted(loadMappings);
           <div class="flex items-center gap-3 min-w-0 flex-1">
             <input type="checkbox" :checked="selectedPipelines.has(m.id)" @change="toggleSelect(m.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
             <div class="min-w-0 flex-1 space-y-1">
-              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip></p>
+              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="m.targetMissing"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>Target Lambda build not found — select a deployment on the edit page</TooltipContent></Tooltip></p>
               <div class="flex items-center gap-1.5 text-muted-foreground">
                 <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span>
               </div>
             </div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
-            <Tooltip v-if="m.sourceType==='dynamodb'"><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></TooltipTrigger><TooltipContent>Run pipeline with a test item</TooltipContent></Tooltip>
+            <Tooltip v-if="m.sourceType==='dynamodb'"><TooltipTrigger as-child><span class="inline-flex"><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="m.heavyLoad" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></span></TooltipTrigger><TooltipContent>{{ m.heavyLoad ? 'Manual execution is disabled in heavy load mode — insert items directly into DynamoDB' : 'Run pipeline with a test item' }}</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/history`)"><Clock class="size-3.5" /> History</Button></TooltipTrigger><TooltipContent>View invocation history from CloudWatch logs</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/edit`)"><Pencil class="size-3.5" /> Edit</Button></TooltipTrigger><TooltipContent>Edit pipeline settings</TooltipContent></Tooltip>
           </div>
@@ -506,7 +506,7 @@ onMounted(loadMappings);
               Configured add-ons ({{ m.addons.length }})
             </button>
             <div v-if="expandedAddons === m.id" class="mt-2 flex flex-wrap gap-2">
-              <div v-if="m.addons.includes('vault')" class="flex items-center gap-1.5 rounded-md border px-2 py-1 bg-muted/50 text-xs"><VaultIcon class="size-3" /><span>Vault</span></div>
+              <div v-if="m.addons.includes('vault')" class="flex items-center gap-1.5 rounded-md border px-2 py-1 bg-muted/50 text-xs" :class="m.vaultIncomplete ? 'border-amber-500/40' : ''"><VaultIcon class="size-3" /><span>Vault</span><Tooltip v-if="m.vaultIncomplete"><TooltipTrigger as-child><AlertTriangle class="size-3 text-amber-500" /></TooltipTrigger><TooltipContent>Vault secrets need to be recreated after LocalStack restart</TooltipContent></Tooltip></div>
             </div>
           </div>
         </CardContent></Card>
@@ -568,7 +568,7 @@ onMounted(loadMappings);
           <!-- Filter policy (optional) -->
           <div v-if="selectedTopic" class="space-y-3 pt-2">
             <div class="flex items-center gap-3">
-              <Switch v-model="filterEnabled" class="cursor-pointer" />
+              <Toggle v-model="filterEnabled" />
               <div class="flex items-center gap-1.5 text-sm"><ListFilter class="size-3.5 text-muted-foreground" /> Filter policy <span class="text-xs text-muted-foreground">(optional)</span></div>
             </div>
             <template v-if="filterEnabled">
@@ -728,9 +728,7 @@ onMounted(loadMappings);
                 <div class="flex items-center gap-3">
                   <Badge v-if="vaultEnabled && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
                   <span class="text-xs text-muted-foreground">{{ vaultEnabled ? 'Enabled' : 'Disabled' }}</span>
-                  <button type="button" @click="vaultEnabled = !vaultEnabled" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors" :class="vaultEnabled ? 'bg-primary' : 'bg-input'">
-                    <span class="pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform" :class="vaultEnabled ? 'translate-x-4' : 'translate-x-0'" />
-                  </button>
+                  <Toggle v-model="vaultEnabled" />
                   <Button @click="showVaultSheet = true" :disabled="!vaultEnabled" variant="outline" size="sm" class="gap-1.5 cursor-pointer">Configure</Button>
                 </div>
               </div>
@@ -751,9 +749,7 @@ onMounted(loadMappings);
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="text-xs text-muted-foreground">{{ heavyLoad ? 'Enabled' : 'Disabled' }}</span>
-                  <button type="button" @click="heavyLoad = !heavyLoad" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors" :class="heavyLoad ? 'bg-primary' : 'bg-input'">
-                    <span class="pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform" :class="heavyLoad ? 'translate-x-4' : 'translate-x-0'" />
-                  </button>
+                  <Toggle v-model="heavyLoad" />
                 </div>
               </div>
             </CardContent>

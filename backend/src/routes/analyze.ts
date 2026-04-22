@@ -121,3 +121,19 @@ router.post("/", async (req, res) => {
 });
 
 export default router;
+
+export async function analyzeEnvVars(projectPath: string): Promise<{ key: string; value: string }[]> {
+  let vars: Record<string, string> = {};
+  try {
+    const samPath = await findSamTemplate(projectPath);
+    if (samPath) vars = parseEnvVars(await readFile(samPath, "utf-8"));
+    if (!Object.keys(vars).length) {
+      const envFiles = await findEnvFiles(projectPath);
+      for (const f of envFiles) {
+        const parsed = parseEnvFile(await readFile(join(projectPath, f), "utf-8"));
+        if (Object.keys(parsed).length) { vars = parsed; break; }
+      }
+    }
+  } catch {}
+  return Object.entries(vars).map(([key, value]) => ({ key, value }));
+}

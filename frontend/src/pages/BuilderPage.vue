@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import FolderBrowser from "@/components/FolderBrowser.vue";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -34,7 +35,7 @@ function copyBuildLogs() {
   setTimeout(() => { buildLogsCopied.value = false; copyToastMsg.value = ""; }, 2000);
 }
 import {
-  FolderOpen, FolderUp, Folder, File, Search, Hammer, Rocket, Trash2,
+  FolderOpen, Search, Hammer, Rocket, Trash2,
   Loader2, CheckCircle2, XCircle, Package, Clock, RotateCcw, Square, ArrowDown,
   Feather, Diamond, Maximize2, Minimize2, Copy, Check, X,
 } from "lucide-vue-next";
@@ -65,29 +66,13 @@ function buildExpiry(b: Build) {
 
 // --- Directory Browser ---
 const showBrowser = ref(false);
-const browserPath = ref("");
-const browserParent = ref("");
-const browserItems = ref<FsItem[]>([]);
-const browserLoading = ref(false);
-
-async function browse(path?: string) {
-  browserLoading.value = true;
-  const q = path ? `?path=${encodeURIComponent(path)}` : "";
-  const data = await (await fetch(`/api/fs${q}`)).json();
-  browserPath.value = data.path;
-  browserParent.value = data.parent;
-  browserItems.value = data.items;
-  browserLoading.value = false;
-}
 
 function openBrowser() {
   showBrowser.value = true;
-  browse(selectedProject.value || undefined);
 }
 
-async function selectFolder() {
-  selectedProject.value = browserPath.value;
-  showBrowser.value = false;
+async function selectFolder(path: string) {
+  selectedProject.value = path;
   await analyzeProject();
 }
 
@@ -512,48 +497,7 @@ onMounted(() => { loadBuilds(); loadTtl(); });
       </CardContent>
     </Card>
 
-    <!-- Directory Browser Dialog -->
-    <Dialog v-model:open="showBrowser">
-      <DialogContent class="max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
-        <DialogHeader>
-          <DialogTitle>Select Project Directory</DialogTitle>
-          <DialogDescription>Navigate to your Java Lambda project root.</DialogDescription>
-        </DialogHeader>
-
-        <div class="flex items-center gap-2 py-2">
-          <Button @click="browse(browserParent)" variant="outline" size="sm" :disabled="browserPath === browserParent" class="gap-1.5">
-            <FolderUp class="size-4" /> Up
-          </Button>
-          <code class="text-xs bg-muted rounded-md px-3 py-1.5 flex-1 truncate">{{ browserPath }}</code>
-        </div>
-
-        <ScrollArea class="h-[50vh] rounded-md border">
-          <div v-if="browserLoading" class="flex justify-center p-8">
-            <Loader2 class="size-6 animate-spin text-muted-foreground" />
-          </div>
-          <div v-else class="p-1">
-            <button
-              v-for="item in browserItems"
-              :key="item.path"
-              @click="item.isDirectory ? browse(item.path) : undefined"
-              :disabled="!item.isDirectory"
-              class="w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-default hover:enabled:bg-accent"
-            >
-              <Folder v-if="item.isDirectory" class="size-4 text-primary shrink-0" />
-              <File v-else class="size-4 text-muted-foreground shrink-0" />
-              <span class="truncate">{{ item.name }}</span>
-            </button>
-          </div>
-        </ScrollArea>
-
-        <DialogFooter>
-          <Button @click="showBrowser = false" variant="outline">Cancel</Button>
-          <Button @click="selectFolder" class="gap-2">
-            <FolderOpen class="size-4" /> Select This Folder
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FolderBrowser v-model="showBrowser" title="Select Project Directory" description="Navigate to your Java Lambda project root." :initial-path="selectedProject" @select="selectFolder" />
 
     <!-- Deploy toast -->
     <div v-if="deployMessage" :key="deployMessage" :class="deploySuccess ? 'bg-green-600' : 'bg-destructive'" class="fixed bottom-6 right-6 z-50 flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in">

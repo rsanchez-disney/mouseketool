@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import Toggle from "@/components/ui/Toggle.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
@@ -15,12 +15,13 @@ import {
   Database, Zap, Bell, Inbox, ArrowLeft, Save, Loader2, AlertTriangle, Check, X, Plus, ListFilter, Lock, Settings2, Package, Plug, CheckCircle2, XCircle, ShieldAlert, ChevronDown,
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
 
 const route = useRoute();
 const router = useRouter();
 const pipelineId = route.params.id as string;
 
-interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; topicArn: string; queueUrl: string; subscriptionArn?: string; filterPolicy?: Record<string, unknown>; filterPolicyScope?: string; heavyLoad?: boolean; addons?: string[]; vaultConfig?: { url: string; token: string; paths: string[] }; }
+interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; topicArn: string; queueUrl: string; subscriptionArn?: string; filterPolicy?: Record<string, unknown>; filterPolicyScope?: string; heavyLoad?: boolean; targetMissing?: boolean; vaultIncomplete?: boolean; addons?: string[]; vaultConfig?: { url: string; token: string; paths: string[] }; }
 
 const pipeline = ref<Pipeline | null>(null);
 const resources = ref<Record<string, any>>({});
@@ -55,6 +56,29 @@ const envVars = ref<{ key: string; value: string; isNull?: boolean }[]>([]);
 const savingEnv = ref(false);
 const envLoaded = ref(false);
 async function loadEnvVars() {
+
+// Target lambda selector for missing builds
+interface AvailableDeployment { functionName: string; handler: string; runtime: string; buildId: string; }
+const availableDeployments = ref<AvailableDeployment[]>([]);
+const changingTarget = ref(false);
+const showTargetWarning = ref(false);
+const pendingTarget = ref<AvailableDeployment | null>(null);
+async function loadAvailableDeployments() {
+  try { availableDeployments.value = (await (await fetch("/api/deployments")).json()).filter((d: any) => d.functionName !== pipeline.value?.glueFunctionName); } catch {}
+}
+async function confirmChangeTarget() {
+  if (!pendingTarget.value || !pipeline.value) return;
+  changingTarget.value = true;
+  await fetch(`/api/triggers/pipelines/${pipelineId}/edit`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newTargetFunctionName: pendingTarget.value.functionName }) });
+  pipeline.value.targetFunctionName = pendingTarget.value.functionName;
+  pipeline.value.targetMissing = false;
+  showTargetWarning.value = false;
+  pendingTarget.value = null;
+  changingTarget.value = false;
+  // Reload resources
+  resources.value = await (await fetch(`/api/triggers/pipelines/${pipelineId}/resources`)).json();
+}
+
   if (!pipeline.value || envLoaded.value) return;
   try { envVars.value = await (await fetch(`/api/deployments/lambda-env/${pipeline.value.targetFunctionName}`)).json(); } catch { envVars.value = []; }
   if (!envVars.value.length) envVars.value.push({ key: "", value: "" });
@@ -243,6 +267,8 @@ onMounted(async () => {
       }
       loadEnvVars();
       // Load stream handler inserts-only setting
+      if (pipeline.value.targetMissing) loadAvailableDeployments();
+
       try {
         const glueEnv = await (await fetch(`/api/deployments/lambda-env/${pipeline.value.glueFunctionName}`)).json();
         insertsOnly.value = glueEnv.some((e: any) => e.key === "STREAM_INSERTS_ONLY" && e.value === "true");
@@ -350,7 +376,7 @@ async function save() {
           <!-- Heavy load toggle -->
           <div class="flex items-center gap-2">
             <Label class="text-xs text-muted-foreground">Heavy Load</Label>
-            <Switch v-model="heavyLoad" class="cursor-pointer" />
+            <Toggle v-model="heavyLoad" />
           </div>
           <Separator orientation="vertical" class="h-6" />
           <!-- Save -->
@@ -424,9 +450,7 @@ async function save() {
                 <p class="text-xs font-medium">Inserts only</p>
                 <p class="text-[10px] text-muted-foreground">Skip MODIFY and REMOVE events, only process INSERT</p>
               </div>
-              <button type="button" @click="insertsOnly = !insertsOnly" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors" :class="insertsOnly ? 'bg-primary' : 'bg-input'">
-                <span class="pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform" :class="insertsOnly ? 'translate-x-4' : 'translate-x-0'" />
-              </button>
+              <Toggle v-model="insertsOnly" />
             </div>
             <div v-if="!insertsOnly" class="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 mt-2">
               <p class="text-[10px] text-amber-500">The stream handler processes all DynamoDB stream event types (INSERT, MODIFY, REMOVE) by default. Enable "Inserts only" above to filter out updates and deletes.</p>
@@ -464,7 +488,7 @@ async function save() {
           <CardHeader class="pb-3">
             <div class="flex items-center justify-between">
               <CardTitle class="text-sm flex items-center gap-2"><ListFilter class="size-4" /> Filter Policy</CardTitle>
-              <Switch v-model="filterEnabled" class="cursor-pointer" />
+              <Toggle v-model="filterEnabled" />
             </div>
             <CardDescription class="text-xs">Filter which messages reach the SQS queue based on attributes or body fields</CardDescription>
           </CardHeader>
@@ -560,6 +584,26 @@ async function save() {
           </CardContent>
           <CardContent v-else class="text-xs text-muted-foreground">Unable to fetch function details</CardContent>
         </Card>
+        <Card v-if="pipeline?.targetMissing">
+          <CardContent class="py-4 space-y-3">
+            <div class="flex items-center gap-2 text-amber-500">
+              <AlertTriangle class="size-4 shrink-0" />
+              <p class="text-sm font-medium">Target Lambda build not found</p>
+            </div>
+            <p class="text-xs text-muted-foreground">The original build for this pipeline's target Lambda was deleted or is unavailable. Select an available deployment to reconnect the pipeline.</p>
+            <p class="text-xs text-amber-500">Selecting a new target will clear all previous execution logs for this pipeline.</p>
+            <div class="space-y-1.5 max-h-48 overflow-auto">
+              <button v-for="d in availableDeployments" :key="d.functionName" class="w-full text-left px-3 py-2 rounded-md border text-sm flex items-center gap-2 transition-colors hover:border-primary/50 cursor-pointer" @click="pendingTarget = d; showTargetWarning = true">
+                <Zap class="size-4 text-muted-foreground shrink-0" />
+                <div class="min-w-0 flex-1">
+                  <p class="font-mono text-xs font-semibold truncate">{{ d.functionName }}</p>
+                  <p class="text-[10px] text-muted-foreground truncate">{{ d.handler }}</p>
+                </div>
+              </button>
+              <p v-if="!availableDeployments.length" class="text-xs text-muted-foreground text-center py-4">No deployments available. Build and deploy a Lambda first.</p>
+            </div>
+          </CardContent>
+        </Card>
       </template>
 
       <!-- Add-ons panel -->
@@ -576,10 +620,10 @@ async function save() {
               </div>
               <div class="flex items-center gap-3">
                 <Badge v-if="addons.includes('vault') && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
+                <Badge v-if="pipeline?.vaultIncomplete" class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]">Secrets need recreation</Badge>
+
                 <span class="text-xs text-muted-foreground">{{ addons.includes('vault') ? 'Enabled' : 'Disabled' }}</span>
-                <button type="button" @click="addons.includes('vault') ? addons = addons.filter(a => a !== 'vault') : addons.push('vault')" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors" :class="addons.includes('vault') ? 'bg-primary' : 'bg-input'">
-                  <span class="pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform" :class="addons.includes('vault') ? 'translate-x-4' : 'translate-x-0'" />
-                </button>
+                <Toggle :model-value="addons.includes('vault')" @update:model-value="addons.includes('vault') ? addons = addons.filter(a => a !== 'vault') : addons.push('vault')" />
               </div>
             </div>
             <!-- Collapsible vault config -->
@@ -649,7 +693,7 @@ async function save() {
                       <p class="text-sm font-medium">Auto-cleanup</p>
                       <p class="text-xs text-muted-foreground">Delete created secrets after invocation</p>
                     </div>
-                    <Switch v-model="vaultCleanup" class="cursor-pointer" />
+                    <Toggle v-model="vaultCleanup" />
                   </div>
                 </div>
 
@@ -685,12 +729,16 @@ async function save() {
           </CardContent>
         </Card>
       </template>
+
     </div>
   </div>
 
 
 
   <!-- Save Schema Dialog -->
+  <ConfirmDialog v-model="showTargetWarning" title="Change target Lambda?" description="This will clear all previous execution logs for this pipeline and reconnect it to the selected deployment." @confirm="confirmChangeTarget" />
+
+
   <Dialog v-model:open="showSaveSchema"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Save Table Schema</DialogTitle><DialogDescription>Save the schema for <span class="font-mono font-semibold">{{ pipeline?.tableName }}</span>. Optionally include a seed item to insert on restore.</DialogDescription></DialogHeader>
     <div class="space-y-2">
       <Label>Seed Item <span class="text-muted-foreground font-normal">(optional, DynamoDB JSON)</span></Label>

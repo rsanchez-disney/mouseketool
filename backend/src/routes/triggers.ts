@@ -335,7 +335,7 @@ router.put("/pipelines/:id/edit", async (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
-  const { filterPolicy, filterPolicyScope, heavyLoad, addons, vaultConfig } = req.body;
+  const { filterPolicy, filterPolicyScope, heavyLoad, addons, vaultConfig, newTargetFunctionName } = req.body;
   try {
     // Update filter policy on SNS subscription
     if (pipeline.subscriptionArn) {
@@ -383,6 +383,28 @@ router.put("/pipelines/:id/edit", async (req, res) => {
     if (vaultConfig) pipeline.vaultConfig = vaultConfig;
     else if (addons && !addons.includes("vault")) delete pipeline.vaultConfig;
     savePipelines(pipelines);
+    // Change target Lambda
+    if (newTargetFunctionName && newTargetFunctionName !== pipeline.targetFunctionName) {
+      // Delete old SQS → Target ESM
+      try {
+        const { DeleteEventSourceMappingCommand } = await import("@aws-sdk/client-lambda");
+        if (pipeline.uuids[1]) await (await getLambdaClient()).send(new DeleteEventSourceMappingCommand({ UUID: pipeline.uuids[1] }));
+      } catch {}
+      // Create new SQS → Target ESM
+      try {
+        const sqsClient = await getSqsClient();
+        const { Attributes = {} } = await sqsClient.send(new GetQueueAttributesCommand({ QueueUrl: pipeline.queueUrl, AttributeNames: [QueueAttributeName.QueueArn] }));
+        const queueArn = Attributes.QueueArn;
+        if (queueArn) {
+          const esm = await (await getLambdaClient()).send(new CreateEventSourceMappingCommand({ EventSourceArn: queueArn, FunctionName: newTargetFunctionName, BatchSize: 10, Enabled: true }));
+          if (esm.UUID) { if (pipeline.uuids.length > 1) pipeline.uuids[1] = esm.UUID; else pipeline.uuids.push(esm.UUID); }
+        }
+      } catch {}
+      pipeline.targetFunctionName = newTargetFunctionName;
+      (pipeline as any).targetMissing = false;
+      pipeline.runs = []; // Clear logs
+    }
+
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -517,6 +539,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
     send("dynamodb", "success", ["Item inserted into " + pipeline.tableName]);
 
     registerManualRun(pipeline.id);
+    watcher.createStubRun(pipeline.id, JSON.stringify(item));
 
     // Show waiting state for stream handler
     send("glue", "running", ["Waiting for DynamoDB Stream to trigger stream handler..."]);
@@ -570,12 +593,31 @@ router.post("/pipelines/:id/execute", async (req, res) => {
 });
 
 // GET /api/triggers/pipelines/:id/history — return persisted runs
+// GET /api/triggers/pipelines/:id/learned-items
+router.get("/pipelines/:id/learned-items", async (req, res) => {
+  try {
+    const { getLearnedItems } = await import("../services/learned-items.js");
+    res.json(await getLearnedItems(req.params.id));
+  } catch { res.json([]); }
+});
+
+
 router.get("/pipelines/:id/history", async (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
   const sorted = [...(pipeline.runs || [])].sort((a, b) => b.timestamp - a.timestamp);
   res.json({ pipelineId: pipeline.id, pipelineName: pipeline.name, runs: sorted });
+});
+
+// DELETE /api/triggers/pipelines/:id/history — clear all runs
+router.delete("/pipelines/:id/history", (req, res) => {
+  const pipelines = loadPipelines();
+  const pipeline = pipelines.find(p => p.id === req.params.id);
+  if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+  pipeline.runs = pipeline.runs.filter(r => r.status === "pending" || r.status === "diagnosing");
+  savePipelines(pipelines);
+  res.json({ cleared: true });
 });
 
 // GET /api/triggers/pipelines/:id/history/live — SSE stream for real-time updates

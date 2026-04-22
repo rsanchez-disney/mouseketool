@@ -94,17 +94,17 @@ async function invokeFunction(client: any, functionName: string, payload: any, b
 
   let logs: string[] = [];
 
-  // Tail logs from invoke response (skip if function errored — local diagnostic is more reliable)
-  if (result.LogResult && !result.FunctionError) {
-    logs.push(...Buffer.from(result.LogResult, "base64").toString("utf-8").split("\n").filter(Boolean));
-  }
-
-  // Poll CloudWatch for logs (skip if function errored — local diagnostic is more reliable)
-  if (!logs.length && !result.FunctionError) {
+  // Prefer CloudWatch logs (complete) over LogResult (4KB truncated)
+  if (!result.FunctionError) {
     for (let i = 0; i < 5 && !logs.length; i++) {
       await new Promise(r => setTimeout(r, 1000 * (i + 1)));
       logs = await fetchLambdaLogs(functionName);
     }
+  }
+
+  // Fall back to LogResult if CloudWatch had nothing
+  if (!logs.length && result.LogResult && !result.FunctionError) {
+    logs.push(...Buffer.from(result.LogResult, "base64").toString("utf-8").split("\n").filter(Boolean));
   }
 
   // Extract from error payload as fallback
@@ -279,4 +279,82 @@ router.post("/invoke", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
+
+// GET /api/deployments/:name/sample-path
+router.get("/:name/sample-path", async (req, res) => {
+  const deps = await loadDeployments();
+  const dep = deps.find(d => d.functionName === req.params.name);
+  res.json({ samplePath: dep?.samplePath || "" });
+});
+
+// PUT /api/deployments/:name/sample-path
+router.put("/:name/sample-path", async (req, res) => {
+  const deps = await loadDeployments();
+  const dep = deps.find(d => d.functionName === req.params.name);
+  if (!dep) return res.status(404).json({ error: "Deployment not found" });
+  dep.samplePath = req.body.samplePath || undefined;
+  await saveDeployments(deps);
+  res.json({ saved: true });
+});
+
+
+// GET /api/deployments/:name/sample-files — list JSON files from samplePath
+router.get("/:name/sample-files", async (req, res) => {
+  const deps = await loadDeployments();
+  const dep = deps.find(d => d.functionName === req.params.name);
+  if (!dep?.samplePath) return res.json([]);
+  try {
+    const { readdir } = await import("fs/promises");
+    const entries = await readdir(dep.samplePath, { withFileTypes: true });
+    const files = entries.filter(e => e.isFile() && e.name.endsWith(".json")).map(e => e.name);
+    res.json(files);
+  } catch { res.json([]); }
+});
+
+// GET /api/deployments/:name/sample-files/:filename — read a specific sample file
+router.get("/:name/sample-files/:filename", async (req, res) => {
+  const deps = await loadDeployments();
+  const dep = deps.find(d => d.functionName === req.params.name);
+  if (!dep?.samplePath) return res.status(404).json({ error: "No sample path configured" });
+  try {
+    const { readFile: rf } = await import("fs/promises");
+    const { join } = await import("path");
+    const content = await rf(join(dep.samplePath, req.params.filename), "utf-8");
+    res.json({ content });
+  } catch { res.status(404).json({ error: "File not found" }); }
+});
+
 export default router;
+
+// PUT /api/deployments/:name/vault-config — save vault config and sync to pipelines using this Lambda
+router.put("/:name/vault-config", async (req, res) => {
+  const { url, token, secrets, cleanup } = req.body;
+  // Save on deployment
+  const deps = await loadDeployments();
+  const dep = deps.find(d => d.functionName === req.params.name);
+  if (dep) {
+    dep.vaultConfig = url ? { url, token, paths: (secrets || []).map((s: any) => s.path).filter(Boolean) } : undefined;
+    await saveDeployments(deps);
+  }
+  // Sync to pipelines that use this Lambda as target
+  try {
+    const { loadPipelines, savePipelines } = await import("../services/pipeline-watcher.js");
+    const pipelines = loadPipelines();
+    let synced = 0;
+    for (const p of pipelines) {
+      if (p.targetFunctionName !== req.params.name) continue;
+      if (url) {
+        p.vaultConfig = { url, token, paths: (secrets || []).map((s: any) => s.path).filter(Boolean) };
+        if (!p.addons?.includes("vault")) (p.addons = p.addons || []).push("vault");
+      } else {
+        delete p.vaultConfig;
+        p.addons = (p.addons || []).filter(a => a !== "vault");
+      }
+      synced++;
+    }
+    savePipelines(pipelines);
+    res.json({ saved: true, pipelinesSynced: synced });
+  } catch { res.json({ saved: true, pipelinesSynced: 0 }); }
+});
+
+

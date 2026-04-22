@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, inject } from "vue";
 import { Card, CardContent } from "@/components/ui/card";
-import { encrypt, decrypt } from "@/lib/crypto";
 
-onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+
+onMounted(() => { window.addEventListener("keydown", onKey); window.addEventListener("click", closeDropdowns); });
+const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
+
+onUnmounted(() => { window.removeEventListener("keydown", onKey); window.removeEventListener("click", closeDropdowns); });
 function onKey(e: KeyboardEvent) {
   if (e.key === "Escape") { expandedResult.value = false; return; }
   if (e.ctrlKey && e.key === "Enter" && !invoking.value && selected.value) { e.preventDefault(); invoke(false); }
 }
+function closeDropdowns() { sampleDropdownOpen.value = false; generateOpen.value = false; }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -17,12 +20,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import Toggle from "@/components/ui/Toggle.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import {
   Rocket, Play, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, ArrowLeft, ArrowRight,
-  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Maximize2, Minimize2, Upload, ArrowDown, Square, RefreshCw, Search,
+  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Maximize2, Minimize2, Upload, ArrowDown, Square, RefreshCw, Search, Sparkles, FolderOpen, FileJson, MessageSquare,
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
+import FolderBrowser from "@/components/FolderBrowser.vue";
+import EvaluateModal from "@/components/EvaluateModal.vue";
 
 interface Deployment {
   functionName: string; handler: string; runtime: string;
@@ -63,8 +69,9 @@ function uploadJson(e: Event) {
   (e.target as HTMLInputElement).value = "";
 }
 const deployEnvVars = ref<{ key: string; value: string }[]>([]);
+function prettifyPayload() { try { payload.value = JSON.stringify(JSON.parse(payload.value), null, 2); } catch {} }
 const savingEnvVars = ref(false);
-const envVarsCollapsed = ref(localStorage.getItem("mk:envCollapsed") === "true");
+const envVarsCollapsed = ref(localStorage.getItem("mk:envCollapsed") !== "false");
 const invoking = ref(false);
 let invokeAbort: AbortController | null = null;
 function stopInvoke() { invokeAbort?.abort(); invoking.value = false; invokeAbort = null; invokeError.value = "Stopped by user"; }
@@ -72,6 +79,61 @@ const result = ref<InvokeResult | null>(null);
 const invokeError = ref("");
 const copied = ref(false);
 const copyToast = ref("");
+const aiExplaining = ref(false);
+const aiExplanation = ref("");
+const generating = ref(false);
+const generateOpen = ref(false);
+const sampleDropdownOpen = ref(false);
+const showSampleBrowser = ref(false);
+async function generatePayload(intent: string) {
+  generating.value = true; generateOpen.value = false;
+  try {
+    const r = await fetch("/api/ai/generate-payload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent, functionName: selected.value?.functionName, samplePath: samplePath.value || undefined }) });
+    const data = await r.json();
+    if (data.payload) { const p = typeof data.payload === "string" ? data.payload : JSON.stringify(data.payload, null, 2); payload.value = p; lastGenerated.value = p; }
+    else if (data.error) invokeError.value = "AI: " + data.error;
+  } catch (e: any) { invokeError.value = "AI: " + e.message; }
+  finally { generating.value = false; evaluated.value = false; }
+}
+const samplePath = ref("");
+async function loadSamplePath() {
+const lastGenerated = ref("");
+const showEvaluate = ref(false);
+const evaluated = ref(false);
+
+  if (!selected.value) return;
+  try { const r = await (await fetch(`/api/deployments/${selected.value.functionName}/sample-path`)).json(); samplePath.value = r.samplePath || ""; } catch {}
+}
+const sampleFiles = ref<string[]>([]);
+async function loadSampleFiles() {
+  if (!selected.value || !samplePath.value) { sampleFiles.value = []; return; }
+  try { sampleFiles.value = await (await fetch(`/api/deployments/${selected.value.functionName}/sample-files`)).json(); } catch { sampleFiles.value = []; }
+}
+async function loadSampleFile(filename: string) {
+  if (!selected.value) return;
+  try {
+    const r = await (await fetch(`/api/deployments/${selected.value.functionName}/sample-files/${encodeURIComponent(filename)}`)).json();
+    if (r.content) { try { payload.value = JSON.stringify(JSON.parse(r.content), null, 2); } catch { payload.value = r.content; } }
+  } catch {}
+}
+async function saveSamplePath() {
+  if (!selected.value) return;
+  await fetch(`/api/deployments/${selected.value.functionName}/sample-path`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ samplePath: samplePath.value }) });
+  await loadSampleFiles();
+}
+async function explainError() {
+
+  if (!rootCauseLines.value.length) return;
+  aiExplaining.value = true; aiExplanation.value = "";
+  try {
+    const dep = selected.value;
+    const r = await fetch("/api/ai/explain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: rootCauseLines.value.join("\n"), logs: result.value?.logs?.slice(-30), functionName: dep?.functionName, runtime: dep?.runtime, handler: dep?.handler, memoryMB: dep?.config?.memorySize, timeout: dep?.config?.timeout, envVars: deployEnvVars.value.map(e => e.key) }) });
+    const data = await r.json();
+    aiExplanation.value = data.explanation || data.error || "No response";
+  } catch (e: any) { aiExplanation.value = `Failed: ${e.message}`; }
+  finally { aiExplaining.value = false; }
+}
+
 const expandedResult = ref(false);
 const expandedResultInner = ref<HTMLElement | null>(null);
 const logSearch = ref("");
@@ -79,7 +141,7 @@ const searchOpen = ref(false);
 
 const rootCauseLines = computed(() => {
   if (!result.value?.logs) return [];
-  return result.value.logs.filter((l: string) => /Caused by[:.]/.test(l));
+  return result.value.logs.filter((l: string) => /Caused by[:.]/.test(l) || /"ThrowableClass"/.test(l));
 });
 
 function scrollExpandedResultToBottom() {
@@ -111,17 +173,21 @@ async function loadDeployments() {
   loading.value = false;
 }
 
-function openAddons(d: Deployment) {
+async function openAddons(d: Deployment) {
   selected.value = d;
   result.value = d.lastInvocationResult || null;
   invokeError.value = "";
   payload.value = d.lastPayload ? JSON.stringify(d.lastPayload, null, 2) : "{}";
   step.value = "addons";
+  await loadSamplePath();
+  await loadVaultConfig();
 }
 
 async function goToInvoke() {
   step.value = "invoke";
   await loadEnvVars();
+  await loadSamplePath();
+  await loadSampleFiles();
 }
 
 async function loadEnvVars() {
@@ -206,18 +272,21 @@ async function saveVaultConfig() {
   vaultEnabled.value = true;
   vaultPanelOpen.value = false;
   if (vaultSave.value) {
-    const data = JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets: vaultSecrets.value, cleanup: vaultCleanup.value });
-    sessionStorage.setItem(VAULT_STORAGE_KEY, await encrypt(data));
+    const stripped = vaultSecrets.value.map(s => ({ path: s.path, entries: s.entries.map(e => ({ key: e.key, value: "" })) }));
+    const data = JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets: stripped, cleanup: vaultCleanup.value });
+    localStorage.setItem(VAULT_STORAGE_KEY, data);
   } else {
-    sessionStorage.removeItem(VAULT_STORAGE_KEY);
+    localStorage.removeItem(VAULT_STORAGE_KEY);
   }
 }
+  if (selected.value) fetch(`/api/deployments/${selected.value.functionName}/vault-config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets: vaultSecrets.value, cleanup: vaultCleanup.value }) }).catch(() => {});
+
 
 async function loadVaultConfig() {
-  const stored = sessionStorage.getItem(VAULT_STORAGE_KEY);
+  const stored = localStorage.getItem(VAULT_STORAGE_KEY);
   if (!stored) return;
-  const json = await decrypt(stored);
-  if (!json) { sessionStorage.removeItem(VAULT_STORAGE_KEY); return; }
+  const json = stored;
+  if (!json) { localStorage.removeItem(VAULT_STORAGE_KEY); return; }
   try {
     const data = JSON.parse(json);
     vaultUrl.value = data.url || "";
@@ -226,7 +295,15 @@ async function loadVaultConfig() {
     vaultCleanup.value = data.cleanup || false;
     vaultSave.value = true;
     vaultEnabled.value = true;
-  } catch { sessionStorage.removeItem(VAULT_STORAGE_KEY); }
+    const paths = (data.secrets || []).filter((s: any) => s.path).map((s: any) => s.path);
+    if (paths.length && data.url && data.token) {
+      try {
+        const r = await fetch("/api/vault/read-secrets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: data.url, token: data.token, paths }) });
+        const hydrated = await r.json();
+        for (const h of hydrated) { const s = vaultSecrets.value.find((vs: any) => vs.path === h.path); if (s && h.entries.length) s.entries = h.entries; }
+      } catch {}
+    }
+  } catch { localStorage.removeItem(VAULT_STORAGE_KEY); }
 }
 
 // --- Invoke ---
@@ -433,8 +510,8 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
             <div class="flex items-center gap-3">
               <Button variant="ghost" size="icon" class="size-8 cursor-pointer" @click="backToList"><ArrowLeft class="size-4" /></Button>
               <div class="flex-1">
-                <h2 class="text-base font-semibold flex items-center gap-2"><Plug class="size-4" /> Add-on Settings</h2>
-                <p class="text-xs text-muted-foreground">{{ selected.functionName }} — configure optional add-ons before invoking</p>
+                <h2 class="text-base font-semibold flex items-center gap-2"><Plug class="size-4" /> Invoke Settings</h2>
+                <p class="text-xs text-muted-foreground">{{ selected.functionName }} — configure add-ons and AI settings before invoking</p>
               </div>
             </div>
 
@@ -454,13 +531,37 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                   <div class="flex items-center gap-3">
                     <Badge v-if="vaultEnabled && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
                     <span class="text-xs text-muted-foreground">{{ vaultEnabled ? 'Enabled' : 'Disabled' }}</span>
-                    <button type="button" @click="vaultEnabled = !vaultEnabled" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors" :class="vaultEnabled ? 'bg-primary' : 'bg-input'">
-                      <span class="pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform" :class="vaultEnabled ? 'translate-x-4' : 'translate-x-0'" />
-                    </button>
+                    <Badge v-if="vaultEnabled && !vaultTestResult?.ok && vaultUrl" class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]">Secrets may need recreation</Badge>
+
+                    <Toggle v-model="vaultEnabled" />
                     <Button @click="vaultPanelOpen = true" :disabled="!vaultEnabled" variant="outline" size="sm" class="gap-1.5 cursor-pointer">
                       Configure
                     </Button>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <!-- AI Sample Path -->
+            <Card v-if="kiroAvailable" class="!py-3">
+              <CardContent class="py-3">
+                <div class="flex items-center gap-3 mb-3">
+                  <div class="size-9 rounded-lg bg-muted flex items-center justify-center">
+                    <Sparkles class="size-4 text-violet-400" />
+                  </div>
+                  <div>
+                    <p class="text-sm font-medium">AI Payload Generation</p>
+                    <p class="text-xs text-muted-foreground">Point Kiro to a folder with sample JSON files and your project source code</p>
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <div class="flex gap-2">
+                    <Input v-model="samplePath" placeholder="Paste a path or click Browse..." class="font-mono text-xs h-8 flex-1" @keydown.enter="saveSamplePath" />
+                    <Button variant="outline" size="sm" class="shrink-0 gap-1.5 cursor-pointer" @click="showSampleBrowser = true"><Search class="size-3.5" /> Browse</Button>
+                    <Button v-if="samplePath" variant="ghost" size="icon" class="size-8 shrink-0 cursor-pointer text-muted-foreground hover:text-destructive" @click="samplePath = ''; saveSamplePath()"><X class="size-3.5" /></Button>
+
+                  </div>
+                  <p class="text-[10px] text-muted-foreground">Kiro will read <code class="bg-muted px-1 rounded">.json</code> files as sample payloads and scan the project source for context. Saved per deployment.</p>
                 </div>
               </CardContent>
             </Card>
@@ -525,9 +626,45 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
               <div class="space-y-3">
                 <div class="flex items-center justify-between">
                   <label class="text-sm font-medium">Payload (JSON)</label>
-                  <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click="jsonFileInput?.click()">
-                    <Upload class="size-3" /> Upload
-                  </Button>
+                  <div class="flex items-center gap-1">
+                    <template v-if="!kiroAvailable">
+                      <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click="jsonFileInput?.click()">
+                        <Upload class="size-3" /> Upload
+                      </Button>
+                    </template>
+                    <!-- No samplePath: upload only + hint -->
+                    <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click="prettifyPayload">{ } Prettify</Button>
+                    <template v-if="kiroAvailable && !samplePath">
+                      <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click="jsonFileInput?.click()">
+                        <Upload class="size-3" /> Upload
+                      </Button>
+                      <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Button variant="ghost" size="sm" class="h-6 text-xs gap-1 text-violet-400/40 cursor-not-allowed" disabled><Sparkles class="size-3" /> Generate</Button></span></TooltipTrigger><TooltipContent>Go back to Invoke Settings and set an AI Sample Path</TooltipContent></Tooltip>
+                    </template>
+                    <!-- samplePath configured: dropdown + generate -->
+                    <template v-else-if="kiroAvailable">
+                      <div class="relative">
+                      <Button v-if="lastGenerated && !evaluated" variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-muted-foreground hover:text-foreground" @click="showEvaluate = true">
+                        <MessageSquare class="size-3" /> Evaluate
+                      </Button>
+
+                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click.stop="sampleDropdownOpen = !sampleDropdownOpen">
+                          <FileJson class="size-3" /> Samples <Badge v-if="sampleFiles.length" variant="secondary" class="text-[9px] ml-0.5">{{ sampleFiles.length }}</Badge>
+                        </Button>
+                        <div v-if="sampleDropdownOpen" class="absolute right-0 top-7 z-50 w-56 max-h-48 overflow-auto rounded-lg border bg-popover p-1 shadow-lg">
+                          <div v-if="!sampleFiles.length" class="px-3 py-2 text-xs text-muted-foreground">No .json files found</div>
+                          <button v-for="f in sampleFiles" :key="f" class="w-full text-left px-3 py-1.5 text-xs font-mono rounded-md hover:bg-muted cursor-pointer truncate" @click="loadSampleFile(f); sampleDropdownOpen = false">{{ f }}</button>
+                        </div>
+                      </div>
+                      <div class="relative">
+                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-violet-400 hover:text-violet-300" :disabled="generating" @click.stop="generateOpen = !generateOpen">
+                          <Sparkles v-if="!generating" class="size-3" /><Loader2 v-else class="size-3 animate-spin" /> {{ generating ? 'Generating...' : 'Generate' }}
+                        </Button>
+                        <div v-if="generateOpen" class="absolute right-0 top-7 z-50 w-48 rounded-lg border bg-popover p-1 shadow-lg">
+                          <button v-for="opt in [{v:'success',l:'Successful payload'},{v:'error',l:'Failure payload'}]" :key="opt.v" class="w-full text-left px-3 py-1.5 text-xs rounded-md hover:bg-muted cursor-pointer" @click="generatePayload(opt.v)">{{ opt.l }}</button>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
                   <input ref="jsonFileInput" type="file" accept=".json,application/json" class="hidden" @change="uploadJson" />
                 </div>
                 <textarea v-model="payload" rows="12" class="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none scrollbar-thin" placeholder='{"Records": [{"body": "..."}]}' />
@@ -563,17 +700,23 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                     <div v-if="invoking" class="h-full flex items-center justify-center gap-2 text-zinc-500"><Loader2 class="size-4 animate-spin" /> Running...</div>
                     <template v-if="invokeError"><div class="text-red-400">{{ invokeError }}</div></template>
                     <template v-if="result">
+                        <div v-if="rootCauseLines.length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
+                          <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
+                          <div v-for="(line, i) in rootCauseLines" :key="'rc'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
+                          <template v-if="kiroAvailable"><div class="mt-2 flex items-center gap-1.5 text-[10px] text-violet-400/70 font-medium"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="khi2" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#khi2)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Expand to use Kiro Assistance</div></template>
+                        </div>
                       <div v-if="result.functionError" class="text-red-400 mb-2">Function error: {{ result.functionError }}</div>
                       <pre class="whitespace-pre">{{ JSON.stringify(result.payload, null, 2) }}</pre>
                       <div v-if="result.logs?.length" class="mt-3 pt-3 border-t border-zinc-800">
                         <div class="text-zinc-500 mb-1">Lambda Logs:</div>
                         <div v-for="(line, i) in result.logs" :key="i" :class="[
-                          line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') ? 'text-red-400' :
+                          line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' :
                           line.startsWith('⚠') ? 'text-yellow-400' :
-                          line.includes('── Diagnostics') || line.includes('── Vault') ? 'text-blue-400 font-semibold mt-2' :
+                          line.includes('──') ? 'text-blue-400 font-semibold mt-2' :
                           'text-zinc-400'
-                        ]">{{ line }}</div>
+                        ]" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
                       </div>
+                      
                       <div class="mt-3 text-zinc-600">Invoked at {{ formatDate(result.invokedAt) }}</div>
                     </template>
                   </div>
@@ -592,7 +735,11 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
       </div>
     </div>
 
-  <!-- Vault Configuration Panel -->
+  <EvaluateModal v-if="kiroAvailable" v-model="showEvaluate" :type="'deployment'" :id="selected?.functionName ?? ''" :sample="lastGenerated" @good="evaluated = true" @bad="evaluated = true" />
+
+  <FolderBrowser v-if="kiroAvailable" v-model="showSampleBrowser" title="Select Sample Directory" description="Navigate to the folder containing your JSON sample files and project source." :initial-path="samplePath" scroll-height="280px" @select="(p: string) => { samplePath = p; saveSamplePath(); }" />
+
+    <!-- Vault Configuration Panel -->
   <Sheet v-model:open="vaultPanelOpen">
     <SheetContent class="w-[420px] sm:max-w-[420px] overflow-y-auto p-6">
       <SheetHeader class="mb-4">
@@ -668,7 +815,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
               <p class="text-sm font-medium">Auto-cleanup</p>
               <p class="text-xs text-muted-foreground">Delete created secrets after invocation</p>
             </div>
-            <Switch v-model:checked="vaultCleanup" class="cursor-pointer" />
+            <Toggle v-model="vaultCleanup" />
           </div>
         </div>
 
@@ -676,9 +823,9 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
         <div class="flex items-center justify-between rounded-lg border p-4">
           <div>
             <p class="text-sm font-medium">Remember settings</p>
-            <p class="text-xs text-muted-foreground">Encrypted in this tab's session only. Not available in other tabs or browsers.</p>
+            <p class="text-xs text-muted-foreground">Stored in this browser. Available across tabs and reloads.</p>
           </div>
-          <Switch v-model:checked="vaultSave" class="cursor-pointer" />
+          <Toggle v-model="vaultSave" />
         </div>
 
         <Button @click="saveVaultConfig" class="w-full cursor-pointer" :disabled="!vaultUrl || !vaultToken">
@@ -715,16 +862,26 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
           <div v-if="rootCauseLines.length" class="mb-4 rounded-md border border-red-500/20 bg-red-500/5 p-3">
             <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
             <div v-for="(line, i) in rootCauseLines" :key="i" class="text-red-300 whitespace-nowrap">{{ line.trim() }}</div>
+            <button v-if="kiroAvailable" @click="explainError" :disabled="aiExplaining" class="mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/20 to-purple-500/20 border border-violet-500/40 text-[11px] font-medium text-violet-300 hover:from-violet-500/30 hover:to-purple-500/30 hover:text-violet-200 cursor-pointer disabled:opacity-50 transition-all shadow-[0_0_6px_rgba(139,92,246,0.1)]">
+              <svg class="size-3.5 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="ke" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#ke)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg>
+              <span v-if="aiExplaining" class="animate-pulse text-violet-400">Asking Kiro...</span>
+              <span v-else>Explain with Kiro</span>
+            </button>
+            <div v-if="kiroAvailable && aiExplanation" class="mt-3 rounded-lg border border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-purple-500/5 p-3.5 text-xs text-violet-200/90 whitespace-pre-wrap leading-relaxed">
+              <div class="flex items-center gap-1.5 mb-2 text-[10px] uppercase tracking-wider text-violet-400/70 font-semibold"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="kh" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#kh)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Kiro</div>
+              {{ aiExplanation }}
+            </div>
           </div>
+
           <div v-if="result.functionError" class="text-red-400 mb-2 whitespace-nowrap">Function error: {{ result.functionError }}</div>
           <pre class="whitespace-pre">{{ JSON.stringify(result.payload, null, 2) }}</pre>
           <div v-if="result.logs?.length" class="mt-3 pt-3 border-t border-zinc-800">
             <div class="text-zinc-500 mb-1">Lambda Logs:</div>
-            <div v-for="(line, i) in result.logs" :key="i" class="whitespace-nowrap" :class="[
+            <div v-for="(line, i) in result.logs" :key="i" class="text-xs font-mono whitespace-pre leading-relaxed" :class="[
               logSearch && !line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' :
-              line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') ? 'text-red-400' :
+              line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' :
               line.startsWith('⚠') ? 'text-yellow-400' :
-              line.includes('── Diagnostics') || line.includes('── Vault') ? 'text-blue-400 font-semibold mt-2' :
+              line.includes('──') ? 'text-blue-400 font-semibold mt-2' :
               'text-zinc-400'
             ]">{{ line }}</div>
             </div>

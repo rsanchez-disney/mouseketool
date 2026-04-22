@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watchEffect, onMounted, onUnmounted } from "vue";
+import { ref, watchEffect, onMounted, onUnmounted, provide } from "vue";
 import { useRoute } from "vue-router";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff } from "lucide-vue-next";
+import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2 } from "lucide-vue-next";
 
 const route = useRoute();
 const dark = ref(localStorage.getItem("mk:theme") === "dark");
@@ -21,17 +21,23 @@ watchEffect(() => {
 
 // LocalStack health check
 const localstackDown = ref(false);
+const isReconciling = ref(false);
 let healthInterval: ReturnType<typeof setInterval> | null = null;
 async function checkHealth() {
   try {
     const r = await fetch("/api/health");
     const data = await r.json();
     localstackDown.value = !data.localstack;
+    isReconciling.value = !!data.reconciling;
   } catch { localstackDown.value = true; }
 }
-onMounted(() => { checkHealth(); healthInterval = setInterval(checkHealth, 5000); });
+onMounted(() => { checkHealth(); healthInterval = setInterval(checkHealth, 5000); checkKiro(); });
 onUnmounted(() => { if (healthInterval) clearInterval(healthInterval); });
 
+// Kiro AI detection
+const kiroAvailable = ref(false);
+provide("kiroAvailable", kiroAvailable);
+async function checkKiro() { try { const r = await fetch("/api/ai/status"); const d = await r.json(); kiroAvailable.value = d.available; } catch {} }
 const nav = [
   { label: "Lambda Builder", path: "/builder", icon: Rocket },
   { label: "Deployments", path: "/deployments", icon: CloudCog },
@@ -103,7 +109,26 @@ const nav = [
           <span class="text-sm font-medium text-muted-foreground">
             {{ nav.find(n => n.path === route.path)?.label ?? 'Mouseketool' }}
           </span>
-          <div class="ml-auto flex items-center gap-1">
+          <div class="ml-auto flex items-center gap-2">
+            <Tooltip v-if="kiroAvailable">
+              <TooltipTrigger as-child>
+                <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/15 to-purple-500/15 border border-violet-500/40 shadow-[0_0_8px_rgba(139,92,246,0.15)]">
+                  <div class="relative"><div class="size-2 rounded-full bg-violet-400"></div><div class="absolute inset-0 size-2 rounded-full bg-violet-400 animate-ping opacity-50"></div></div>
+                  <span class="text-[11px] font-semibold bg-gradient-to-r from-violet-300 to-purple-300 bg-clip-text text-transparent">Kiro AI</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>Kiro AI detected and ready</TooltipContent>
+            </Tooltip>
+            <Tooltip v-else>
+              <TooltipTrigger as-child>
+                <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-muted/50 border border-border">
+                  <div class="size-2 rounded-full bg-zinc-500"></div>
+                  <span class="text-[11px] font-medium text-muted-foreground">Kiro AI</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>Install Kiro CLI on your machine to unlock AI features</TooltipContent>
+            </Tooltip>
+
             <Tooltip>
               <TooltipTrigger as-child>
                 <Button variant="ghost" size="icon" class="size-8" as-child>
@@ -123,6 +148,14 @@ const nav = [
               <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="$router.push('/settings')"><Settings class="size-3.5" /> Check Settings</Button>
             </div>
           </div>
+          <div v-else-if="isReconciling && route.path !== '/settings' && route.path !== '/help'" class="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+            <div class="text-center space-y-3 max-w-sm">
+              <Loader2 class="size-12 mx-auto text-primary animate-spin" />
+              <h2 class="text-lg font-semibold">Restoring Pipeline Resources</h2>
+              <p class="text-sm text-muted-foreground">Mouseketool detected a LocalStack restart and is recreating pipeline resources. This may take a moment.</p>
+            </div>
+          </div>
+
           <router-view v-slot="{ Component }">
             <transition name="fade" mode="out-in">
               <component :is="Component" />

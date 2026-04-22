@@ -59,7 +59,7 @@ router.post("/", async (req, res) => {
       await waitReady();
       await client.send(new UpdateFunctionConfigurationCommand({
         FunctionName: functionName, Runtime: runtime, Handler: handler,
-        Timeout: 60, MemorySize: memorySize, Environment: envConfig,
+        Timeout: 60, MemorySize: memorySize, ...(envConfig ? { Environment: envConfig } : {}),
       }));
       action = "updated";
     } else {

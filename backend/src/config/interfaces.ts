@@ -5,6 +5,8 @@ export interface Settings {
   pipeline: { observerPollingMs: number };
   lambda: { memoryMB: number };
   heavyLoad: { batchSize: number; batchWindowSeconds: number };
+  ai: { learnedStorage: "local" | "s3" };
+
 }
 
 export const DEFAULTS: Settings = {
@@ -14,6 +16,8 @@ export const DEFAULTS: Settings = {
   pipeline: { observerPollingMs: 500 },
   lambda: { memoryMB: 2048 },
   heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
+  ai: { learnedStorage: "local" },
+
 };
 
 export interface BuildMeta {
