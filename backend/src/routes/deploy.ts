@@ -75,9 +75,10 @@ router.post("/", async (req, res) => {
     // Kill warm containers so LocalStack picks up the new code immediately
     try {
       const { exec } = await import("child_process");
-      exec(`wsl docker ps --filter "name=lambda-${functionName}" -q`, (_, stdout) => {
+      const dk = process.platform === "win32" ? "wsl docker" : "docker";
+      exec(`${dk} ps --filter "name=lambda-${functionName}" -q`, (_, stdout) => {
         const ids = stdout?.trim();
-        if (ids) exec(`wsl docker rm -f ${ids.split("\n").join(" ")}`);
+        if (ids) exec(`${dk} rm -f ${ids.split("\n").join(" ")}`);
       });
     } catch {}
 

@@ -209,8 +209,6 @@ router.post("/save-generation", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-export default router;
-
 router.post("/save-feedback", async (req, res) => {
   const { type, id, sample, reason } = req.body;
   if (!type || !id || !sample || !reason) return res.status(400).json({ error: "type, id, sample, and reason required" });
@@ -228,4 +226,4 @@ router.post("/save-feedback", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-
+export default router;
