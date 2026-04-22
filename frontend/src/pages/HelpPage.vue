@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Rocket, Hammer, CloudCog, Zap, AlertTriangle, Terminal, Shield,
-  Database, Bell, Inbox, Clock, Keyboard,
+  Database, Bell, Inbox, Clock, Keyboard, Sparkles, RefreshCw,
 } from "lucide-vue-next";
 
 const tabs = [
@@ -18,6 +18,8 @@ const tabs = [
   { id: "history", label: "History", icon: Clock },
   { id: "console", label: "Console", icon: Terminal },
   { id: "addons", label: "Add-ons", icon: Shield },
+  { id: "ai", label: "AI Features", icon: Sparkles },
+  { id: "selfhealing", label: "Self-Healing", icon: RefreshCw },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "troubleshooting", label: "Troubleshooting", icon: AlertTriangle },
 ];
@@ -428,9 +430,13 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
         see the results appear in real-time.</p>
 
         <p class="font-medium text-foreground">Filtering runs</p>
-        <p>The toolbar at the top of the runs list lets you filter by state (Success, Error, Filtered, Diagnosing) and
-        time range (5 min, 15 min, 1 hour, 6 hours). Both filters work together. The run count on the right shows how
-        many runs match the current filters out of the total.</p>
+        <p>The toolbar at the top of the runs list lets you filter by state (Success, Error, Filtered, Diagnosing),
+        time range (5 min, 15 min, 1 hour, 6 hours), and source (All, Manual, External). All filters work together.
+        The run count on the right shows how many runs match the current filters out of the total.</p>
+
+        <p class="font-medium text-foreground">Clearing history</p>
+        <p>The <strong>Clear</strong> button removes all completed invocation records. Runs that are still pending or
+        being diagnosed are preserved. A confirmation dialog appears before clearing.</p>
 
 
         <p class="font-medium text-foreground">Expanding a run</p>
@@ -539,7 +545,92 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
       </CardContent>
     </Card>
 
-    <!-- SHORTCUTS -->
+    <!-- AI FEATURES -->
+    <Card v-if="active === 'ai'">
+      <CardHeader class="pb-3">
+        <CardTitle class="flex items-center gap-2 text-base"><Sparkles class="size-4" /> AI Features</CardTitle>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground space-y-3">
+        <p>Mouseketool integrates with Kiro CLI to provide AI-powered features across the app. When Kiro is detected
+        on your system, a glowing purple badge appears in the header. If Kiro is not installed, AI features are hidden
+        and a gray badge with an install prompt is shown instead.</p>
+
+        <p class="font-medium text-foreground">Error Explanation</p>
+        <p>When a Lambda invocation fails and the Root Cause panel appears (in the Deployments page, History page, or
+        Execution page), an <strong>Explain with Kiro</strong> button lets you send the error context to Kiro for a
+        plain-English explanation and fix suggestion. In the minimized log view, a hint label says "Expand to use Kiro
+        Assistance" — the full button is available in the expanded log modal.</p>
+
+        <p class="font-medium text-foreground">Payload Generation</p>
+        <p>On the Deployments page, you can configure a <strong>Sample Path</strong> in the Invoke Settings view
+        (step 2). Point it to a folder containing JSON sample files and your project source code using the file
+        browser. Once configured, the payload editor toolbar shows a <strong>Generate</strong> button with two
+        options: Successful payload and Failure payload. Kiro reads the sample files and handler source code to
+        generate a realistic payload matching your intent.</p>
+
+        <p class="font-medium text-foreground">Pipeline Item Generation</p>
+        <p>On the Execution page, a <strong>Generate</strong> button next to the test item editor offers three
+        options: Successful item, Filtered item (intentionally fails the SNS filter), and Failure item. Kiro uses
+        learned data from previous pipeline runs, the table's key schema, the active filter policy, and any saved
+        favorites to generate items that match the pipeline's expected input.</p>
+
+        <p class="font-medium text-foreground">Pipeline Learning</p>
+        <p>Mouseketool automatically learns from every successful pipeline execution. Items that pass the SNS filter
+        are captured and stored locally (up to 50 per pipeline). These learned items are included as context when
+        generating new items, so generation quality improves over time. The storage location (local or S3) is
+        configurable in Settings.</p>
+
+        <p class="font-medium text-foreground">Evaluation and Feedback</p>
+        <p>After generating a payload or item, an <strong>Evaluate</strong> button appears. Clicking it opens a modal
+        where you rate the generation as good (thumbs up) or bad (thumbs down). Good samples are saved as favorites
+        for future generation context. Bad samples prompt you to explain what was wrong — Kiro uses this feedback to
+        avoid the same mistakes in future generations. Favorites and feedback are stored per deployment or pipeline.</p>
+      </CardContent>
+    </Card>
+
+    <!-- SELF-HEALING -->
+    <Card v-if="active === 'selfhealing'">
+      <CardHeader class="pb-3">
+        <CardTitle class="flex items-center gap-2 text-base"><RefreshCw class="size-4" /> Pipeline Self-Healing</CardTitle>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground space-y-3">
+        <p>When LocalStack restarts, all AWS resources (tables, topics, queues, Lambdas, event source mappings) are
+        deleted. Mouseketool detects this automatically and recreates everything from locally persisted metadata.</p>
+
+        <p class="font-medium text-foreground">How it works</p>
+        <p>A health monitor polls LocalStack every 5 seconds. When it detects that LocalStack has recovered from being
+        unreachable, it runs a full reconciliation for every saved pipeline. During reconciliation, a blocking overlay
+        appears on the UI with "Restoring Pipeline Resources" to prevent interaction until the process completes.</p>
+
+        <p class="font-medium text-foreground">What gets recreated</p>
+        <ul class="list-disc list-inside space-y-1.5 ml-1">
+          <li><strong>DynamoDB tables</strong> — Restored from saved schemas. If no schema was saved, a generic table
+          with <code class="text-xs bg-muted px-1 rounded">pk</code> and <code class="text-xs bg-muted px-1 rounded">sk</code>
+          string keys is created. Always save your table schema from the pipeline edit page.</li>
+          <li><strong>SNS topics and SQS queues</strong> — Recreated with the same names. DLQ and redrive policies
+          are re-established.</li>
+          <li><strong>Stream handler Lambda</strong> — Redeployed from the template source code with the same
+          environment variables.</li>
+          <li><strong>Target Lambda</strong> — Redeployed from the cached build artifact. If the build was deleted,
+          the pipeline is flagged with a warning icon and you must select a new deployment from the edit page.</li>
+          <li><strong>Event source mappings</strong> — DynamoDB Stream to stream handler and SQS to target Lambda
+          connections are re-established with the same batch settings.</li>
+          <li><strong>SNS subscriptions</strong> — Recreated with the same filter policy and scope.</li>
+        </ul>
+
+        <p class="font-medium text-foreground">Vault secrets</p>
+        <p>Vault secret values are never stored by Mouseketool. After reconciliation, if a pipeline had Vault
+        configured, an amber "Secrets need recreation" badge appears on the pipeline card and edit page. You must
+        recreate the secrets manually through the Vault add-on configuration.</p>
+
+        <p class="font-medium text-foreground">Target Lambda missing</p>
+        <p>If the cached build for a target Lambda was deleted, an amber warning icon appears on the pipeline card.
+        On the edit page's Target Lambda step, a deployment selector lets you pick an available deployment to
+        reconnect the pipeline. Selecting a new target clears all previous execution logs.</p>
+      </CardContent>
+    </Card>
+
+        <!-- SHORTCUTS -->
     <Card v-if="active === 'shortcuts'">
       <CardHeader class="pb-3">
         <CardTitle class="flex items-center gap-2 text-base"><Keyboard class="size-4" /> Keyboard Shortcuts</CardTitle>

@@ -49,7 +49,19 @@ Runtime data is stored in `.data/` (gitignored):
 | `DELETE` | `/api/triggers/pipelines/:id` | Delete pipeline and clean up resources |
 | `POST` | `/api/triggers/pipelines/:id/execute` | Execute pipeline (SSE step-by-step) |
 | `GET` | `/api/triggers/pipelines/:id/history` | Get run history |
+| `DELETE` | `/api/triggers/pipelines/:id/history` | Clear completed runs |
 | `GET` | `/api/triggers/pipelines/:id/history/live` | Live watch (SSE) |
+| `GET` | `/api/triggers/pipelines/:id/learned-items` | Get AI learned items |
+
+### AI
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/ai/status` | Check Kiro CLI availability |
+| `POST` | `/api/ai/explain` | Explain Lambda error with Kiro |
+| `POST` | `/api/ai/generate-payload` | Generate test payload from samples |
+| `POST` | `/api/ai/generate-item` | Generate pipeline test item |
+| `POST` | `/api/ai/save-generation` | Save a good AI generation as favorite |
+| `POST` | `/api/ai/save-feedback` | Save negative feedback on AI generation |
 
 ### Resources
 | Method | Path | Description |
