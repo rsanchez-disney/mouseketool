@@ -42,7 +42,7 @@ When a feature is complete:
 
 ### Branch Completion (Merge to Main)
 After all commits (code + docs) are on the feature branch:
-1. Scan all new/modified files for sensitive information (tokens, secrets, credentials, API keys). Verify `.gitignore` covers any new generated or data files.
+1. Scan all new/modified files for sensitive information (tokens, secrets, credentials, API keys). Also verify no Disney-specific information is committed: no hardcoded project names, team names, employee names, email addresses, internal URLs, or any identifiable corporate data. Use generic placeholders in code examples and test data. Verify `.gitignore` covers any new generated or data files.
 2. `git checkout main && git merge <branch> --no-ff` with a merge commit message.
 3. Switch back to the feature branch after merging — do NOT delete it.
 
