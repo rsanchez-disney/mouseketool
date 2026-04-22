@@ -1,23 +1,26 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, inject } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") expandedLogStep.value = ""; }
-onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+onMounted(() => { window.addEventListener("keydown", onKey); window.addEventListener("click", closeDropdowns); });
+onUnmounted(() => { window.removeEventListener("keydown", onKey); window.removeEventListener("click", closeDropdowns); });
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import EvaluateModal from "@/components/EvaluateModal.vue";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+
 import {
-  Database, Loader2, ArrowLeft, Play, Check, AlertTriangle, Bell, Inbox, Zap, ChevronDown, ChevronRight, Copy, Maximize2, Minimize2, Square, Search, X,
+  Database, Loader2, ArrowLeft, Play, Check, AlertTriangle, Bell, Inbox, Zap, ChevronDown, ChevronRight, Copy, Maximize2, Minimize2, Square, Search, X, Sparkles, MessageSquare,
 } from "lucide-vue-next";
 
 const route = useRoute();
 const router = useRouter();
 const pipelineId = route.params.id as string;
+const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 
 interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
 interface Step { id: string; label: string; detail: string; status: "pending" | "running" | "success" | "timeout" | "error" | "filtered" | "diagnosing" | "unknown"; logs: string[]; collapsed: boolean; elapsed?: number; }
@@ -49,6 +52,35 @@ const searchOpen = ref(false);
 // Heavy load batch counter
 const batchCount = ref(0);
 const batchBaseline = ref(0);
+const generating = ref(false);
+const generateOpen = ref(false);
+const lastGenerated = ref("");
+const showEvaluate = ref(false);
+const evaluated = ref(false);
+const aiExplaining = ref(false);
+const aiExplanation = ref("");
+const aiExpandedKey = ref("");
+async function explainError(errors: string[], logs: string[]) {
+  aiExplaining.value = true; aiExplanation.value = ""; aiExpandedKey.value = "expanded";
+  try {
+    const r = await fetch("/api/ai/explain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: errors.join("\n"), logs: logs.slice(-30), functionName: pipeline.value?.targetFunctionName }) });
+    const data = await r.json();
+    aiExplanation.value = data.explanation || data.error || "No response";
+  } catch (e: any) { aiExplanation.value = `Failed: ${e.message}`; }
+  finally { aiExplaining.value = false; }
+}
+async function generateItem(intent: string) {
+  generating.value = true; generateOpen.value = false; lastGenerated.value = "";
+  try {
+    const r = await fetch("/api/ai/generate-item", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent, pipelineId }) });
+    const data = await r.json();
+    if (data.payload) { const p = typeof data.payload === "string" ? data.payload : JSON.stringify(data.payload, null, 2); itemJson.value = p; lastGenerated.value = p; }
+  } catch {}
+  finally { generating.value = false; evaluated.value = false; }
+}
+function closeDropdowns() { generateOpen.value = false; }
+function prettifyItem() { try { itemJson.value = JSON.stringify(JSON.parse(itemJson.value), null, 2); } catch {} }
+
 let batchPoll: ReturnType<typeof setInterval> | null = null;
 function startBatchPoll() {
   if (!pipeline.value?.heavyLoad || batchPoll) return;
@@ -60,7 +92,6 @@ function startBatchPoll() {
   }, 1000);
 }
 function stopBatchPoll() { if (batchPoll) { clearInterval(batchPoll); batchPoll = null; } }
-const autoDiagnose = ref(true);
 const showElapsed = ref(localStorage.getItem("mk:showElapsed") !== "false");
 
 import { extractErrors, formatMs } from "@/lib/format";
@@ -138,12 +169,7 @@ async function execute() {
         const s = steps.value.find(s => s.id === step);
         if (s) {
           // If auto-diagnose is off and we get diagnosing, convert to error
-          if (status === "diagnosing" && !autoDiagnose.value) {
-            s.status = "error";
-            s.logs = ["Target Lambda timed out.", "", "Auto-diagnose is disabled. Enable it to automatically extract error details."];
-            s.collapsed = true;
-            if (steps.value.every(st => st.status !== "pending" && st.status !== "running")) executing.value = false;
-          } else {
+{
             s.status = status;
           }
           // Heavy load batch polling
@@ -229,7 +255,28 @@ onMounted(loadPipeline);
       <!-- JSON input + execute -->
       <div class="flex gap-4 items-start">
         <div class="flex-1 space-y-1.5">
-          <Label class="text-xs">Test Item for <span class="font-mono font-semibold">{{ pipeline.tableName }}</span></Label>
+          <div class="flex items-center justify-between">
+            <Label class="text-xs">Test Item for <span class="font-mono font-semibold">{{ pipeline.tableName }}</span></Label>
+            <div class="flex items-center gap-1">
+              <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click="prettifyItem">{ } Prettify</Button>
+              <Button v-if="kiroAvailable && lastGenerated && !evaluated" variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-muted-foreground hover:text-foreground" @click="showEvaluate = true">
+                <MessageSquare class="size-3" /> Evaluate
+              </Button>
+              <Tooltip v-if="kiroAvailable">
+                <TooltipTrigger as-child>
+                <div class="relative">
+                <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-violet-400 hover:text-violet-300" :disabled="generating" @click.stop="generateOpen = !generateOpen">
+                  <Sparkles v-if="!generating" class="size-3" /><Loader2 v-else class="size-3 animate-spin" /> {{ generating ? 'Generating...' : 'Generate' }}
+                </Button>
+                <div v-if="generateOpen" class="absolute right-0 top-7 z-50 w-48 rounded-lg border bg-popover p-1 shadow-lg">
+                  <button v-for="opt in [{v:'success',l:'Successful item'},{v:'filtered',l:'Filtered item'},{v:'edge',l:'Failure item'}]" :key="opt.v" class="w-full text-left px-3 py-1.5 text-xs rounded-md hover:bg-muted cursor-pointer" @click="generateItem(opt.v)">{{ opt.l }}</button>
+                </div>
+                </div>
+                </TooltipTrigger>
+                <TooltipContent>Kiro learns from every successful pipeline run to improve generation</TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
           <textarea v-model="itemJson" rows="5" class="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none scrollbar-thin" spellcheck="false" />
         </div>
         <div class="flex flex-col gap-2 mt-6 shrink-0">
@@ -240,7 +287,6 @@ onMounted(loadPipeline);
             </Button>
             <Button variant="destructive" :disabled="!executing" class="gap-2 cursor-pointer" @click="stopExecution"><Square class="size-3.5" /> Stop</Button>
           </div>
-          <label class="flex items-center gap-2 text-xs text-muted-foreground" :class="executing ? 'opacity-50 pointer-events-none' : 'cursor-pointer'"><Switch v-model="autoDiagnose" class="cursor-pointer" :disabled="executing" /><span>Auto-diagnose on error</span></label>
         </div>
       </div>
 
@@ -308,6 +354,8 @@ onMounted(loadPipeline);
 
     <div v-else class="text-center py-16 text-muted-foreground"><p>Pipeline not found.</p></div>
 
+    <EvaluateModal v-if="kiroAvailable" v-model="showEvaluate" type="pipeline" :id="pipelineId" :sample="lastGenerated" @good="evaluated = true" @bad="evaluated = true" />
+
     <!-- Expanded log modal -->
     <Dialog :open="!!expandedLogStep" @update:open="expandedLogStep = ''">
       <DialogContent class="!max-w-[97vw] w-[97vw] max-h-[90vh] p-0 gap-0 border-zinc-800 bg-zinc-950 shadow-2xl !rounded-lg [&>button]:hidden">
@@ -324,6 +372,15 @@ onMounted(loadPipeline);
           <div v-if="extractErrors(expandedLogContent).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
             <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
             <div v-for="(line, i) in extractErrors(expandedLogContent)" :key="'erc'+i" class="text-xs font-mono text-red-300 whitespace-pre-wrap leading-relaxed">{{ line.trim() }}</div>
+            <button v-if="kiroAvailable" @click="explainError(extractErrors(expandedLogContent), expandedLogContent)" :disabled="aiExplaining" class="mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/20 to-purple-500/20 border border-violet-500/40 text-[11px] font-medium text-violet-300 hover:from-violet-500/30 hover:to-purple-500/30 hover:text-violet-200 cursor-pointer disabled:opacity-50 transition-all shadow-[0_0_6px_rgba(139,92,246,0.1)]">
+              <svg class="size-3.5 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="ke2" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#ke2)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg>
+              <span v-if="aiExplaining" class="animate-pulse text-violet-400">Asking Kiro...</span>
+              <span v-else>Explain with Kiro</span>
+            </button>
+            <div v-if="kiroAvailable && aiExplanation" class="mt-3 rounded-lg border border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-purple-500/5 p-3.5 text-xs text-violet-200/90 whitespace-pre-wrap leading-relaxed">
+              <div class="flex items-center gap-1.5 mb-2 text-[10px] uppercase tracking-wider text-violet-400/70 font-semibold"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="ke3" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#ke3)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Kiro</div>
+              {{ aiExplanation }}
+            </div>
           </div>
           <div v-for="(line, i) in expandedLogContent" :key="i" :class="[logSearch && !line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' : line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
         </div>

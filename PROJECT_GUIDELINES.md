@@ -11,7 +11,8 @@
 - This rule applies while the project is in POC stage. Once the project graduates from POC, we will adopt conventional commits with granular history.
 - Commit messages should be descriptive: `feat: add vault add-on with secret management` not `update files`.
 
-### Commit Authorization
+- The AI assistant (Kiro) must **never** commit or merge unless the developer explicitly says to do so.
+- Never assume the developer wants to commit based on phrases like "leave it", "we're done", or "that's it" — wait for an explicit "commit" or "merge" instruction.
 - The AI assistant (Kiro) is **not allowed to commit** unless explicitly told to by the developer.
 - The developer must manually verify the app before authorizing a commit.
 - Before committing, Kiro must update the version in both `frontend/package.json` and `backend/package.json` using semver.
@@ -41,7 +42,7 @@ When a feature is complete:
 
 ### Branch Completion (Merge to Main)
 After all commits (code + docs) are on the feature branch:
-1. Scan all new/modified files for sensitive information (tokens, secrets, credentials, API keys). Verify `.gitignore` covers any new generated or data files.
+1. Scan all new/modified files for sensitive information (tokens, secrets, credentials, API keys). Also verify no Disney-specific information is committed: no hardcoded project names, team names, employee names, email addresses, internal URLs, or any identifiable corporate data. Use generic placeholders in code examples and test data. Verify `.gitignore` covers any new generated or data files.
 2. `git checkout main && git merge <branch> --no-ff` with a merge commit message.
 3. Switch back to the feature branch after merging — do NOT delete it.
 
@@ -62,6 +63,25 @@ After all commits (code + docs) are on the feature branch:
 - Prefer `@aws-sdk/client-*` v3 modular imports over v2 monolithic imports.
 
 ## Platform Notes (Windows)
+## Resource Reconciliation
+
+### Rule
+Every AWS resource created by Mouseketool on LocalStack must be recoverable after a LocalStack restart. This applies to all current and future resources: DynamoDB tables, SNS topics, SQS queues, Lambda functions, event source mappings, SNS subscriptions, and any new resource types added later.
+
+### How it works
+- On backend startup and whenever LocalStack recovers from being unreachable, `reconcilePipelines()` runs automatically.
+- For each pipeline, it verifies every resource exists and recreates any that are missing.
+- Connections between resources (ESMs, subscriptions) are re-established with the same configuration.
+- Target Lambdas are redeployed from cached builds when available. If the build is deleted, the pipeline is flagged with `targetMissing` and the user must select a new deployment from the edit page.
+- DynamoDB tables are restored from saved schemas (`.data/table-schemas/`). Always save the table schema when creating a pipeline.
+
+### When adding new resource types
+1. Store enough metadata in the pipeline (or deployment) to fully recreate the resource.
+2. Add a check-and-recreate block in `reconcile.ts` for the new resource.
+3. If the resource connects to other resources, recreate the connection too.
+4. Test by restarting LocalStack and verifying the pipeline still works.
+
+
 
 ### Shell
 - The development environment runs on **Windows with PowerShell** as the default shell.

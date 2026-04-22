@@ -25,8 +25,9 @@ consolidates that entire workflow into one place.
 | SNS filter policies on subscriptions | YAML config | ✗ | Visual wizard |
 | Create DynamoDB → SNS → SQS → Lambda pipelines | YAML config | ✗ | Visual wizard |
 | Shadow infrastructure for diagnostic replay | ✗ | ✗ | ✓ |
-| Background pipeline watcher | ✗ | ✗ | ✓ |
-| Template Lambda with hash-based versioning | ✗ | ✗ | ✓ |
+| AI error explanation from stack traces | ✗ | ✗ | ✓ (Kiro) |
+| AI payload generation from samples | ✗ | ✗ | ✓ (Kiro) |
+| Pipeline self-healing after LocalStack restart | ✗ | ✗ | ✓ |
 | Full build → deploy → configure → wire → test loop | Across 4-5 tools | Partial | Single UI |
 
 ## Prerequisites
@@ -91,7 +92,9 @@ cleanup interval configured in Settings.
 
 ### [Deployments](docs/deployments.md)
 Deploy artifacts to LocalStack, manage environment variables, configure Vault secrets, invoke functions with a
-payload editor, and inspect results with root cause extraction and local class diagnostics. A deploy override modal
+payload editor, and inspect results with root cause extraction and local class diagnostics. AI-powered payload
+generation creates test payloads from sample files and handler source code. Vault configuration syncs automatically
+to pipelines using the same Lambda. A deploy override modal
 lets you confirm or skip redeployment, with a preference to remember your choice.
 
 ### Triggers (Pipelines)
@@ -108,14 +111,15 @@ logs, SNS delivery evidence, SQS message arrival, and target Lambda output — a
 ### History
 Track every pipeline invocation with CloudWatch-based history. Runs are persisted, correlated by RequestId, and
 include DLQ detection with diagnostic invoke for failed runs. Live watch mode refreshes silently in the background.
-A background pipeline watcher monitors active pipelines for new events. Shadow infrastructure creates parallel
+A background pipeline watcher monitors active pipelines for new events. Filter runs by source (manual/external). Shadow infrastructure creates parallel
 diagnostic resources to replay and inspect failed pipeline steps.
 
 ### Settings
 Configure the LocalStack connection (protocol, host, port, credentials), build cleanup TTL, observer polling
 interval (`observerPollingMs`), Lambda memory, and heavy load batch settings (batch size and window). Changes to
 heavy load settings are applied retroactively to all pipelines with heavy load enabled. A LocalStack health check
-runs on startup and is accessible from the Settings page.
+runs on startup and is accessible from the Settings page. AI learned data storage (local or S3) is configurable.
+Pipeline self-healing automatically recreates resources after LocalStack restarts.
 
 ### Help & Guides
 In-app documentation covering every feature with detailed explanations, code examples, and troubleshooting tips.

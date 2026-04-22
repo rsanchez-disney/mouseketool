@@ -81,6 +81,17 @@ The payload editor accepts any valid JSON. For SQS-triggered Lambdas, use the st
 You can also click the **Upload** button to load a JSON file from disk, or press `Ctrl+Enter` to invoke directly from
 the editor.
 
+### AI Payload Generation
+
+Configure a **Sample Path** in the Invoke Settings view (step 2) by pointing it to a folder containing JSON sample
+files and your project source code. Once configured, the payload toolbar shows a **Samples** dropdown (listing JSON
+files from the path — click to load) and a **Generate** button with two options: Successful payload and Failure
+payload. Kiro reads the samples and handler source to generate realistic payloads. A **Prettify** button formats the
+JSON with 2-space indentation.
+
+After generating, an **Evaluate** button lets you rate the quality. Good samples are saved as favorites for future
+context. Bad samples prompt you to explain what was wrong — Kiro uses this feedback to improve.
+
 ### Understanding the results
 
 After invoking, the response panel shows the status code, function output, and any errors. If the Lambda failed,
@@ -116,6 +127,10 @@ The Vault add-on creates secrets in a HashiCorp Vault instance before invocation
 3. Secrets that already exist in Vault are **skipped** (not overwritten).
 4. When **auto-cleanup** is enabled, created secrets are deleted after invocation. Pre-existing secrets are never
    deleted.
+
+Vault configuration is automatically synced to any pipeline that uses the same Lambda as its target. After a
+LocalStack restart, vault secret values cannot be restored (they are never stored) — an amber warning badge appears
+indicating secrets need to be recreated.
 
 ### Docker networking
 

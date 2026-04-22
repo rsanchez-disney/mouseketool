@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, inject } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") expandedLogKey.value = ""; }
@@ -9,15 +9,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  Database, Loader2, ArrowLeft, Check, AlertTriangle, Bell, Inbox, Zap, ChevronDown, ChevronRight, Clock, Radio, Copy, Maximize2, Minimize2, Search, X, Info,
+  Database, Loader2, ArrowLeft, Check, AlertTriangle, Bell, Inbox, Zap, ChevronDown, ChevronRight, Clock, Radio, Copy, Maximize2, Minimize2, Search, X, Info, Trash2,
 } from "lucide-vue-next";
 
 const route = useRoute();
 const router = useRouter();
 const pipelineId = route.params.id as string;
+const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 
 interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
 interface RunStep { requestId: string; logs: string[]; error: boolean; }
@@ -39,10 +41,12 @@ const batchCount = ref(0);
 const searchOpen = ref(false);
 const stateFilter = ref<string>("all");
 const timeRange = ref<string>("all");
+const sourceFilter = ref<string>("all");
 
 const filteredRuns = computed(() => {
   let result = runs.value;
   if (stateFilter.value !== "all") result = result.filter(r => r.status === stateFilter.value);
+  if (sourceFilter.value !== "all") result = result.filter(r => r.source === sourceFilter.value);
   if (timeRange.value !== "all") {
     const now = Date.now();
     const ms = timeRange.value === "5m" ? 300000 : timeRange.value === "15m" ? 900000 : timeRange.value === "1h" ? 3600000 : timeRange.value === "6h" ? 21600000 : 0;
@@ -74,6 +78,29 @@ async function loadHistory(silent = false) {
     const data = await (await fetch(`/api/triggers/pipelines/${pipelineId}/history`)).json();
     runs.value = data.runs ?? [];
   } catch {} finally { if (!silent) loading.value = false; }
+}
+
+const clearing = ref(false);
+const confirmClear = ref(false);
+
+const aiExplaining = ref(false);
+const aiExplanation = ref("");
+const aiRunId = ref("");
+async function explainError(errors: string[], logs: string[], runId: string) {
+  aiExplaining.value = true; aiExplanation.value = ""; aiRunId.value = runId;
+  try {
+    const r = await fetch("/api/ai/explain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: errors.join("\n"), logs: logs.slice(-30), functionName: pipeline.value?.targetFunctionName }) });
+    const data = await r.json();
+    aiExplanation.value = data.explanation || data.error || "No response";
+  } catch (e: any) { aiExplanation.value = `Failed: ${e.message}`; }
+  finally { aiExplaining.value = false; }
+}
+async function clearHistory() {
+  clearing.value = true;
+  await fetch(`/api/triggers/pipelines/${pipelineId}/history`, { method: "DELETE" });
+  await loadHistory(true);
+  clearing.value = false;
+  toastMsg.value = "History cleared"; setTimeout(() => toastMsg.value = "", 2000);
 }
 
 let liveInterval: ReturnType<typeof setInterval> | null = null;
@@ -143,6 +170,7 @@ onMounted(async () => {
         <h1 class="text-xl font-bold tracking-tight">{{ pipeline?.name ?? 'Pipeline History' }}</h1>
         <p class="text-xs text-muted-foreground">CloudWatch-based invocation history grouped by RequestId.</p>
       </div>
+      <Button v-if="runs.length" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform text-muted-foreground hover:text-destructive" :disabled="clearing" @click="confirmClear = true"><Trash2 class="size-3.5" /> Clear</Button>
       <Button v-if="!live" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startLive"><Radio class="size-3.5" /> Watch Live</Button>
       <Button v-else variant="default" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="stopLive"><Radio class="size-3.5 animate-pulse" /> Watching</Button>
     </div>
@@ -172,6 +200,12 @@ onMounted(async () => {
       <div class="flex items-center gap-1.5">
         <button v-for="t in [{v:'all',l:'All'},{v:'5m',l:'5m'},{v:'15m',l:'15m'},{v:'1h',l:'1h'},{v:'6h',l:'6h'}]" :key="t.v" @click="timeRange = t.v" class="px-2 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="timeRange === t.v ? 'bg-primary/20 text-primary ring-1 ring-primary/40' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
           {{ t.l }}
+        </button>
+      </div>
+      <div class="h-4 w-px bg-border" />
+      <div class="flex items-center gap-1.5">
+        <button v-for="f in [{v:'all',l:'All'},{v:'manual',l:'Manual'},{v:'external',l:'External'}]" :key="f.v" @click="sourceFilter = f.v" class="px-2 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="sourceFilter === f.v ? 'bg-primary/20 text-primary ring-1 ring-primary/40' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+          {{ f.l }}
         </button>
       </div>
       <span class="ml-auto text-[11px] text-muted-foreground font-mono tabular-nums">{{ filteredRuns.length }}<span class="text-muted-foreground/40">/{{ runs.length }}</span></span>
@@ -251,7 +285,7 @@ Batched {{ run.items.length }} items:
                 <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':handler', run.handler.logs)"><Maximize2 class="size-3" /></Button>
               </div>
               <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-for="(line, i) in run.handler.logs" :key="i" :class="[line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-300']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
+                <div v-for="(line, i) in run.handler.logs" :key="i" :class="[line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
               </div>
             </div>
           </div>
@@ -339,6 +373,7 @@ Batched {{ run.items.length }} items:
                 <div v-if="run.target.error && extractErrors(run.target.logs).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
                   <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
                   <div v-for="(line, i) in extractErrors(run.target.logs)" :key="'err'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
+                  <template v-if="kiroAvailable"><div class="mt-2 flex items-center gap-1.5 text-[10px] text-violet-400/70 font-medium"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="khi" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#khi)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Expand to use Kiro Assistance</div></template>
                 </div>
                 <div v-for="(line, i) in run.target.logs" :key="i" :class="[line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
               </div>
@@ -369,11 +404,22 @@ Batched {{ run.items.length }} items:
           <div v-if="extractErrors(expandedLogContent).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
             <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
             <div v-for="(line, i) in extractErrors(expandedLogContent)" :key="'erc'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
+            <button v-if="kiroAvailable && expandedLogKey.endsWith(':target')" @click="explainError(extractErrors(expandedLogContent), expandedLogContent, expandedLogKey)" :disabled="aiExplaining && aiRunId === expandedLogKey" class="mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/20 to-purple-500/20 border border-violet-500/40 text-[11px] font-medium text-violet-300 hover:from-violet-500/30 hover:to-purple-500/30 hover:text-violet-200 cursor-pointer disabled:opacity-50 transition-all shadow-[0_0_6px_rgba(139,92,246,0.1)]">
+              <svg class="size-3.5 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="kh" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#kh)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg>
+              <span v-if="aiExplaining && aiRunId === expandedLogKey" class="animate-pulse text-violet-400">Asking Kiro...</span>
+              <span v-else>Explain with Kiro</span>
+            </button>
+            <div v-if="kiroAvailable && aiExplanation && aiRunId === expandedLogKey" class="mt-3 rounded-lg border border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-purple-500/5 p-3.5 text-xs text-violet-200/90 whitespace-pre-wrap leading-relaxed">
+              <div class="flex items-center gap-1.5 mb-2 text-[10px] uppercase tracking-wider text-violet-400/70 font-semibold"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="kh2" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#kh2)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Kiro</div>
+              {{ aiExplanation }}
+            </div>
           </div>
           <div v-for="(line, i) in expandedLogContent" :key="i" :class="[logSearch && !line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' : line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
         </div>
       </DialogContent>
     </Dialog>
+
+    <ConfirmDialog v-model="confirmClear" title="Clear history?" description="This will delete all completed invocation records. Runs that are still pending or being diagnosed will be preserved." @confirm="clearHistory" />
 
     <!-- Toast -->
     <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">

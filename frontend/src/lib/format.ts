@@ -34,5 +34,5 @@ export function formatBytes(b: number | null | undefined): string {
 }
 
 export function extractErrors(logs: string[]): string[] {
-  return logs.filter(l => /Caused by:|FunctionError:|Exception|Error:/.test(l) && !l.includes("── Raw"));
+  return logs.filter(l => (/Caused by:|FunctionError:|Exception|Error:/.test(l) || /"ThrowableClass"/.test(l)) && !l.includes("── Raw"));
 }

@@ -88,7 +88,23 @@ class PipelineWatcher {
   get onStepUpdate(): Observable<StepUpdate> { return this.stepUpdate$.asObservable(); }
   getBatchCount(pipelineId: string): number { return this.batchState.get(pipelineId)?.count ?? 0; }
 
-  start() {
+  createStubRun(pipelineId: string, item?: string) {
+    const pipelines = loadPipelines();
+    const p = pipelines.find(pp => pp.id === pipelineId);
+    if (!p) return;
+    const stubId = `manual-${Date.now()}`;
+    const run: PipelineRun = {
+      id: stubId, timestamp: Date.now(), item: item ?? null, source: "manual",
+      handler: { requestId: stubId, logs: ["Waiting for stream handler..."], error: false },
+      target: null, status: "pending",
+    };
+    p.runs.push(run);
+    savePipelines(pipelines);
+    this.newRun$.next({ pipelineId, run });
+    console.log(`[watcher] Created stub run ${stubId} for pipeline ${p.name}`);
+  }
+
+    start() {
     if (this.interval) return;
     const pipelines = loadPipelines();
     for (const p of pipelines) for (const r of p.runs) this.knownRequestIds.add(r.id);
@@ -141,7 +157,12 @@ class PipelineWatcher {
         const client = await getDynamoClient();
         const { Count = 0 } = await client.send(new ScanCommand({ TableName: p.tableName, Select: "COUNT" }));
         let state = this.batchState.get(p.id);
-        if (!state) { state = { baseline: Count, prevCount: Count, count: 0 }; this.batchState.set(p.id, state); continue; }
+        if (!state) {
+          const hasPending = p.runs.some(r => r.status === "pending" || r.status === "diagnosing");
+          const baseline = hasPending && Count > 0 ? Count - 1 : Count;
+          state = { baseline, prevCount: Count, count: hasPending ? Count - baseline : 0 };
+          this.batchState.set(p.id, state); continue;
+        }
         if (Count > state.prevCount) { if (!state.count) state.baseline = state.prevCount; state.count = Count - state.baseline; }
         state.prevCount = Count;
       } catch {}
@@ -175,7 +196,12 @@ class PipelineWatcher {
 
     const pipelines = loadPipelines();
     const p = pipelines.find(pp => pp.id === pipeline.id);
-    if (p) { p.runs.push(run); savePipelines(pipelines); }
+    if (p) {
+      const stubIdx = source === "manual" ? p.runs.findIndex(r => r.id.startsWith("manual-") && r.status === "pending") : -1;
+      if (stubIdx >= 0) { Object.assign(p.runs[stubIdx], run); }
+      else { p.runs.push(run); }
+      savePipelines(pipelines);
+    }
 
     this.newRun$.next({ pipelineId: pipeline.id, run });
 
@@ -205,12 +231,10 @@ class PipelineWatcher {
       const r = p?.runs.find(rr => rr.id === run.id);
       if (r) {
         // Attach elapsed times from step timers
-        if (updates.sns && stepTimers["sns"]) (updates.sns as any).elapsed = Date.now() - stepTimers["sns"];
-        if (updates.sqs && stepTimers["sqs"]) (updates.sqs as any).elapsed = Date.now() - stepTimers["sqs"];
         if (updates.target && stepTimers["target"]) (updates.target as any).elapsed = Date.now() - stepTimers["target"];
         Object.assign(r, updates);
         // Compute total
-        const total = ((r.sns as any)?.elapsed || 0) + ((r.sqs as any)?.elapsed || 0) + ((r.target as any)?.elapsed || 0);
+        const total = ((r.handler as any)?.elapsed || 0) + ((r.target as any)?.elapsed || 0);
         if (total) (r as any).totalElapsed = total;
         savePipelines(pipelines);
       }
@@ -220,7 +244,6 @@ class PipelineWatcher {
     try {
       // --- SNS → SQS: poll queue for message arrival ---
       send("sns", "running", ["Waiting for SNS to deliver message to SQS..."]);
-      send("sqs", "running", ["Polling SQS queue for incoming message..."]);
 
       const settings = await loadSettings();
       const pollMs = settings.pipeline.observerPollingMs;
@@ -332,7 +355,6 @@ class PipelineWatcher {
           const logGroup = `/aws/lambda/${pipeline.targetFunctionName}`;
           const streams = await cw.send(new DescribeLogStreamsCommand({ logGroupName: logGroup, orderBy: "LastEventTime", descending: true, limit: 3 }));
           for (const stream of streams.logStreams ?? []) {
-            if (stream.lastEventTimestamp && stream.lastEventTimestamp < run.timestamp - 10000) continue;
             const events = await cw.send(new GetLogEventsCommand({ logGroupName: logGroup, logStreamName: stream.logStreamName!, startFromHead: false, limit: 100 }));
             const logs = (events.events || [])
               .filter(e => !e.timestamp || e.timestamp >= run.timestamp - 5000)
@@ -461,8 +483,18 @@ class PipelineWatcher {
         }
       } catch (e: any) { console.log(`${tag} SQS cleanup skipped: ${e.message}`); }
 
+
+      // Persist captured items for AI learning
+      try {
+        const { getCapturedItems } = await import("./shadow-infra.js");
+        const { addLearnedItems } = await import("./learned-items.js");
+        const learned = await getCapturedItems(pipeline.id);
+        if (learned.length) await addLearnedItems(pipeline.id, learned);
+      } catch {}
+
       // Clean up S3 captures for this pipeline
       try { const { clearCapturedItems } = await import("./shadow-infra.js"); await clearCapturedItems(pipeline.id); } catch {}
+
       console.log(`${tag} Observer complete`);
     } catch (e: any) {
       console.error(`${tag} FATAL ERROR: ${e.message}\n${e.stack}`);

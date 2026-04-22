@@ -6,8 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
-import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye, Cpu, Flame } from "lucide-vue-next";
+import Toggle from "@/components/ui/Toggle.vue";
+import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye, Cpu, Flame, Sparkles } from "lucide-vue-next";
 
 const settings = ref({
   localstack: { host: "localhost", port: 4566, protocol: "http" },
@@ -16,6 +16,8 @@ const settings = ref({
   pipeline: { observerPollingMs: 500 },
   lambda: { memoryMB: 2048 },
   heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
+  ai: { learnedStorage: "local" as "local" | "s3" },
+
 });
 const saving = ref(false);
 const saved = ref(false);
@@ -124,7 +126,7 @@ async function save() {
         <Input id="ttl" v-model.number="settings.cleanup.ttlMinutes" type="number" class="max-w-48" />
         <p class="text-xs text-muted-foreground">Default: 1440 minutes (24 hours)</p>
         <div class="flex items-center gap-3 pt-3 border-t mt-3">
-          <Switch v-model="settings.cleanup.deleteOnStartup" class="cursor-pointer" />
+          <Toggle v-model="settings.cleanup.deleteOnStartup" />
           <div><Label class="text-sm">Delete all cached builds on startup</Label><p class="text-xs text-muted-foreground">When enabled, all cached builds are removed every time the backend starts.</p></div>
         </div>
       </CardContent>
@@ -191,6 +193,35 @@ async function save() {
     <Card>
       <CardHeader>
         <div class="flex items-center gap-2">
+          <Sparkles class="size-5 text-violet-400" />
+          <div>
+            <CardTitle>AI</CardTitle>
+            <CardDescription>Configure how Kiro stores learned data from pipeline runs.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-3">
+        <div class="space-y-2">
+          <Label>Learned Data Storage</Label>
+          <div class="flex items-center gap-3">
+            <button @click="settings.ai.learnedStorage = 'local'" class="flex-1 rounded-lg border p-3 text-left text-xs transition-colors cursor-pointer" :class="settings.ai.learnedStorage === 'local' ? 'border-primary bg-primary/5' : 'hover:bg-muted'">
+              <p class="font-medium">Local</p>
+              <p class="text-muted-foreground">Stored in .data/learned/. Persists across LocalStack restarts.</p>
+            </button>
+            <button @click="settings.ai.learnedStorage = 's3'" class="flex-1 rounded-lg border p-3 text-left text-xs transition-colors cursor-pointer" :class="settings.ai.learnedStorage === 's3' ? 'border-primary bg-primary/5' : 'hover:bg-muted'">
+              <p class="font-medium">S3</p>
+              <p class="text-muted-foreground">Stored in LocalStack S3. Shared across tools.</p>
+            </button>
+          </div>
+          <p v-if="settings.ai.learnedStorage === 's3'" class="text-xs text-amber-500">Warning: Data stored in S3 will be lost if LocalStack restarts without persistence enabled.</p>
+        </div>
+      </CardContent>
+    </Card>
+
+
+    <Card>
+      <CardHeader>
+        <div class="flex items-center gap-2">
           <Eye class="size-5 text-muted-foreground" />
           <div>
             <CardTitle>UI Preferences</CardTitle>
@@ -200,7 +231,7 @@ async function save() {
       </CardHeader>
       <CardContent>
         <div class="flex items-center gap-3">
-          <Switch v-model="showElapsed" class="cursor-pointer" />
+          <Toggle v-model="showElapsed" />
           <div><Label class="text-sm">Show elapsed time on history cards</Label><p class="text-xs text-muted-foreground">Display how long each pipeline step took to complete.</p></div>
         </div>
       </CardContent>

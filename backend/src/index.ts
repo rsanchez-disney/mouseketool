@@ -11,21 +11,26 @@ import dynamodbRoutes from "./routes/dynamodb.js";
 import sqsRoutes from "./routes/sqs.js";
 import triggersRoutes from "./routes/triggers.js";
 import snsRoutes from "./routes/sns.js";
+import aiRoutes from "./routes/ai.js";
 import { watcher } from "./services/pipeline-watcher.js";
 import { initShadowInfra } from "./services/shadow-infra.js";
+import { reconcilePipelines } from "./services/reconcile.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
+
+let reconciling = false;
+export function setReconciling(v: boolean) { reconciling = v; }
 
 app.get("/api/health", async (_req, res) => {
   try {
     const s = await (await import("./helpers/settings.js")).loadSettings();
     const url = `${s.localstack.protocol}://${s.localstack.host}:${s.localstack.port}/_localstack/health`;
     const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
-    if (r.ok) return res.json({ status: "ok", localstack: true });
-    res.json({ status: "ok", localstack: false });
-  } catch { res.json({ status: "ok", localstack: false }); }
+    if (r.ok) return res.json({ status: "ok", localstack: true, reconciling });
+    res.json({ status: "ok", localstack: false, reconciling });
+  } catch { res.json({ status: "ok", localstack: false, reconciling }); }
 });
 app.use("/api/settings", settingsRoutes);
 app.use("/api/fs", filesystemRoutes);
@@ -38,6 +43,7 @@ app.use("/api/dynamodb", dynamodbRoutes);
 app.use("/api/sqs", sqsRoutes);
 app.use("/api/triggers", triggersRoutes);
 app.use("/api/sns", snsRoutes);
+app.use("/api/ai", aiRoutes);
 
 // Cleanup scheduler
 setInterval(cleanupBuilds, 30 * 60 * 1000);
@@ -48,7 +54,36 @@ app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
   watcher.start();
   initShadowInfra();
+  startHealthMonitor();
 });
+
+
+let lsWasDown = true; // assume down on startup so first successful check triggers reconciliation
+async function checkLocalStack(): Promise<boolean> {
+  try {
+    const s = await (await import("./helpers/settings.js")).loadSettings();
+    const url = `${s.localstack.protocol}://${s.localstack.host}:${s.localstack.port}/_localstack/health`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    return r.ok;
+  } catch { return false; }
+}
+function startHealthMonitor() {
+  setInterval(async () => {
+    const up = await checkLocalStack();
+    if (up && lsWasDown) {
+      console.log("[health] LocalStack recovered — running reconciliation");
+      lsWasDown = false;
+      reconciling = true;
+      try { await reconcilePipelines(); } catch (e: any) { console.error("[health] Reconciliation failed:", e.message); }
+      await new Promise(r => setTimeout(r, 3000));
+      try { await initShadowInfra(); } catch {}
+      reconciling = false;
+    } else if (!up && !lsWasDown) {
+      console.log("[health] LocalStack went down");
+      lsWasDown = true;
+    }
+  }, 5000);
+}
 
 process.on("SIGINT", () => { watcher.stop(); process.exit(0); });
 process.on("SIGTERM", () => { watcher.stop(); process.exit(0); });

@@ -38,4 +38,23 @@ router.post("/read-paths", async (req, res) => {
   res.json(results);
 });
 
+
+// POST /api/vault/read-secrets — get full key-value pairs per path
+router.post("/read-secrets", async (req, res) => {
+  const { url, token, paths } = req.body;
+  if (!url || !token || !paths?.length) return res.status(400).json({ error: "url, token, and paths are required" });
+  const results: { path: string; entries: { key: string; value: string }[] }[] = [];
+  for (const path of paths) {
+    try {
+      const r = await fetch(`${url}/v1/secret/data/${path}`, { headers: { "X-Vault-Token": token } });
+      if (r.ok) {
+        const data = await r.json();
+        const kv = data?.data?.data ?? {};
+        results.push({ path, entries: Object.entries(kv).map(([k, v]) => ({ key: k, value: String(v) })) });
+      } else { results.push({ path, entries: [] }); }
+    } catch { results.push({ path, entries: [] }); }
+  }
+  res.json(results);
+});
+
 export default router;
