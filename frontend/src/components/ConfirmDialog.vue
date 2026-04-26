@@ -3,10 +3,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 
 const open = defineModel<boolean>({ default: false });
-defineProps<{ title?: string; description?: string }>();
+defineProps<{ title?: string; description?: string; confirmLabel?: string }>();
 const emit = defineEmits<{ confirm: [] }>();
 
-function onConfirm() { open.value = false; emit("confirm"); }
+function onConfirm() { console.log("ConfirmDialog onConfirm"); emit("confirm"); open.value = false; }
 </script>
 
 <template>
@@ -18,7 +18,7 @@ function onConfirm() { open.value = false; emit("confirm"); }
       </DialogHeader>
       <DialogFooter class="gap-2">
         <Button variant="outline" class="cursor-pointer" @click="open = false">Cancel</Button>
-        <Button variant="destructive" class="cursor-pointer" @click="onConfirm">Delete</Button>
+        <Button variant="destructive" class="cursor-pointer" @click="onConfirm">{{ confirmLabel ?? 'Delete' }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
