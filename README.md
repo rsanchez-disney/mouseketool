@@ -28,6 +28,10 @@ consolidates that entire workflow into one place.
 | AI error explanation from stack traces | ✗ | ✗ | ✓ (Kiro) |
 | AI payload generation from samples | ✗ | ✗ | ✓ (Kiro) |
 | Pipeline self-healing after LocalStack restart | ✗ | ✗ | ✓ |
+| Docker-compose batch execution | ✗ | ✗ | ✓ |
+| Port conflict auto-detection and remapping | ✗ | ✗ | ✓ |
+| Env var presets for batch runs | ✗ | ✗ | ✓ |
+| Visual workflow editor for batch jobs | ✗ | ✗ | ✓ |
 | Full build → deploy → configure → wire → test loop | Across 4-5 tools | Partial | Single UI |
 
 ## Prerequisites
@@ -120,6 +124,17 @@ interval (`observerPollingMs`), Lambda memory, and heavy load batch settings (ba
 heavy load settings are applied retroactively to all pipelines with heavy load enabled. A LocalStack health check
 runs on startup and is accessible from the Settings page. AI learned data storage (local or S3) is configurable.
 Pipeline self-healing automatically recreates resources after LocalStack restarts.
+
+### Batch Projects
+Register Docker-based projects with auto-detection of Dockerfiles and compose files. Manage multiple
+compose file variants per project, edit detected paths, and receive live file change notifications
+via a background watcher. Environment variables are scanned from compose files and .env files.
+
+### Launchpad
+Run docker-compose projects directly from the UI with automatic port conflict detection and remapping.
+Create and manage environment variable presets to customize runs without modifying source files. The
+Workflow tab provides a visual canvas for building job dependency graphs with per-node configuration,
+common env vars, and import from existing compose services.
 
 ### Help & Guides
 In-app documentation covering every feature with detailed explanations, code examples, and troubleshooting tips.
