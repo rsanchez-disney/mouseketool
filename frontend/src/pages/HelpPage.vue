@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Rocket, Hammer, CloudCog, Zap, AlertTriangle, Terminal, Shield,
   Database, Bell, Inbox, Clock, Keyboard, Sparkles, RefreshCw,
+  Container, Play, MonitorPlay,
 } from "lucide-vue-next";
 
 const tabs = [
@@ -20,6 +21,9 @@ const tabs = [
   { id: "addons", label: "Add-ons", icon: Shield },
   { id: "ai", label: "AI Features", icon: Sparkles },
   { id: "selfhealing", label: "Self-Healing", icon: RefreshCw },
+  { id: "batch", label: "Batch Projects", icon: Container },
+  { id: "launchpad", label: "Launchpad", icon: Play },
+  { id: "logviewer", label: "Log Viewer", icon: MonitorPlay },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "troubleshooting", label: "Troubleshooting", icon: AlertTriangle },
 ];
@@ -630,7 +634,117 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
       </CardContent>
     </Card>
 
-        <!-- SHORTCUTS -->
+        <!-- BATCH PROJECTS -->
+    <Card v-if="active === 'batch'">
+      <CardHeader class="pb-3">
+        <CardTitle class="flex items-center gap-2 text-base"><Container class="size-4" /> Batch Projects</CardTitle>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground space-y-3">
+        <p>The Batch Projects page is where you register Docker-based projects that use docker-compose for local
+        execution. Unlike the Builder page (which targets individual Java Lambda functions), Batch Projects manages
+        multi-container applications that run as a group.</p>
+
+        <p class="font-medium text-foreground">Registering a project</p>
+        <p>Use the file browser or paste a path to point Mouseketool at your project root. On registration,
+        Mouseketool scans the directory for Dockerfiles and docker-compose files. It detects common naming patterns
+        like <code class="text-xs bg-muted px-1 rounded">Dockerfile</code>,
+        <code class="text-xs bg-muted px-1 rounded">Dockerfile.local</code>,
+        <code class="text-xs bg-muted px-1 rounded">docker-compose.yml</code>, and
+        <code class="text-xs bg-muted px-1 rounded">compose.yaml</code> (including variants). If multiple compose
+        files are found, all of them are listed and you can choose which one to use at run time.</p>
+
+        <p class="font-medium text-foreground">Editing and deleting</p>
+        <p>Each registered project card shows the detected Dockerfile, image tag, compose services, and registration
+        time. Click the pencil icon to edit the Dockerfile and compose file paths if auto-detection picked the wrong
+        files. Click the trash icon to remove the project from the registry. This does not delete any files on disk.</p>
+
+        <p class="font-medium text-foreground">File watcher</p>
+        <p>Mouseketool watches registered project directories for changes to compose files and
+        <code class="text-xs bg-muted px-1 rounded">.env</code> files. When a change is detected, the Launchpad page
+        receives a notification via Server-Sent Events and automatically refreshes the scanned environment variables
+        and service list. A toast notification confirms the update.</p>
+      </CardContent>
+    </Card>
+
+    <!-- LAUNCHPAD -->
+    <Card v-if="active === 'launchpad'">
+      <CardHeader class="pb-3">
+        <CardTitle class="flex items-center gap-2 text-base"><Layers class="size-4" /> Launchpad</CardTitle>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground space-y-3">
+        <p>The Launchpad page is the control center for running and orchestrating batch projects. It has two tabs:
+        <strong>Simple Run</strong> for direct docker-compose execution, and <strong>Workflow</strong> for building
+        visual job graphs.</p>
+
+        <p class="font-medium text-foreground">Simple Run</p>
+        <p>Simple Run lets you execute a registered project's docker-compose file with a single click. The flow is:</p>
+        <ul class="list-disc list-inside space-y-1.5 ml-1">
+          <li><strong>Project selection</strong> -- Pick a registered batch project from the dropdown.</li>
+          <li><strong>Compose file selection</strong> -- If the project has multiple compose files, a second dropdown
+          lets you choose which one to run. Changing the selection re-scans environment variables and services.</li>
+          <li><strong>Environment variable presets</strong> -- Mouseketool scans the compose file and referenced
+          <code class="text-xs bg-muted px-1 rounded">.env</code> files for environment variables, grouped by source.
+          You can view these via the "Scanned Env Vars" button. To customize values without modifying the original
+          files, click "Fork Env Vars" to create a named preset. Presets are editable, sortable, and can be activated
+          or deactivated. Only one preset can be active at a time. When no preset is active, the scanned defaults are
+          used.</li>
+          <li><strong>Port conflict detection</strong> -- Before starting containers, Mouseketool checks which host
+          ports are already in use. Conflicting ports are automatically remapped to the next available port. A badge
+          in the output header shows how many ports were remapped, and you can click the file icon to view the
+          effective docker-compose config with the applied changes.</li>
+          <li><strong>Effective config viewer</strong> -- After a run with port remaps, you can view the generated
+          docker-compose file that Mouseketool actually used. Port changes are shown in a summary panel with
+          before/after values, and the full YAML is syntax-highlighted.</li>
+          <li><strong>Container visualization</strong> -- The project info panel lists all services parsed from the
+          compose file. Expanding a service shows its volumes, environment variables, image, and port mappings. Volume
+          entries pointing to <code class="text-xs bg-muted px-1 rounded">.sh</code> files have a view button that
+          opens the file contents with syntax highlighting.</li>
+        </ul>
+
+        <p class="font-medium text-foreground">Workflow tab</p>
+        <p>The Workflow tab provides a visual canvas (powered by VueFlow) for building job dependency graphs. Each
+        node on the canvas represents a Docker container job with its own image, command, timeout, and environment
+        variable overrides. Nodes are connected by edges that define execution order.</p>
+        <ul class="list-disc list-inside space-y-1.5 ml-1">
+          <li><strong>Creating workflows</strong> -- Click "New" to create a workflow, then "Add Job" to place nodes
+          on the canvas. Connect nodes by dragging from one handle to another.</li>
+          <li><strong>Importing from compose</strong> -- If a registered project has docker-compose services, you can
+          import them into a workflow. Services become nodes, <code class="text-xs bg-muted px-1 rounded">depends_on</code>
+          relationships become edges, and shared environment variables are extracted into the common env vars pool.</li>
+          <li><strong>Common env vars</strong> -- Variables shared across all jobs in the workflow. Node-specific
+          overrides take precedence on key conflicts.</li>
+          <li><strong>Node editing</strong> -- Click a node to open the edit sheet where you can configure the job
+          name, Docker image, command override, timeout, and node-specific environment variables.</li>
+        </ul>
+      </CardContent>
+    </Card>
+
+    <!-- LOG VIEWER -->
+    <Card v-if="active === 'logviewer'">
+      <CardHeader class="pb-3">
+        <CardTitle class="flex items-center gap-2 text-base"><MonitorPlay class="size-4" /> Log Viewer</CardTitle>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground space-y-3">
+        <p>All log viewers across the application (Builder, Deployments, Execution, History, and Launchpad) use a
+        shared LogViewer component with consistent behavior and controls:</p>
+        <ul class="list-disc list-inside space-y-1.5 ml-1">
+          <li><strong>Auto-scroll and follow mode</strong> -- New log lines automatically scroll into view while
+          follow mode is active. Scrolling up disables follow; clicking the arrow button re-enables it.</li>
+          <li><strong>Search</strong> -- The expanded view includes a search bar that dims non-matching lines to 20%
+          opacity while keeping matching lines fully visible, preserving surrounding context.</li>
+          <li><strong>Copy</strong> -- A copy button on both the inline and expanded views copies all log content to
+          the clipboard.</li>
+          <li><strong>Root cause panel</strong> -- When error lines are detected, a root cause panel appears at the
+          top of the log output, extracting <code class="text-xs bg-muted px-1 rounded">Caused by</code>,
+          <code class="text-xs bg-muted px-1 rounded">Exception</code>, and daemon error lines for quick
+          identification.</li>
+          <li><strong>Kiro explain</strong> -- When Kiro is available and errors are present, an "Explain with Kiro"
+          button in the expanded view sends the error context to Kiro for a plain-English explanation and fix
+          suggestion.</li>
+        </ul>
+      </CardContent>
+    </Card>
+    <!-- SHORTCUTS -->
     <Card v-if="active === 'shortcuts'">
       <CardHeader class="pb-3">
         <CardTitle class="flex items-center gap-2 text-base"><Keyboard class="size-4" /> Keyboard Shortcuts</CardTitle>

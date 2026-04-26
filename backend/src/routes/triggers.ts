@@ -380,11 +380,10 @@ router.put("/pipelines/:id/edit", async (req, res) => {
     }
     // Update add-ons
     pipeline.addons = addons ?? pipeline.addons;
-    if (vaultConfig) pipeline.vaultConfig = vaultConfig;
+    if (vaultConfig) { pipeline.vaultConfig = vaultConfig; (pipeline as any).vaultIncomplete = false; }
     else if (addons && !addons.includes("vault")) delete pipeline.vaultConfig;
-    savePipelines(pipelines);
     // Change target Lambda
-    if (newTargetFunctionName && newTargetFunctionName !== pipeline.targetFunctionName) {
+    if (newTargetFunctionName && (newTargetFunctionName !== pipeline.targetFunctionName || (pipeline as any).targetMissing)) {
       // Delete old SQS → Target ESM
       try {
         const { DeleteEventSourceMappingCommand } = await import("@aws-sdk/client-lambda");
@@ -405,6 +404,7 @@ router.put("/pipelines/:id/edit", async (req, res) => {
       pipeline.runs = []; // Clear logs
     }
 
+    savePipelines(pipelines);
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
 
-function onKey(e: KeyboardEvent) { if (e.key === "Escape") { expandedConsole.value = false; showBrowser.value = false; } }
+function onKey(e: KeyboardEvent) { if (e.key === "Escape") { showBrowser.value = false; } }
 onMounted(() => window.addEventListener("keydown", onKey));
 onUnmounted(() => window.removeEventListener("keydown", onKey));
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,34 +10,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import FolderBrowser from "@/components/FolderBrowser.vue";
+import LogViewer from "@/components/LogViewer.vue";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 
-const expandedConsole = ref(false);
-const expandedLogInner = ref<HTMLElement | null>(null);
-const logSearch = ref("");
-const searchOpen = ref(false);
 
-function scrollExpandedToBottom() {
-  if (expandedLogInner.value) expandedLogInner.value.scrollTop = expandedLogInner.value.scrollHeight;
-}
-const buildLogsCopied = ref(false);
-const copyToastMsg = ref("");
 
-function copyBuildLogs() {
-  navigator.clipboard.writeText(buildLogs.value.map(l => l.line).join("\n"));
-  buildLogsCopied.value = true;
-  copyToastMsg.value = "Copied to clipboard";
-  setTimeout(() => { buildLogsCopied.value = false; copyToastMsg.value = ""; }, 2000);
-}
 import {
   FolderOpen, Search, Hammer, Rocket, Trash2,
-  Loader2, CheckCircle2, XCircle, Package, Clock, RotateCcw, Square, ArrowDown,
-  Feather, Diamond, Maximize2, Minimize2, Copy, Check, X,
+  Loader2, CheckCircle2, XCircle, Package, Clock, RotateCcw, Square,
+  Feather, Diamond,
 } from "lucide-vue-next";
 
 // --- Types ---
@@ -107,9 +92,6 @@ const building = ref(false);
 const buildLogs = ref<{ line: string; isError?: boolean }[]>([]);
 const buildResult = ref<Build | null>(null);
 const buildError = ref("");
-const logContainer = ref<HTMLElement | null>(null);
-const autoScroll = ref(true);
-const logInner = ref<HTMLElement | null>(null);
 const buildStartTime = ref(0);
 const buildElapsed = ref(0);
 const buildTotalTime = ref(0);
@@ -140,9 +122,6 @@ async function cancelBuild() {
   cancelling.value = false;
 }
 
-function scrollToBottom() {
-  if (logInner.value) logInner.value.scrollTop = logInner.value.scrollHeight;
-}
 
 function rebuildFromCache(b: Build) {
   selectedProject.value = b.projectPath;
@@ -158,7 +137,6 @@ async function startBuild() {
   buildLogs.value = [];
   buildResult.value = null;
   buildError.value = "";
-  autoScroll.value = true;
   startTimer();
 
   const res = await fetch("/api/builds", {
@@ -192,7 +170,6 @@ async function startBuild() {
       }
     }
     await nextTick();
-    if (autoScroll.value) scrollToBottom();
   }
   stopTimer();
   building.value = false;
@@ -402,14 +379,7 @@ onMounted(() => { loadBuilds(); loadTtl(); });
               </TooltipTrigger>
               <TooltipContent>Stop build</TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <Button :variant="autoScroll ? 'default' : 'outline'" size="icon" class="size-7 cursor-pointer" @click="autoScroll = !autoScroll; if (autoScroll) scrollToBottom()">
-                  <ArrowDown class="size-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{{ autoScroll ? 'Auto-scroll on' : 'Auto-scroll off' }}</TooltipContent>
-            </Tooltip>
+
             <Badge v-if="building" variant="outline" class="animate-pulse min-w-[8rem] justify-center tabular-nums">Running · {{ formatMs(buildElapsed) }}</Badge>
             <Badge v-else-if="buildResult" class="bg-green-500/10 text-green-600 border-green-500/20">Success · {{ formatMs(buildTotalTime) }}</Badge>
             <Badge v-else-if="buildError" variant="destructive">Failed · {{ formatMs(buildTotalTime) }}</Badge>
@@ -417,15 +387,12 @@ onMounted(() => { loadBuilds(); loadTtl(); });
         </CardTitle>
       </CardHeader>
       <CardContent class="space-y-4">
-        <div ref="logContainer" class="bg-zinc-950 text-zinc-300 rounded-lg border border-zinc-800 p-4 h-72 font-mono text-xs leading-relaxed overflow-hidden relative">
-          <Button variant="ghost" size="icon" class="absolute top-2 right-2 z-10 size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandedConsole = true">
-            <Maximize2 class="size-3.5" />
-          </Button>
-          <div ref="logInner" class="h-full overflow-auto scrollbar-thin">
-            <div v-for="(log, i) in buildLogs" :key="i" :class="log.isError ? 'text-red-400' : ''" class="whitespace-nowrap">{{ log.line }}</div>
-            <div v-if="building" class="inline-block w-2 h-4 bg-zinc-400 animate-pulse" />
-          </div>
-        </div>
+        <LogViewer
+          :logs="buildLogs"
+          :loading="building"
+          loading-text="Building..."
+          empty-text="Build output will appear here"
+        />
 
         <div v-if="buildError" class="flex items-center gap-2 text-sm text-destructive">
           <XCircle class="size-4" /> {{ buildError }}
@@ -505,9 +472,6 @@ onMounted(() => { loadBuilds(); loadTtl(); });
       <XCircle v-else class="size-4 shrink-0" />
       {{ deployMessage }}
     </div>
-    <div v-if="copyToastMsg" :key="copyToastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in">
-      <Check class="size-4" />{{ copyToastMsg }}
-    </div>
 
     <!-- Deploying overlay -->
     <div v-if="deploying" class="fixed bottom-6 right-6 z-50 flex items-center gap-2 text-sm bg-primary text-primary-foreground rounded-lg px-4 py-3 shadow-lg">
@@ -524,31 +488,6 @@ onMounted(() => { loadBuilds(); loadTtl(); });
     </div>
     <ConfirmDialog v-model="confirmDeleteBuild" title="Delete build?" description="This will permanently remove the build artifact." @confirm="deleteBuild(pendingDeleteBuildId)" />
 
-    <!-- Expanded Console Modal -->
-    <Dialog v-model:open="expandedConsole">
-      <DialogContent class="!max-w-[97vw] w-[97vw] max-h-[90vh] p-0 gap-0 border-zinc-800 bg-zinc-950 shadow-2xl !rounded-lg [&>button]:hidden">
-        <DialogTitle class="sr-only">Build Console</DialogTitle>
-        <DialogDescription class="sr-only">Expanded build console output</DialogDescription>
-        <div class="flex items-center justify-end gap-1 px-3 py-2">
-          <div class="mr-auto flex items-center">
-            <Button v-if="!searchOpen" variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="searchOpen = true"><Search class="size-3.5" /></Button>
-            <div v-else class="relative flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-200"><Search class="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" /><input v-model="logSearch" placeholder="Search logs…" class="h-7 w-56 text-xs font-mono bg-zinc-900 border border-zinc-700 rounded-md pl-7 pr-2 text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-zinc-500" @vue:mounted="(e: any) => e.el.focus()" /><Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-400 hover:text-white shrink-0" @click="searchOpen = false; logSearch = ''"><X class="size-3" /></Button></div>
-          </div>
-          <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="scrollExpandedToBottom">
-            <ArrowDown class="size-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="copyBuildLogs">
-            <Check v-if="buildLogsCopied" class="size-3.5 text-green-500" /><Copy v-else class="size-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="expandedConsole = false">
-            <Minimize2 class="size-3.5" />
-          </Button>
-        </div>
-        <div ref="expandedLogInner" class="overflow-auto scrollbar-visible px-4 pb-4 h-[80vh] text-zinc-300 font-mono text-xs leading-relaxed">
-          <div v-for="(log, i) in buildLogs" :key="i" :class="[logSearch && !log.line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' : log.isError ? 'text-red-400' : '']" class="whitespace-nowrap">{{ log.line }}</div>
-        </div>
-      </DialogContent>
-    </Dialog>
     <!-- Override confirm modal -->
     <Dialog v-model:open="showOverrideModal">
       <DialogContent class="sm:max-w-md">

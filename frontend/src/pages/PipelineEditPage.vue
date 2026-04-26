@@ -56,6 +56,11 @@ const envVars = ref<{ key: string; value: string; isNull?: boolean }[]>([]);
 const savingEnv = ref(false);
 const envLoaded = ref(false);
 async function loadEnvVars() {
+  if (!pipeline.value || envLoaded.value || pipeline.value.targetMissing) return;
+  try { envVars.value = await (await fetch(`/api/deployments/lambda-env/${pipeline.value.targetFunctionName}`)).json(); } catch { envVars.value = []; }
+  if (!envVars.value.length) envVars.value.push({ key: "", value: "" });
+  envLoaded.value = true;
+}
 
 // Target lambda selector for missing builds
 interface AvailableDeployment { functionName: string; handler: string; runtime: string; buildId: string; }
@@ -64,25 +69,21 @@ const changingTarget = ref(false);
 const showTargetWarning = ref(false);
 const pendingTarget = ref<AvailableDeployment | null>(null);
 async function loadAvailableDeployments() {
-  try { availableDeployments.value = (await (await fetch("/api/deployments")).json()).filter((d: any) => d.functionName !== pipeline.value?.glueFunctionName); } catch {}
+  try { availableDeployments.value = (await (await fetch("/api/deployments")).json()).filter((d: any) => d.functionName !== pipeline.value?.glueFunctionName && d.status === "active"); } catch {}
 }
-async function confirmChangeTarget() {
-  if (!pendingTarget.value || !pipeline.value) return;
+async function changeTarget(dep: AvailableDeployment) {
+  if (!pipeline.value) return;
   changingTarget.value = true;
-  await fetch(`/api/triggers/pipelines/${pipelineId}/edit`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newTargetFunctionName: pendingTarget.value.functionName }) });
-  pipeline.value.targetFunctionName = pendingTarget.value.functionName;
-  pipeline.value.targetMissing = false;
-  showTargetWarning.value = false;
-  pendingTarget.value = null;
+  try {
+    const res = await fetch(`/api/triggers/pipelines/${pipelineId}/edit`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ newTargetFunctionName: dep.functionName }) });
+    if (!res.ok) { console.error("changeTarget failed:", await res.text()); changingTarget.value = false; return; }
+    pipeline.value.targetFunctionName = dep.functionName;
+    pipeline.value.targetMissing = false;
+    envLoaded.value = false;
+    await loadEnvVars();
+    try { resources.value = await (await fetch(`/api/triggers/pipelines/${pipelineId}/resources`)).json(); } catch {}
+  } catch (e) { console.error("changeTarget error:", e); }
   changingTarget.value = false;
-  // Reload resources
-  resources.value = await (await fetch(`/api/triggers/pipelines/${pipelineId}/resources`)).json();
-}
-
-  if (!pipeline.value || envLoaded.value) return;
-  try { envVars.value = await (await fetch(`/api/deployments/lambda-env/${pipeline.value.targetFunctionName}`)).json(); } catch { envVars.value = []; }
-  if (!envVars.value.length) envVars.value.push({ key: "", value: "" });
-  envLoaded.value = true;
 }
 function addEnvVar() { envVars.value.push({ key: "", value: "" }); }
 function removeEnvVar(i: number) { envVars.value.splice(i, 1); }
@@ -304,6 +305,7 @@ async function save() {
         const paths = secrets.map(s => s.path);
         await fetch("/api/vault/cleanup-secrets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, paths }) });
         await fetch("/api/vault/setup-secrets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets }) });
+        if (pipeline.value) pipeline.value.vaultIncomplete = false;
       }
       pipeline.value.heavyLoad = heavyLoad.value;
       pipeline.value.addons = [...addons.value];
@@ -593,14 +595,14 @@ async function save() {
             <p class="text-xs text-muted-foreground">The original build for this pipeline's target Lambda was deleted or is unavailable. Select an available deployment to reconnect the pipeline.</p>
             <p class="text-xs text-amber-500">Selecting a new target will clear all previous execution logs for this pipeline.</p>
             <div class="space-y-1.5 max-h-48 overflow-auto">
-              <button v-for="d in availableDeployments" :key="d.functionName" class="w-full text-left px-3 py-2 rounded-md border text-sm flex items-center gap-2 transition-colors hover:border-primary/50 cursor-pointer" @click="pendingTarget = d; showTargetWarning = true">
+              <button v-for="d in availableDeployments" :key="d.functionName" class="w-full text-left px-3 py-2 rounded-md border text-sm flex items-center gap-2 transition-colors hover:border-primary/50 cursor-pointer" :disabled="changingTarget" @click="pendingTarget = d; showTargetWarning = true">
                 <Zap class="size-4 text-muted-foreground shrink-0" />
                 <div class="min-w-0 flex-1">
                   <p class="font-mono text-xs font-semibold truncate">{{ d.functionName }}</p>
                   <p class="text-[10px] text-muted-foreground truncate">{{ d.handler }}</p>
                 </div>
               </button>
-              <p v-if="!availableDeployments.length" class="text-xs text-muted-foreground text-center py-4">No deployments available. Build and deploy a Lambda first.</p>
+              <p v-if="!availableDeployments.length" class="text-xs text-muted-foreground text-center py-4">No active deployments available. Build and deploy a Lambda first.</p>
             </div>
           </CardContent>
         </Card>
@@ -726,6 +728,9 @@ async function save() {
               <Button variant="ghost" size="sm" class="text-muted-foreground hover:text-destructive shrink-0 cursor-pointer px-2" @click="removeEnvVar(i)"><X class="size-3" /></Button>
             </div>
             <p v-if="!envVars.length" class="text-xs text-muted-foreground py-4 text-center border border-dashed rounded-md">No environment variables configured.</p>
+            <div v-if="pipeline?.targetMissing" class="flex items-center gap-2 text-xs text-amber-500 py-4 text-center border border-dashed border-amber-500/30 rounded-md justify-center">
+              <AlertTriangle class="size-3.5" /> Environment variables will be available after selecting a target Lambda.
+            </div>
           </CardContent>
         </Card>
       </template>
@@ -736,7 +741,18 @@ async function save() {
 
 
   <!-- Save Schema Dialog -->
-  <ConfirmDialog v-model="showTargetWarning" title="Change target Lambda?" description="This will clear all previous execution logs for this pipeline and reconnect it to the selected deployment." @confirm="confirmChangeTarget" />
+  <Dialog v-model:open="showTargetWarning">
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>Change target Lambda?</DialogTitle>
+        <DialogDescription>This will clear all previous execution logs for this pipeline and reconnect it to the selected deployment.</DialogDescription>
+      </DialogHeader>
+      <DialogFooter class="gap-2">
+        <Button variant="outline" class="cursor-pointer" @click="showTargetWarning = false">Cancel</Button>
+        <Button class="cursor-pointer" @click="showTargetWarning = false; if (pendingTarget) changeTarget(pendingTarget)">Confirm</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 
 
   <Dialog v-model:open="showSaveSchema"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Save Table Schema</DialogTitle><DialogDescription>Save the schema for <span class="font-mono font-semibold">{{ pipeline?.tableName }}</span>. Optionally include a seed item to insert on restore.</DialogDescription></DialogHeader>

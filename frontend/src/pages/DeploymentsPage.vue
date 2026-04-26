@@ -8,7 +8,6 @@ const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(fa
 
 onUnmounted(() => { window.removeEventListener("keydown", onKey); window.removeEventListener("click", closeDropdowns); });
 function onKey(e: KeyboardEvent) {
-  if (e.key === "Escape") { expandedResult.value = false; return; }
   if (e.ctrlKey && e.key === "Enter" && !invoking.value && selected.value) { e.preventDefault(); invoke(false); }
 }
 function closeDropdowns() { sampleDropdownOpen.value = false; generateOpen.value = false; }
@@ -18,17 +17,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import Toggle from "@/components/ui/Toggle.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import {
   Rocket, Play, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, ArrowLeft, ArrowRight,
-  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Maximize2, Minimize2, Upload, ArrowDown, Square, RefreshCw, Search, Sparkles, FolderOpen, FileJson, MessageSquare,
+  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Upload, Square, RefreshCw, Search, Sparkles, FolderOpen, FileJson, MessageSquare,
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
 import EvaluateModal from "@/components/EvaluateModal.vue";
+import LogViewer from '@/components/LogViewer.vue';
 
 interface Deployment {
   functionName: string; handler: string; runtime: string;
@@ -77,8 +76,6 @@ let invokeAbort: AbortController | null = null;
 function stopInvoke() { invokeAbort?.abort(); invoking.value = false; invokeAbort = null; invokeError.value = "Stopped by user"; }
 const result = ref<InvokeResult | null>(null);
 const invokeError = ref("");
-const copied = ref(false);
-const copyToast = ref("");
 const aiExplaining = ref(false);
 const aiExplanation = ref("");
 const generating = ref(false);
@@ -134,19 +131,12 @@ async function explainError() {
   finally { aiExplaining.value = false; }
 }
 
-const expandedResult = ref(false);
-const expandedResultInner = ref<HTMLElement | null>(null);
-const logSearch = ref("");
-const searchOpen = ref(false);
 
 const rootCauseLines = computed(() => {
   if (!result.value?.logs) return [];
   return result.value.logs.filter((l: string) => /Caused by[:.]/.test(l) || /"ThrowableClass"/.test(l));
 });
 
-function scrollExpandedResultToBottom() {
-  if (expandedResultInner.value) expandedResultInner.value.scrollTop = expandedResultInner.value.scrollHeight;
-}
 
 
 // Vault add-on state
@@ -389,12 +379,6 @@ async function invoke(debug = false) {
   loadDeployments();
 }
 
-function copyResult() {
-  navigator.clipboard.writeText(JSON.stringify(result.value?.payload, null, 2) || "");
-  copied.value = true;
-  copyToast.value = "Copied to clipboard";
-  setTimeout(() => { copied.value = false; copyToast.value = ""; }, 2000);
-}
 
 import { timeAgo, formatDateTime, formatBytes } from "@/lib/format";
 const formatDate = formatDateTime;
@@ -531,7 +515,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                   <div class="flex items-center gap-3">
                     <Badge v-if="vaultEnabled && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
                     <span class="text-xs text-muted-foreground">{{ vaultEnabled ? 'Enabled' : 'Disabled' }}</span>
-                    <Badge v-if="vaultEnabled && !vaultTestResult?.ok && vaultUrl" class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]">Secrets may need recreation</Badge>
+                    <Badge v-if="vaultEnabled && vaultTestResult && !vaultTestResult.ok && vaultUrl" class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]">Secrets may need recreation</Badge>
 
                     <Toggle v-model="vaultEnabled" />
                     <Button @click="vaultPanelOpen = true" :disabled="!vaultEnabled" variant="outline" size="sm" class="gap-1.5 cursor-pointer">
@@ -656,7 +640,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                         </div>
                       </div>
                       <div class="relative">
-                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-violet-400 hover:text-violet-300" :disabled="generating" @click.stop="generateOpen = !generateOpen">
+                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-violet-400 hover:text-violet-300" :disabled="generating || invoking" @click.stop="generateOpen = !generateOpen">
                           <Sparkles v-if="!generating" class="size-3" /><Loader2 v-else class="size-3 animate-spin" /> {{ generating ? 'Generating...' : 'Generate' }}
                         </Button>
                         <div v-if="generateOpen" class="absolute right-0 top-7 z-50 w-48 rounded-lg border bg-popover p-1 shadow-lg">
@@ -694,39 +678,36 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                     <Badge v-else-if="result?.functionError || invokeError" variant="destructive">Error</Badge>
                   </div>
                 </div>
-                <div class="bg-zinc-950 text-zinc-300 rounded-lg p-4 h-72 font-mono text-xs leading-relaxed overflow-hidden relative border border-zinc-800">
-                  <div class="h-full overflow-auto scrollbar-thin scrollbar-thumb-zinc-700">
-                    <div v-if="!result && !invokeError && !invoking" class="h-full flex items-center justify-center text-zinc-600">Invoke a function to see results here</div>
-                    <div v-if="invoking" class="h-full flex items-center justify-center gap-2 text-zinc-500"><Loader2 class="size-4 animate-spin" /> Running...</div>
+                <LogViewer
+                  :logs="result?.logs || []"
+                  :loading="invoking"
+                  loading-text="Running..."
+                  empty-text="Invoke a function to see results here"
+                  :root-cause-lines="rootCauseLines"
+                  :kiro-available="kiroAvailable"
+                  :ai-explaining="aiExplaining"
+                  :ai-explanation="aiExplanation"
+                  @explain="explainError"
+                >
+                  <template #after-root-cause-mini>
+                    <template v-if="kiroAvailable"><div class="mt-2 flex items-center gap-1.5 text-[10px] text-violet-400/70 font-medium"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="khi2" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#khi2)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Expand to use Kiro Assistance</div></template>
+                  </template>
+                  <template #before-logs>
                     <template v-if="invokeError"><div class="text-red-400">{{ invokeError }}</div></template>
                     <template v-if="result">
-                        <div v-if="rootCauseLines.length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
-                          <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
-                          <div v-for="(line, i) in rootCauseLines" :key="'rc'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
-                          <template v-if="kiroAvailable"><div class="mt-2 flex items-center gap-1.5 text-[10px] text-violet-400/70 font-medium"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="khi2" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#khi2)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Expand to use Kiro Assistance</div></template>
-                        </div>
                       <div v-if="result.functionError" class="text-red-400 mb-2">Function error: {{ result.functionError }}</div>
                       <pre class="whitespace-pre">{{ JSON.stringify(result.payload, null, 2) }}</pre>
-                      <div v-if="result.logs?.length" class="mt-3 pt-3 border-t border-zinc-800">
-                        <div class="text-zinc-500 mb-1">Lambda Logs:</div>
-                        <div v-for="(line, i) in result.logs" :key="i" :class="[
-                          line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' :
-                          line.startsWith('⚠') ? 'text-yellow-400' :
-                          line.includes('──') ? 'text-blue-400 font-semibold mt-2' :
-                          'text-zinc-400'
-                        ]" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
-                      </div>
-                      
-                      <div class="mt-3 text-zinc-600">Invoked at {{ formatDate(result.invokedAt) }}</div>
+                      <div v-if="result.logs?.length" class="text-zinc-500 mb-1">Lambda Logs:</div>
                     </template>
-                  </div>
-                  <Button v-if="result" variant="ghost" size="icon" class="absolute top-2 right-10 size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyResult">
-                    <Check v-if="copied" class="size-3.5 text-green-500" /><Copy v-else class="size-3.5" />
-                  </Button>
-                  <Button v-if="result" variant="ghost" size="icon" class="absolute top-2 right-2 size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandedResult = true">
-                    <Maximize2 class="size-3.5" />
-                  </Button>
-                </div>
+                  </template>
+                  <template #before-logs-expanded>
+                    <template v-if="result">
+                      <div v-if="result.functionError" class="text-red-400 mb-2">Function error: {{ result.functionError }}</div>
+                      <pre class="whitespace-pre">{{ JSON.stringify(result.payload, null, 2) }}</pre>
+                      <div v-if="result.logs?.length" class="text-zinc-500 mb-1">Lambda Logs:</div>
+                    </template>
+                  </template>
+                </LogViewer>
               </div>
             </div>
           </div>
@@ -836,65 +817,11 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
   </Sheet>
   <ConfirmDialog v-model="confirmDelete" title="Delete deployment?" description="This will remove the deployment and delete the Lambda function from LocalStack." @confirm="deleteDeployment(pendingDeleteName)" />
 
-  <!-- Expanded Result Modal -->
-  <Dialog v-model:open="expandedResult">
-    <DialogContent class="!max-w-[97vw] w-[97vw] max-h-[90vh] p-0 gap-0 border-zinc-800 bg-zinc-950 shadow-2xl !rounded-lg [&>button]:hidden flex flex-col">
-      <DialogTitle class="sr-only">Invocation Result</DialogTitle>
-      <DialogDescription class="sr-only">Expanded invocation result</DialogDescription>
-      <div class="flex items-center justify-end gap-1 px-3 py-2 shrink-0">
-        <div class="mr-auto flex items-center">
-          <Button v-if="!searchOpen" variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="searchOpen = true"><Search class="size-3.5" /></Button>
-          <div v-else class="relative flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-200"><Search class="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" /><input v-model="logSearch" placeholder="Search logs…" class="h-7 w-56 text-xs font-mono bg-zinc-900 border border-zinc-700 rounded-md pl-7 pr-2 text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-zinc-500" @vue:mounted="(e: any) => e.el.focus()" /><Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-400 hover:text-white shrink-0" @click="searchOpen = false; logSearch = ''"><X class="size-3" /></Button></div>
-        </div>
-        <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="scrollExpandedResultToBottom">
-          <ArrowDown class="size-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="copyResult">
-          <Check v-if="copied" class="size-3.5 text-green-500" /><Copy v-else class="size-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" class="size-7 cursor-pointer text-zinc-300 hover:text-white" @click="expandedResult = false">
-          <Minimize2 class="size-3.5" />
-        </Button>
-      </div>
-      <div ref="expandedResultInner" class="overflow-auto scrollbar-visible px-4 pb-4 flex-1 min-h-0 text-zinc-300 font-mono text-xs leading-relaxed">
-        <template v-if="result">
-          <!-- Root Cause Summary -->
-          <div v-if="rootCauseLines.length" class="mb-4 rounded-md border border-red-500/20 bg-red-500/5 p-3">
-            <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
-            <div v-for="(line, i) in rootCauseLines" :key="i" class="text-red-300 whitespace-nowrap">{{ line.trim() }}</div>
-            <button v-if="kiroAvailable" @click="explainError" :disabled="aiExplaining" class="mt-3 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/20 to-purple-500/20 border border-violet-500/40 text-[11px] font-medium text-violet-300 hover:from-violet-500/30 hover:to-purple-500/30 hover:text-violet-200 cursor-pointer disabled:opacity-50 transition-all shadow-[0_0_6px_rgba(139,92,246,0.1)]">
-              <svg class="size-3.5 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="ke" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#ke)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg>
-              <span v-if="aiExplaining" class="animate-pulse text-violet-400">Asking Kiro...</span>
-              <span v-else>Explain with Kiro</span>
-            </button>
-            <div v-if="kiroAvailable && aiExplanation" class="mt-3 rounded-lg border border-violet-500/30 bg-gradient-to-br from-violet-500/5 to-purple-500/5 p-3.5 text-xs text-violet-200/90 whitespace-pre-wrap leading-relaxed">
-              <div class="flex items-center gap-1.5 mb-2 text-[10px] uppercase tracking-wider text-violet-400/70 font-semibold"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="kh" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#kh)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Kiro</div>
-              {{ aiExplanation }}
-            </div>
-          </div>
-
-          <div v-if="result.functionError" class="text-red-400 mb-2 whitespace-nowrap">Function error: {{ result.functionError }}</div>
-          <pre class="whitespace-pre">{{ JSON.stringify(result.payload, null, 2) }}</pre>
-          <div v-if="result.logs?.length" class="mt-3 pt-3 border-t border-zinc-800">
-            <div class="text-zinc-500 mb-1">Lambda Logs:</div>
-            <div v-for="(line, i) in result.logs" :key="i" class="text-xs font-mono whitespace-pre leading-relaxed" :class="[
-              logSearch && !line.toLowerCase().includes(logSearch.toLowerCase()) ? 'opacity-20' :
-              line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' :
-              line.startsWith('⚠') ? 'text-yellow-400' :
-              line.includes('──') ? 'text-blue-400 font-semibold mt-2' :
-              'text-zinc-400'
-            ]">{{ line }}</div>
-            </div>
-          </template>
-        </div>
-    </DialogContent>
-  </Dialog>
+  
   <div v-if="deleting" class="fixed bottom-6 right-6 z-50 flex items-center gap-2 text-sm bg-primary text-primary-foreground rounded-lg px-4 py-3 shadow-lg">
     <Loader2 class="size-4 animate-spin" />
     Deleting deployment...
   </div>
-  <div v-if="copyToast" :key="copyToast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
-    <Check class="size-4" />{{ copyToast }}
-  </div>
+  
   </div>
 </template>

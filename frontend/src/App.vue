@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2 } from "lucide-vue-next";
+import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play } from "lucide-vue-next";
 
 const route = useRoute();
 const dark = ref(localStorage.getItem("mk:theme") === "dark");
@@ -38,12 +38,19 @@ onUnmounted(() => { if (healthInterval) clearInterval(healthInterval); });
 const kiroAvailable = ref(false);
 provide("kiroAvailable", kiroAvailable);
 async function checkKiro() { try { const r = await fetch("/api/ai/status"); const d = await r.json(); kiroAvailable.value = d.available; } catch {} }
-const nav = [
+const serverlessNav = [
   { label: "Lambda Builder", path: "/builder", icon: Rocket },
   { label: "Deployments", path: "/deployments", icon: CloudCog },
   { label: "Triggers", path: "/triggers", icon: Workflow },
+];
+const batchNav = [
+  { label: "Batch Projects", path: "/batch-projects", icon: Container },
+  { label: "Launchpad", path: "/launchpad", icon: Play },
+];
+const otherNav = [
   { label: "Settings", path: "/settings", icon: Settings },
 ];
+const allNav = [...serverlessNav, ...batchNav, ...otherNav];
 </script>
 
 <template>
@@ -70,10 +77,41 @@ const nav = [
         <SidebarSeparator />
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+            <SidebarGroupLabel>Serverless</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                <SidebarMenuItem v-for="item in nav" :key="item.path">
+                <SidebarMenuItem v-for="item in serverlessNav" :key="item.path">
+                  <SidebarMenuButton as-child :is-active="route.path === item.path || route.path.startsWith(item.path + '/')">
+                    <router-link :to="item.path" class="flex items-center gap-2">
+                      <component :is="item.icon" class="size-4" />
+                      <span>{{ item.label }}</span>
+                    </router-link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          <div class="mx-3 border-t" />
+          <SidebarGroup>
+            <SidebarGroupLabel>Batch</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem v-for="item in batchNav" :key="item.path">
+                  <SidebarMenuButton as-child :is-active="route.path === item.path || route.path.startsWith(item.path + '/')">
+                    <router-link :to="item.path" class="flex items-center gap-2">
+                      <component :is="item.icon" class="size-4" />
+                      <span>{{ item.label }}</span>
+                    </router-link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+          <div class="mx-3 border-t" />
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem v-for="item in otherNav" :key="item.path">
                   <SidebarMenuButton as-child :is-active="route.path === item.path">
                     <router-link :to="item.path" class="flex items-center gap-2">
                       <component :is="item.icon" class="size-4" />
@@ -107,7 +145,7 @@ const nav = [
           <SidebarTrigger class="-ml-1 cursor-pointer" />
           <Separator orientation="vertical" class="mr-2 h-4" />
           <span class="text-sm font-medium text-muted-foreground">
-            {{ nav.find(n => n.path === route.path)?.label ?? 'Mouseketool' }}
+            {{ allNav.find(n => n.path === route.path || route.path.startsWith(n.path + '/'))?.label ?? 'Mouseketool' }}
           </span>
           <div class="ml-auto flex items-center gap-2">
             <Tooltip v-if="kiroAvailable">

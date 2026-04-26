@@ -1,3 +1,4 @@
+// force restart
 import express from "express";
 import cors from "cors";
 import settingsRoutes from "./routes/settings.js";
@@ -12,6 +13,9 @@ import sqsRoutes from "./routes/sqs.js";
 import triggersRoutes from "./routes/triggers.js";
 import snsRoutes from "./routes/sns.js";
 import aiRoutes from "./routes/ai.js";
+import batchBuildsRoutes from "./routes/batch-builds.js";
+import batchWorkflowsRoutes from "./routes/batch-workflows.js";
+import batchRunsRoutes from "./routes/batch-runs.js";
 import { watcher } from "./services/pipeline-watcher.js";
 import { initShadowInfra } from "./services/shadow-infra.js";
 import { reconcilePipelines } from "./services/reconcile.js";
@@ -44,6 +48,9 @@ app.use("/api/sqs", sqsRoutes);
 app.use("/api/triggers", triggersRoutes);
 app.use("/api/sns", snsRoutes);
 app.use("/api/ai", aiRoutes);
+app.use("/api/batch-builds", batchBuildsRoutes);
+app.use("/api/batch-workflows", batchWorkflowsRoutes);
+app.use("/api/batch-runs", batchRunsRoutes);
 
 // Cleanup scheduler
 setInterval(cleanupBuilds, 30 * 60 * 1000);
