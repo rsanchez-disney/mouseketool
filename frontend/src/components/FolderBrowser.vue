@@ -8,8 +8,10 @@ import { Loader2, FolderUp, FolderOpen, Folder, File } from "lucide-vue-next";
 interface FsItem { name: string; path: string; isDirectory: boolean }
 
 const open = defineModel<boolean>({ default: false });
-const props = defineProps<{ title?: string; description?: string; initialPath?: string; scrollHeight?: string }>();
+const props = defineProps<{ title?: string; description?: string; initialPath?: string; scrollHeight?: string; mode?: "directory" | "file"; fileFilter?: string }>();
 const emit = defineEmits<{ select: [path: string] }>();
+const selectedFile = ref("");
+function fileMatchesFilter(name: string) { if (!props.fileFilter) return true; try { return new RegExp(props.fileFilter, 'i').test(name); } catch { return true; } }
 
 const browserPath = ref("");
 const browserParent = ref("");
@@ -17,7 +19,7 @@ const browserItems = ref<FsItem[]>([]);
 const browserLoading = ref(false);
 
 async function browse(path?: string) {
-  browserLoading.value = true;
+  browserLoading.value = true; selectedFile.value = "";
   const q = path ? `?path=${encodeURIComponent(path)}` : "";
   const data = await (await fetch(`/api/fs${q}`)).json();
   browserPath.value = data.path;
@@ -29,7 +31,7 @@ async function browse(path?: string) {
 watch(open, (v) => { if (v) browse(props.initialPath || undefined); });
 
 function select() {
-  emit("select", browserPath.value);
+  emit("select", props.mode === "file" ? selectedFile.value : browserPath.value);
   open.value = false;
 }
 </script>
@@ -57,9 +59,9 @@ function select() {
           <button
             v-for="item in browserItems"
             :key="item.path"
-            @click="item.isDirectory ? browse(item.path) : undefined"
-            :disabled="!item.isDirectory"
-            class="w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-default hover:enabled:bg-accent"
+            @click="item.isDirectory ? browse(item.path) : (props.mode === 'file' && fileMatchesFilter(item.name) ? (selectedFile = item.path) : undefined)"
+            :disabled="!item.isDirectory && (props.mode !== 'file' || !fileMatchesFilter(item.name))"
+            :class="['w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-default hover:enabled:bg-accent', !item.isDirectory && selectedFile === item.path ? 'bg-primary/10 ring-1 ring-primary' : '']"
           >
             <Folder v-if="item.isDirectory" class="size-4 text-primary shrink-0" />
             <File v-else class="size-4 text-muted-foreground shrink-0" />
@@ -70,8 +72,8 @@ function select() {
 
       <DialogFooter class="shrink-0">
         <Button @click="open = false" variant="outline">Cancel</Button>
-        <Button @click="select" class="gap-2">
-          <FolderOpen class="size-4" /> Select This Folder
+        <Button @click="select" :disabled="props.mode === 'file' && !selectedFile" class="gap-2 cursor-pointer">
+          <FolderOpen class="size-4" /> {{ props.mode === 'file' ? 'Select File' : 'Select This Folder' }}
         </Button>
       </DialogFooter>
     </DialogContent>

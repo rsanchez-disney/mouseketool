@@ -9,7 +9,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import FolderBrowser from "@/components/FolderBrowser.vue";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { FolderOpen, Container, Trash2, Plus, RefreshCw, FileCode2, Clock, Loader2, Check, XCircle, Pencil, AlertTriangle } from "lucide-vue-next";
+import { FolderOpen, Container, Trash2, Plus, RefreshCw, FileCode2, Clock, Loader2, Check, XCircle, Pencil, AlertTriangle, Play, Rocket } from "lucide-vue-next";
+import { useRouter } from "vue-router";
+const router = useRouter();
 
 interface BatchProject { id: string; name: string; projectPath: string; dockerfile: string; imageTag: string; services: any[]; createdAt: string }
 
@@ -75,6 +77,28 @@ async function rescan(p: BatchProject) {
   rescanning.value = "";
   setTimeout(() => toastMsg.value = "", 3000);
 }
+
+const exportTarget = ref<BatchProject | null>(null);
+const exportCompose = ref("");
+const exporting = ref(false);
+
+async function exportToLaunchpad(p: BatchProject, compose?: string) {
+  const filePath = p.projectPath + "/" + (compose || p.composeFiles?.[0] || p.composefile);
+  exporting.value = true;
+  try {
+    const wfRes = await fetch("/api/batch-workflows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: p.name }) });
+    const wf = await wfRes.json();
+    await fetch(`/api/batch-workflows/${wf.id}/import-file`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filePath }) });
+    exportTarget.value = null;
+    router.push({ path: "/launchpad", query: { workflowId: wf.id } });
+  } catch { toastMsg.value = "Export failed"; toastType.value = "error"; setTimeout(() => toastMsg.value = "", 3000); }
+  exporting.value = false;
+}
+
+function handleExport(p: BatchProject) {
+  if (p.composeFiles?.length > 1) { exportTarget.value = p; exportCompose.value = p.composeFiles[0]; }
+  else exportToLaunchpad(p);
+}
 </script>
 
 <template>
@@ -121,6 +145,8 @@ async function rescan(p: BatchProject) {
               </div>
             </div>
             <div class="flex items-center gap-1 shrink-0 ml-3">
+              <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-emerald-500 cursor-pointer" @click="router.push(`/batch-projects/${p.id}/run`)"><Play class="size-4" /></Button></TooltipTrigger><TooltipContent>Run project</TooltipContent></Tooltip>
+              <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-blue-500 cursor-pointer" :disabled="exporting" @click="handleExport(p)"><Rocket class="size-4" /></Button></TooltipTrigger><TooltipContent>Export to Launchpad</TooltipContent></Tooltip>
               <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-foreground cursor-pointer" @click="openEdit(p)"><Pencil class="size-4" /></Button></TooltipTrigger><TooltipContent>Edit project settings</TooltipContent></Tooltip>
               <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-red-500 cursor-pointer" @click="deleteTarget = p"><Trash2 class="size-4" /></Button></TooltipTrigger><TooltipContent>Remove project</TooltipContent></Tooltip>
             </div>
@@ -163,6 +189,25 @@ async function rescan(p: BatchProject) {
         <DialogFooter class="gap-2">
           <Button variant="outline" class="cursor-pointer" @click="deleteTarget = null">Cancel</Button>
           <Button variant="destructive" class="cursor-pointer" @click="confirmDelete">Remove</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog :open="!!exportTarget" @update:open="v => { if (!v) exportTarget = null }">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Select Compose File</DialogTitle>
+          <DialogDescription>{{ exportTarget?.name }} has multiple compose files. Pick one to export.</DialogDescription>
+        </DialogHeader>
+        <div class="space-y-2 py-2">
+          <button v-for="cf in exportTarget?.composeFiles" :key="cf" class="w-full flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50 transition-colors text-left" :class="exportCompose === cf ? 'border-primary bg-primary/5' : ''" @click="exportCompose = cf">
+            <FileCode2 class="size-4 shrink-0 text-muted-foreground" />
+            <span class="text-sm font-mono">{{ cf }}</span>
+          </button>
+        </div>
+        <DialogFooter class="gap-2">
+          <Button variant="outline" class="cursor-pointer" @click="exportTarget = null">Cancel</Button>
+          <Button class="cursor-pointer gap-1.5" :disabled="!exportCompose || exporting" @click="exportToLaunchpad(exportTarget!, exportCompose)"><Loader2 v-if="exporting" class="size-3.5 animate-spin" /><Rocket v-else class="size-3.5" /> Export</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

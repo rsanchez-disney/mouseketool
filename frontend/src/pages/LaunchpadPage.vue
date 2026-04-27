@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick, provide, inject } from "vue";
-
-const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
-import { VueFlow, useVueFlow } from "@vue-flow/core";
+import { VueFlow, useVueFlow, MarkerType } from "@vue-flow/core";
 import BatchJobNode from "@/components/BatchJobNode.vue";
+import FolderBrowser from "@/components/FolderBrowser.vue";
 import LogViewer from "@/components/LogViewer.vue";
 import { MiniMap } from "@vue-flow/minimap";
 import { Controls } from "@vue-flow/controls";
@@ -16,18 +15,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { Plus, Trash2, Import, Variable, Save, Play, Square, Clock, ChevronRight, HardDrive, KeyRound, FolderOpen, Container, Loader2, Pencil, AlertTriangle, Info, Eye, GitFork, ArrowUpAZAZ, ListOrdered, Check, X, FileText, Skull, Settings2 } from "lucide-vue-next";
+import { useRoute } from "vue-router";
+import { Plus, Trash2, Variable, Save, Container, Loader2, Info, ChevronRight, ChevronDown, ChevronLeft, FolderOpen, Check, ArrowRight, ArrowLeft, FileCode2, FileDown, Import, Play, RotateCcw, Square, X } from "lucide-vue-next";
 
 // Toast
+const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 const toastMsg = ref("");
 const toastType = ref<"warning" | "success">("warning");
+const route = useRoute();
 function showToast(msg: string, type: "warning" | "success" = "warning") { toastMsg.value = msg; toastType.value = type; setTimeout(() => toastMsg.value = "", 3000); }
 
 // Types
@@ -41,35 +40,111 @@ interface BatchWorkflow {
   id: string; name: string;
   scannedEnvVars: EnvVar[]; commonEnvVars: EnvVar[];
   nodes: JobNodeConfig[]; edges: { source: string; target: string }[];
+  composePath?: string; excludeList?: string[]; auxiliaryServices?: string[];
   createdAt: string; updatedAt: string;
 }
-interface BatchBuild { id: string; name: string; projectName: string; imageTag: string; services: any[] }
 
-const activeTab = ref("workflow");
+// Wizard state
+const wizardStep = ref(0); // 0 = landing, 1 = name, 2 = source, 3 = configure
+const editorMode = ref(false);
+const deleteTarget = ref<{ id: string; name: string } | null>(null);
+const wizardName = ref("");
+const wizardSource = ref<"import" | "scratch" | "">("");
+const wizardComposePath = ref("");
+const showFileBrowser = ref(false);
+const importing = ref(false);
+
+const steps = [
+  { label: "Name", description: "Name your workflow" },
+  { label: "Source", description: "Import or create a compose file" },
+  { label: "Configure", description: "Edit your workflow graph" },
+];
 
 // Workflows
 const workflows = ref<BatchWorkflow[]>([]);
+const builds = ref<any[]>([]);
 const selectedWorkflowId = ref("");
 const selectedWorkflow = computed(() => workflows.value.find(w => w.id === selectedWorkflowId.value));
 
 async function loadWorkflows() {
   try { workflows.value = await (await fetch("/api/batch-workflows")).json(); } catch {}
-  if (workflows.value.length && !selectedWorkflowId.value) selectedWorkflowId.value = workflows.value[0].id;
 }
 
-async function createWorkflow() {
-  if (!builds.value.length) { showToast("Register at least one batch project first"); return; }
-  const r = await fetch("/api/batch-workflows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "New Workflow" }) });
+function startNewWorkflow() {
+  wizardStep.value = 1;
+  workflowLogs.value = [];
+  openConsoleTabs.value = []; activeConsoleTab.value = "all"; consolePanelCollapsed.value = true;
+  editorMode.value = false;
+  wizardName.value = "";
+  wizardSource.value = "";
+  wizardComposePath.value = "";
+  selectedWorkflowId.value = "";
+}
+
+function editWorkflow(wf: BatchWorkflow) {
+  selectedWorkflowId.value = wf.id;
+  wizardStep.value = 3;
+  editorMode.value = true;
+  workflowLogs.value = [];
+  openConsoleTabs.value = []; activeConsoleTab.value = "all"; consolePanelCollapsed.value = true;
+  syncFlowFromWorkflow();
+}
+
+async function createAndProceed() {
+  if (workflows.value.some(w => w.name.toLowerCase() === wizardName.value.trim().toLowerCase())) { showToast("A workflow with that name already exists", "warning"); return; }
+  const r = await fetch("/api/batch-workflows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: wizardName.value }) });
   const wf = await r.json();
   workflows.value.push(wf);
   selectedWorkflowId.value = wf.id;
+  wizardStep.value = 2;
 }
 
-async function deleteWorkflow() {
-  if (!selectedWorkflowId.value) return;
-  await fetch(`/api/batch-workflows/${selectedWorkflowId.value}`, { method: "DELETE" });
-  workflows.value = workflows.value.filter(w => w.id !== selectedWorkflowId.value);
-  selectedWorkflowId.value = workflows.value[0]?.id || "";
+async function importCompose() {
+  if (!selectedWorkflow.value || !wizardComposePath.value) return;
+  importing.value = true;
+  try {
+    const r = await fetch(`/api/batch-workflows/${selectedWorkflow.value.id}/import-file`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filePath: wizardComposePath.value }),
+    });
+    const wf = await r.json();
+    if (!r.ok) { showToast(wf.details || wf.error || "Import failed", "warning"); importing.value = false; return; }
+    if (wf.warnings?.length) showToast(wf.warnings.join(". "), "warning");
+    const idx = workflows.value.findIndex(w => w.id === wf.id);
+    if (idx !== -1) workflows.value[idx] = wf;
+    selectedWorkflowId.value = "";
+    await nextTick();
+    selectedWorkflowId.value = wf.id;
+    workflowLogs.value = []; openConsoleTabs.value = []; activeConsoleTab.value = "all"; consolePanelCollapsed.value = true;
+    wizardStep.value = 3;
+  } catch { showToast("Import failed", "warning"); }
+  importing.value = false;
+}
+
+function skipToConfigureEmpty() {
+  if (!builds.value.length) { showToast('Register at least one batch project before creating a scratch workflow', 'warning'); return; }
+  wizardStep.value = 3;
+  workflowLogs.value = []; openConsoleTabs.value = []; activeConsoleTab.value = "all"; consolePanelCollapsed.value = true;
+  syncFlowFromWorkflow();
+}
+
+function confirmDeleteWorkflow() {
+  if (!selectedWorkflow.value) return;
+  deleteTarget.value = { id: selectedWorkflow.value.id, name: selectedWorkflow.value.name };
+}
+
+function confirmDeleteById(wf: any) {
+  deleteTarget.value = { id: wf.id, name: wf.name };
+}
+
+async function executeDelete() {
+  if (!deleteTarget.value) return;
+  await fetch(`/api/batch-workflows/${deleteTarget.value.id}`, { method: "DELETE" });
+  workflows.value = workflows.value.filter(w => w.id !== deleteTarget.value!.id);
+  if (selectedWorkflowId.value === deleteTarget.value.id) { selectedWorkflowId.value = ""; wizardStep.value = 0; editorMode.value = false; }
+  deleteTarget.value = null;
+  workflowLogs.value = [];
+  openConsoleTabs.value = []; activeConsoleTab.value = "all"; consolePanelCollapsed.value = true;
 }
 
 async function saveWorkflow() {
@@ -83,17 +158,31 @@ async function saveWorkflow() {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: wf.name, nodes: wf.nodes, edges: wf.edges, commonEnvVars: wf.commonEnvVars }),
   });
+  await fetch(`/api/batch-workflows/${wf.id}/save-env`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ commonEnvVars: wf.commonEnvVars, nodes: wf.nodes }),
+  });
+  showToast("Workflow and env vars saved", "success");
+  editorMode.value = true;
 }
 
-// Batch builds (for image selector)
-const builds = ref<BatchBuild[]>([]);
-async function loadBuilds() { try { builds.value = await (await fetch("/api/batch-builds")).json(); } catch {} }
+async function downloadCompose() {
+  if (!selectedWorkflow.value) return;
+  const r = await fetch(`/api/batch-workflows/${selectedWorkflow.value.id}/effective-compose`);
+  const { content } = await r.json();
+  const blob = new Blob([content], { type: "application/x-yaml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${selectedWorkflow.value.name}-compose.yml`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 // VueFlow
 const flowNodes = ref<any[]>([]);
 const flowEdges = ref<any[]>([]);
+const { onConnect, addEdges, findNode } = useVueFlow();
 
-const { onConnect, addEdges } = useVueFlow();
 onConnect((params) => {
   addEdges([params]);
   if (selectedWorkflow.value) {
@@ -105,45 +194,29 @@ function syncFlowFromWorkflow() {
   const wf = selectedWorkflow.value;
   if (!wf) { flowNodes.value = []; flowEdges.value = []; return; }
   flowNodes.value = wf.nodes.map(n => ({
-    id: n.id, type: "batchJob", position: n.position,
+    id: n.id, type: "batchJob", position: n.position, style: { opacity: 1 },
     data: { label: n.name, imageName: n.imageName, envCount: n.envVars.length, command: n.command },
   }));
   flowEdges.value = wf.edges.map(e => ({
-    id: `e-${e.source}-${e.target}`, source: e.source, target: e.target, animated: true,
+    id: `e-${e.source}-${e.target}`, source: e.source, target: e.target,
+    sourceHandle: 'bottom', targetHandle: 'top',
+    markerEnd: { type: MarkerType.ArrowClosed, color: '#71717a' },
   }));
 }
 
 watch(selectedWorkflowId, () => syncFlowFromWorkflow());
 
 // Add node
-const pickProjectOpen = ref(false);
-const pickedProjectTag = ref("");
-
-function addNode(imageTag?: string) {
+function addNode() {
   if (!selectedWorkflow.value) return;
-  const tag = imageTag || "";
   const id = crypto.randomUUID();
   const node: JobNodeConfig = {
-    id, name: "New Job", imageName: tag,
+    id, name: "New Job", imageName: "",
     args: [], envVars: [], timeout: 300,
     position: { x: 100 + selectedWorkflow.value.nodes.length * 250, y: 150 },
   };
   selectedWorkflow.value.nodes.push(node);
-  flowNodes.value.push({
-    id, type: "batchJob", position: node.position,
-    data: { label: node.name, imageName: tag, envCount: 0 },
-  });
-}
-
-function handleAddNode() {
-  if (builds.value.length === 1) addNode(builds.value[0].imageTag);
-  else { pickedProjectTag.value = ""; pickProjectOpen.value = true; }
-}
-
-function confirmPickProject() {
-  if (!pickedProjectTag.value) return;
-  addNode(pickedProjectTag.value);
-  pickProjectOpen.value = false;
+  flowNodes.value.push({ id, type: "batchJob", position: node.position, style: { opacity: 1 }, data: { label: node.name, imageName: "", envCount: 0 } });
 }
 
 function removeNode(nodeId: string) {
@@ -166,278 +239,74 @@ function openNodeEditor(nodeId: string) {
 provide("onEditNode", openNodeEditor);
 provide("onRemoveNode", removeNode);
 
-function addNodeEnvVar() { editingNode.value?.envVars.push({ key: "", value: "" }); }
-function removeNodeEnvVar(i: number) { editingNode.value?.envVars.splice(i, 1); }
-
-function saveNodeEdit() {
-  if (!editingNode.value || !selectedWorkflow.value) return;
-  const fn = flowNodes.value.find(n => n.id === editingNode.value!.id);
-  if (fn) fn.data = { label: editingNode.value.name, imageName: editingNode.value.imageName, envCount: editingNode.value.envVars.length, command: editingNode.value.command };
-  editSheet.value = false;
-}
-
-// Common env vars
-const commonSheet = ref(false);
-function addCommonEnvVar() { selectedWorkflow.value?.commonEnvVars.push({ key: "", value: "" }); }
-function removeCommonEnvVar(i: number) { selectedWorkflow.value?.commonEnvVars.splice(i, 1); }
-
-// Import
-const importBuildId = ref("");
-const importing = ref(false);
-async function importFromCompose() {
-  if (!selectedWorkflow.value || !importBuildId.value) return;
-  importing.value = true;
-  try {
-    const r = await fetch(`/api/batch-workflows/${selectedWorkflow.value.id}/import`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ buildId: importBuildId.value }),
-    });
-    const wf = await r.json();
-    const idx = workflows.value.findIndex(w => w.id === wf.id);
-    if (idx !== -1) workflows.value[idx] = wf;
-    selectedWorkflowId.value = "";
-    await nextTick();
-    selectedWorkflowId.value = wf.id;
-  } catch {}
-  importing.value = false;
-}
-const buildsWithServices = computed(() => builds.value.filter(b => b.services?.length));
-
-// Simple Run
-const selectedProjectId = ref("");
-const selectedProject = computed(() => builds.value.find(b => b.id === selectedProjectId.value));
-const scannedEnvVars = ref<(EnvVar & { source: string })[]>([]);
-const simpleEnvVars = ref<EnvVar[]>([]);
-
-// Presets
-interface EnvSection { source: string; vars: { key: string; value: string }[]; collapsed: boolean; sort: "default" | "az" | "za"; originalVars: { key: string; value: string }[] }
-interface Preset { id: string; name: string; projectId: string; active: boolean; sections: { source: string; vars: { key: string; value: string }[] }[] }
-const presets = ref<Preset[]>([]);
-const scannedModal = ref(false);
-const forkModal = ref(false);
-const forkName = ref("");
-const presetSections = ref<Record<string, EnvSection[]>>({});
-const presetDirty = ref<Record<string, boolean>>({});
-const presetCollapsed = ref<Record<string, boolean>>({});
-
-// Grouped scanned env vars by source
-const groupedScanned = computed(() => {
-  const groups: Record<string, { key: string; value: string }[]> = {};
-  for (const ev of scannedEnvVars.value) {
-    const src = (ev as any).source || "unknown";
-    if (!groups[src]) groups[src] = [];
-    groups[src].push({ key: ev.key, value: ev.value });
-  }
-  return Object.entries(groups).map(([source, vars]) => ({ source, vars }));
-});
-const scannedCollapsed = ref<Record<string, boolean>>({});
-const scannedSort = ref<Record<string, "default" | "az" | "za">>({});
-
-function sortedVars(vars: { key: string; value: string }[], sort: "default" | "az" | "za", original?: { key: string; value: string }[]) {
-  if (sort === "default") return original ? [...original] : vars;
-  const sorted = [...vars].sort((a, b) => a.key.localeCompare(b.key));
-  return sort === "za" ? sorted.reverse() : sorted;
-}
-
-function cycleSort(current: "default" | "az" | "za"): "default" | "az" | "za" {
-  if (current === "default") return "az";
-  if (current === "az") return "za";
-  return "default";
-}
-
-async function loadPresets() {
-  if (!selectedProjectId.value) { presets.value = []; return; }
-  try { presets.value = await (await fetch(`/api/batch-builds/${selectedProjectId.value}/presets`)).json(); } catch { presets.value = []; }
-  // Build sections for each preset
-  for (const p of presets.value) {
-    if (!presetSections.value[p.id]) {
-      presetSections.value[p.id] = p.sections.map(s => ({ source: s.source, vars: [...s.vars], collapsed: false, sort: "default" as const, originalVars: [...s.vars] }));
-    }
-    presetDirty.value[p.id] = false;
-  }
-}
-
-const activePreset = computed(() => presets.value.find(p => p.active));
-const totalScannedCount = computed(() => scannedEnvVars.value.length);
-
-function presetTotalCount(presetId: string) {
-  const sections = presetSections.value[presetId];
-  return sections ? sections.reduce((sum, s) => sum + s.vars.length, 0) : 0;
-}
-
-async function forkEnvVars() {
-  if (!forkName.value.trim() || !selectedProjectId.value) return;
-  const sections = groupedScanned.value.map(g => ({ source: g.source, vars: [...g.vars] }));
-  const r = await fetch(`/api/batch-builds/${selectedProjectId.value}/presets`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: forkName.value.trim(), sections }),
-  });
-  const preset = await r.json();
-  presets.value.push(preset);
-  presetSections.value[preset.id] = preset.sections.map((s: any) => ({ source: s.source, vars: [...s.vars], collapsed: false, sort: "default" as const, originalVars: [...s.vars] }));
-  presetDirty.value[preset.id] = false;
-  forkModal.value = false;
-  forkName.value = "";
-}
-
-async function activatePreset(presetId: string) {
-  const isActive = presets.value.find(p => p.id === presetId)?.active;
-  await fetch(`/api/batch-builds/${selectedProjectId.value}/presets/${presetId}`, {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ active: !isActive }),
-  });
-  presets.value.forEach(p => p.active = p.id === presetId ? !isActive : false);
-}
-
-async function deletePreset(presetId: string) {
-  await fetch(`/api/batch-builds/${selectedProjectId.value}/presets/${presetId}`, { method: "DELETE" });
-  presets.value = presets.value.filter(p => p.id !== presetId);
-  delete presetSections.value[presetId];
-  delete presetDirty.value[presetId];
-}
-
-async function savePreset(presetId: string) {
-  const sections = presetSections.value[presetId]?.map(s => ({ source: s.source, vars: s.vars }));
-  await fetch(`/api/batch-builds/${selectedProjectId.value}/presets/${presetId}`, {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sections }),
-  });
-  // Update originals
-  for (const s of presetSections.value[presetId]) s.originalVars = [...s.vars];
-  presetDirty.value[presetId] = false;
-  showToast("Preset saved", "success");
-}
-
-function markPresetDirty(presetId: string) { presetDirty.value[presetId] = true; }
-
-function addPresetVar(presetId: string, sectionIdx: number) {
-  presetSections.value[presetId][sectionIdx].vars.push({ key: "", value: "" });
-  markPresetDirty(presetId);
-}
-
-function removePresetVar(presetId: string, sectionIdx: number, varIdx: number) {
-  presetSections.value[presetId][sectionIdx].vars.splice(varIdx, 1);
-  markPresetDirty(presetId);
-}
-const simpleRunning = ref(false);
-const simpleLogs = ref<{ line: string }[]>([]);
-const simpleResult = ref<{ runId?: string; exitCode?: number; duration?: number } | null>(null);
-const simpleError = ref("");
-const portRemaps = ref<{ service: string; original: string; hostPort: number; newHostPort: number; containerPort: string }[]>([]);
-const effectiveConfigOpen = ref(false);
-const effectiveConfig = ref("");
-const highlightedConfig = computed(() => highlightYaml(effectiveConfig.value));
-
-async function loadEffectiveConfig() {
-  if (!selectedProject.value) return;
-  effectiveConfigOpen.value = true;
-  effectiveConfig.value = "";
-  try {
-    const r = await fetch(`/api/batch-runs/effective-config?projectPath=${encodeURIComponent(selectedProject.value.projectPath)}&composefile=${encodeURIComponent(selectedCompose.value)}`);
-    const data = await r.json();
-    effectiveConfig.value = data.content || "No generated config found";
-  } catch { effectiveConfig.value = "No generated config found"; }
-}
-const projectServices = ref<any[]>([]);
-const selectedCompose = ref("");
-const expandedService = ref("");
-const fileViewerOpen = ref(false);
-const fileViewerPath = ref("");
-const fileViewerContent = ref("");
-const fileViewerLoading = ref(false);
-
-function highlightSh(code: string): string {
-  return code.split("\n").map(line => {
-    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    // Comment lines — highlight entire line and skip further processing
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("#")) return `<span class="sh-comment">${esc(line)}</span>`;
-    // Process non-comment lines token by token
-    let result = esc(line);
-    // Strings
-    result = result.replace(/("(?:[^"\\]|\\.)*")/g, '<span class="sh-string">$1</span>');
-    result = result.replace(/('(?:[^'\\]|\\.)*')/g, '<span class="sh-string">$1</span>');
-    // Variables (but not inside already-highlighted spans)
-    result = result.replace(/(\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*)/g, '<span class="sh-var">$1</span>');
-    // Keywords at word boundaries
-    result = result.replace(/\b(if|then|else|elif|fi|for|do|done|while|until|case|esac|in|function|return|exit|local|export|source|set|unset|shift|break|continue)\b/g, '<span class="sh-keyword">$1</span>');
-    // Commands at start of line or after pipe/semicolon
-    result = result.replace(/(^|(?<=\| |; |&amp;&amp; ))(echo|cd|ls|cat|grep|sed|awk|find|mkdir|rm|cp|mv|chmod|chown|curl|wget|docker|java|mvn|gradle|npm|node|kill|sleep|wait|test|read|printf|exec|eval|trap|gzip|openssl|awslocal|aws)\b/g, '$1<span class="sh-cmd">$2</span>');
-    return result;
-  }).join("\n");
-}
-
-function highlightYaml(code: string): string {
-  return code.split("\n").map(line => {
-    const e = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    if (line.trimStart().startsWith("#")) return '<span class="sh-comment">' + e + '</span>';
-    // Highlight strings first (before inserting spans with quotes in attributes)
-    let r = e;
-    r = r.replace(/("(?:[^"\\]|\\.)*")/g, '\x00STR$1\x00/STR');
-    // Keys
-    r = r.replace(/^(\s*)(\S+?)(:)/gm, '$1<span class="yaml-key">$2</span>$3');
-    // Numbers and booleans
-    r = r.replace(/:\s+(\d+)(\s*)$/gm, ': <span class="yaml-num">$1</span>$2');
-    r = r.replace(/:\s+(true|false)\s*$/gm, ': <span class="yaml-bool">$1</span>');
-    // Restore strings
-    r = r.replace(/\x00STR(.*?)\x00\/STR/g, '<span class="sh-string">$1</span>');
-    return r;
-  }).join("\n");
-}
-
-async function viewFile(filePath: string) {
-  if (!selectedProjectId.value) return;
-  fileViewerPath.value = filePath;
-  fileViewerContent.value = "";
-  fileViewerLoading.value = true;
-  fileViewerOpen.value = true;
-  try {
-    const r = await fetch(`/api/batch-builds/${selectedProjectId.value}/file?path=${encodeURIComponent(filePath)}`);
-    const data = await r.json();
-    fileViewerContent.value = data.content || "Empty file";
-  } catch { fileViewerContent.value = "Failed to read file"; }
-  fileViewerLoading.value = false;
-}
-
-const logSection = ref<HTMLElement | null>(null);
-
-const rootCauseLines = computed(() => simpleLogs.value.filter(l => /Caused by[:.]/.test(l.line) || /Exception/.test(l.line) || /Error response from daemon/.test(l.line)).map(l => l.line));
-
+// Console panel
+const openConsoleTabs = ref<string[]>([]);
+const activeConsoleTab = ref("all");
+const consolePanelCollapsed = ref(true);
 const aiExplaining = ref(false);
 const aiExplanation = ref("");
-async function explainBatchError() {
-  if (!rootCauseLines.value.length) return;
-  aiExplaining.value = true; aiExplanation.value = "";
+
+function onOpenConsole(containerName: string) {
+  const name = flowNodes.value.find(n => n.id === containerName)?.data.label || containerName;
+  if (!openConsoleTabs.value.includes(name)) openConsoleTabs.value.push(name);
+  activeConsoleTab.value = name;
+  consolePanelCollapsed.value = false;
+}
+provide("onOpenConsole", onOpenConsole);
+
+const activeTabLogs = computed(() => {
+  if (activeConsoleTab.value === "all") return workflowLogs.value;
+  return workflowLogs.value.filter(l => l.container === activeConsoleTab.value).map(l => ({ ...l, line: l.line.replace(/^\S+\s+\|\s+/, "") }));
+});
+
+const activeTabRootCause = computed(() => {
+  if (activeConsoleTab.value === "all") return [];
+  return activeTabLogs.value
+    .map(l => l.line)
+    .filter(l => /Exception|Error|Caused by/i.test(l));
+});
+
+async function explainContainerErrors() {
+  if (!activeTabRootCause.value.length) return;
+  aiExplaining.value = true;
+  aiExplanation.value = "";
   try {
-    const r = await fetch("/api/ai/explain", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: rootCauseLines.value.join("\n"), logs: simpleLogs.value.slice(-30).map(l => l.line), functionName: selectedProject.value?.name, context: "docker-compose batch run" }) });
+    const r = await fetch("/api/ai/explain", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: activeTabRootCause.value.join("\n"), logs: activeTabLogs.value.slice(-30).map(l => l.line), functionName: activeConsoleTab.value, context: "docker-compose workflow run" }),
+    });
     const data = await r.json();
-    aiExplanation.value = data.explanation || data.error || "No response";
-  } catch (e: any) { aiExplanation.value = `Failed: ${e.message}`; }
-  finally { aiExplaining.value = false; }
+    aiExplanation.value = data.explanation || data.error || "Kiro is not available. Start Kiro CLI to enable AI explanations.";
+  } catch { aiExplanation.value = "Failed to get explanation."; }
+  aiExplaining.value = false;
 }
 
-async function loadProjectEnvVars() {
-  scannedEnvVars.value = [];
-  simpleEnvVars.value = [];
-  projectServices.value = [];
-  if (!selectedProjectId.value) return;
-  try { scannedEnvVars.value = await (await fetch(`/api/batch-builds/${selectedProjectId.value}/env-scan?compose=${encodeURIComponent(selectedCompose.value)}`)).json(); } catch {}
-  try { projectServices.value = (await (await fetch(`/api/batch-builds/${selectedProjectId.value}/services?compose=${encodeURIComponent(selectedCompose.value)}`)).json()); } catch {}
+function closeConsoleTab(name: string) {
+  openConsoleTabs.value = openConsoleTabs.value.filter(t => t !== name);
+  if (activeConsoleTab.value === name) activeConsoleTab.value = openConsoleTabs.value[0] || "all";
 }
 
-watch(selectedProjectId, async () => { simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; projectServices.value = []; scannedEnvVars.value = []; simpleEnvVars.value = []; presets.value = []; presetSections.value = {}; presetDirty.value = {}; selectedCompose.value = selectedProject.value?.composeFiles?.[0] || ""; await nextTick(); loadProjectEnvVars(); loadPresets(); });
+// Workflow execution
+const workflowRunning = ref(false);
+const workflowLogSection = ref<HTMLElement | null>(null);
+const workflowStopping = ref(false);
+const workflowLogs = ref<{ line: string; container?: string }[]>([]);
+const portRemaps = ref<any[]>([]);
+const selectedNodeContainer = ref("");
+const filteredLogs = computed(() => selectedNodeContainer.value ? workflowLogs.value.filter(l => l.container === selectedNodeContainer.value) : workflowLogs.value);
 
-
-
-async function runSimple() {
-  if (!selectedProject.value) return;
-  simpleRunning.value = true; simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; portRemaps.value = [];
+async function runWorkflow() {
+  if (!selectedWorkflow.value?.composePath) return;
+  workflowRunning.value = true; workflowLogs.value = []; portRemaps.value = []; selectedNodeContainer.value = "";
+  consolePanelCollapsed.value = false; activeConsoleTab.value = "all";
   await nextTick();
-  logSection.value?.scrollIntoView({ behavior: "smooth" });
+  workflowLogSection.value?.scrollIntoView({ behavior: "smooth" });
+  for (const n of flowNodes.value) n.data = { ...n.data, status: "idle" };
   try {
-    const res = await fetch("/api/batch-runs/simple", {
+    const res = await fetch("/api/batch-runs/workflow", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: selectedProject.value.id, projectPath: selectedProject.value.projectPath, composefile: selectedCompose.value, envOverrides: activePreset.value ? presetSections.value[activePreset.value.id]?.flatMap(s => s.vars).filter(e => e.key) || [] : [] }),
+      body: JSON.stringify({ workflowId: selectedWorkflow.value.id, composePath: (selectedWorkflow.value as any).composePath, originalProjectPath: (selectedWorkflow.value as any).originalComposePath ? (selectedWorkflow.value as any).originalComposePath.replace(/[/\\][^/\\]+$/, '') : undefined }),
     });
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
@@ -453,288 +322,251 @@ async function runSimple() {
         if (line.startsWith("event: ")) event = line.slice(7);
         else if (line.startsWith("data: ")) {
           const data = JSON.parse(line.slice(6));
-          if (event === "log") { simpleLogs.value.push(data);   }
-                  else if (event === "remaps") portRemaps.value = data;
-          else if (event === "complete") simpleResult.value = data;
-          else if (event === "error") { simpleError.value = data.message || `Exit code: ${data.exitCode}`; simpleResult.value = data; }
+          if (event === "log") workflowLogs.value.push(data);
+          else if (event === "status") {
+            console.log("[status-event]", data.container, "->", data.status);
+            const match = flowNodes.value.find(n => n.data.label === data.container || data.container?.endsWith(n.data.label) || data.container?.includes(n.data.label));
+            if (match) {
+              const vfNode = findNode(match.id);
+              if (vfNode) vfNode.data = { ...vfNode.data, status: data.status };
+            }
+          }
+          else if (event === "remaps") portRemaps.value = data;
+          else if (event === "complete") showToast("Workflow completed", "success");
+          else if (event === "error") showToast(data.message || "Workflow failed", "warning");
         }
       }
     }
-  } catch (e: any) { simpleError.value = e.message; }
-  simpleRunning.value = false;
+  } catch (e: any) { showToast(e.message, "warning"); }
+  workflowRunning.value = false;
 }
 
-const tearing = ref(false);
-async function teardown() {
-  tearing.value = true;
+async function stopWorkflow() {
+  workflowStopping.value = true;
+  showToast("Stopping workflow...", "warning");
+  try { await fetch("/api/batch-runs/workflow/stop", { method: "POST" }); } catch { showToast("Stop failed", "warning"); workflowStopping.value = false; return; }
+  workflowRunning.value = false;
+  workflowStopping.value = false;
+  showToast("Workflow stopped", "success");
+}
+
+function onNodeClick(nodeId: string) {
+  if (!workflowRunning.value && !workflowLogs.value.length) return openNodeEditor(nodeId);
+  const fn = flowNodes.value.find(n => n.id === nodeId);
+  if (fn) selectedNodeContainer.value = selectedNodeContainer.value === fn.data.label ? "" : fn.data.label;
+}
+
+function addNodeEnvVar() { editingNode.value?.envVars.push({ key: "", value: "" }); }
+function removeNodeEnvVar(i: number) { editingNode.value?.envVars.splice(i, 1); }
+
+function saveNodeEdit() {
+  if (!editingNode.value || !selectedWorkflow.value) return;
+  const fn = flowNodes.value.find(n => n.id === editingNode.value!.id);
+  if (fn) fn.data = { label: editingNode.value.name, imageName: editingNode.value.imageName, envCount: editingNode.value.envVars.length, command: editingNode.value.command };
+  editSheet.value = false;
+}
+
+// Common env vars
+const commonSheet = ref(false);
+function addCommonEnvVar() { selectedWorkflow.value?.commonEnvVars.push({ key: "", value: "" }); }
+function removeCommonEnvVar(i: number) { selectedWorkflow.value?.commonEnvVars.splice(i, 1); }
+
+const savingCommon = ref(false);
+async function saveCommonEnvVars() {
+  if (!selectedWorkflow.value) return;
+  savingCommon.value = true;
   try {
-    await fetch("/api/batch-runs/simple/teardown", { method: "POST" });
-    showToast("Containers torn down", "success");
-    simpleRunning.value = false;
-  } catch { showToast("Teardown failed", "warning"); }
-  tearing.value = false;
+    await fetch(`/api/batch-workflows/${selectedWorkflow.value.id}/save-env`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commonEnvVars: selectedWorkflow.value.commonEnvVars }),
+    });
+    showToast("Common env vars saved", "success");
+  } catch { showToast("Save failed", "warning"); }
+  savingCommon.value = false;
 }
 
-async function stopSimple() {
-  await fetch("/api/batch-runs/simple/stop", { method: "POST" });
-  simpleRunning.value = false;
-  teardown();
-}
-
-let watchSource: EventSource | null = null;
-let watchReady = false;
-
-onMounted(() => {
-  loadWorkflows(); loadBuilds();
-  watchSource = new EventSource("/api/batch-builds/watch");
-  setTimeout(() => { watchReady = true; }, 1000);
-  watchSource.onmessage = (e) => {
-    if (!watchReady) return;
-    const { projectId } = JSON.parse(e.data);
-    if (projectId === selectedProjectId.value) {
-      showToast("Updating project data...", "warning");
-      loadProjectEnvVars().then(() => showToast("Project data updated", "success"));
-    }
-  };
+onMounted(async () => {
+  await loadWorkflows();
+  try { builds.value = await (await fetch('/api/batch-builds')).json(); } catch {}
+  const qid = route.query.workflowId as string;
+  if (qid) {
+    const wf = workflows.value.find(w => w.id === qid);
+    if (wf) { selectedWorkflowId.value = wf.id; wizardStep.value = 3; editorMode.value = true; syncFlowFromWorkflow(); }
+  }
 });
-onUnmounted(() => { watchSource?.close(); });
 </script>
+
 
 <template>
   <div class="space-y-4">
-    <Tabs v-model="activeTab">
+    <!-- Stepper (visible during wizard) -->
+    <div v-if="wizardStep >= 1 && !editorMode" class="flex items-center gap-2 mb-2">
+      <button class="text-xs text-muted-foreground hover:text-foreground cursor-pointer" @click="wizardStep = 0">Workflows</button>
+      <template v-for="(step, i) in steps" :key="i">
+        <ChevronRight class="size-3 text-muted-foreground" />
+        <button class="flex items-center gap-1.5 text-xs cursor-pointer" :class="wizardStep === i + 1 ? 'text-foreground font-medium' : wizardStep > i + 1 ? 'text-emerald-500' : 'text-muted-foreground'" @click="wizardStep > i + 1 ? wizardStep = i + 1 : undefined">
+          <div class="size-5 rounded-full flex items-center justify-center text-[10px] font-bold border" :class="wizardStep === i + 1 ? 'border-primary bg-primary text-primary-foreground' : wizardStep > i + 1 ? 'border-emerald-500 bg-emerald-500/10 text-emerald-500' : 'border-muted-foreground/30'">
+            <Check v-if="wizardStep > i + 1" class="size-3" />
+            <span v-else>{{ i + 1 }}</span>
+          </div>
+          {{ step.label }}
+        </button>
+      </template>
+    </div>
+
+    <!-- Step 0: Landing — Workflow List -->
+    <div v-if="wizardStep === 0" class="max-w-3xl mx-auto space-y-4">
       <div class="flex items-center justify-between">
-        <TabsList>
-          <TabsTrigger value="workflow" class="cursor-pointer">Workflow</TabsTrigger>
-          <TabsTrigger value="simple" class="cursor-pointer">Simple Run</TabsTrigger>
-          <TabsTrigger value="runs" class="cursor-pointer">Runs</TabsTrigger>
-        </TabsList>
+        <div>
+          <h2 class="text-lg font-semibold">Workflows</h2>
+          <p class="text-xs text-muted-foreground">Visual docker-compose orchestration with dependency graphs.</p>
+        </div>
+        <Button size="sm" class="gap-1.5 cursor-pointer" @click="startNewWorkflow"><Plus class="size-3.5" /> New Workflow</Button>
+      </div>
+      <div v-if="workflows.length" class="space-y-2">
+        <button v-for="wf in workflows" :key="wf.id" class="w-full flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50 transition-colors text-left" @click="editWorkflow(wf)">
+          <Container class="size-4 shrink-0 text-muted-foreground" />
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium">{{ wf.name }}</p>
+            <div class="flex items-center gap-3 mt-0.5">
+              <span class="text-xs text-muted-foreground">{{ wf.nodes.length }} node(s)</span>
+              <span class="text-xs text-muted-foreground">{{ wf.edges.length }} edge(s)</span>
+              <Badge v-if="(wf as any).composePath" variant="outline" class="text-[9px] font-mono">imported</Badge>
+            </div>
+          </div>
+          <ChevronRight class="size-4 text-muted-foreground" />
+          <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-red-500 cursor-pointer shrink-0" @click.stop="confirmDeleteById(wf)"><Trash2 class="size-3.5" /></Button></TooltipTrigger><TooltipContent>Delete workflow</TooltipContent></Tooltip>
+        </button>
+      </div>
+      <div v-else class="rounded-lg border bg-background py-12 text-center">
+        <p class="text-sm text-muted-foreground mb-3">No workflows yet.</p>
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="startNewWorkflow"><Plus class="size-3.5" /> Create your first workflow</Button>
+      </div>
+    </div>
+
+    <!-- Step 1: Name -->
+    <div v-if="wizardStep === 1" class="max-w-md mx-auto space-y-6 pt-8">
+      <div class="text-center space-y-1">
+        <h2 class="text-lg font-semibold">Name your workflow</h2>
+        <p class="text-xs text-muted-foreground">Choose a descriptive name for this workflow.</p>
+      </div>
+      <div class="space-y-2">
+        <Label class="text-xs">Workflow Name</Label>
+        <Input v-model="wizardName" placeholder="e.g. contract-submission-pipeline" class="text-sm" autofocus @keydown.enter="wizardName.trim() && createAndProceed()" />
+      </div>
+      <div class="flex justify-end">
+        <Button size="sm" class="gap-1.5 cursor-pointer" :disabled="!wizardName.trim()" @click="createAndProceed">Next <ArrowRight class="size-3.5" /></Button>
+      </div>
+    </div>
+
+    <!-- Step 2: Source -->
+    <div v-if="wizardStep === 2" class="max-w-xl mx-auto space-y-6 pt-8">
+      <div class="text-center space-y-1">
+        <h2 class="text-lg font-semibold">How do you want to start?</h2>
+        <p class="text-xs text-muted-foreground">Import an existing docker-compose file or start with an empty canvas.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <button class="rounded-lg border p-4 text-left cursor-pointer transition-colors hover:bg-muted/50" :class="wizardSource === 'import' ? 'border-primary bg-primary/5' : ''" @click="wizardSource = 'import'">
+          <Import class="size-5 mb-2 text-primary" />
+          <p class="text-sm font-medium">Import compose file</p>
+          <p class="text-xs text-muted-foreground mt-1">Browse your filesystem and select a docker-compose file. Mouseketool will detect batch jobs and dependencies.</p>
+        </button>
+        <button class="rounded-lg border p-4 text-left cursor-pointer transition-colors hover:bg-muted/50" :class="wizardSource === 'scratch' ? 'border-primary bg-primary/5' : ''" @click="wizardSource = 'scratch'">
+          <FileCode2 class="size-5 mb-2 text-primary" />
+          <p class="text-sm font-medium">Start from scratch</p>
+          <p class="text-xs text-muted-foreground mt-1">Begin with an empty canvas and add job nodes manually.</p>
+        </button>
       </div>
 
-      <div v-show="activeTab === 'workflow'" class="mt-4 space-y-4">
-        <div class="flex items-center gap-2 flex-wrap">
-          <Select v-model="selectedWorkflowId" :disabled="!workflows.length">
-            <SelectTrigger class="w-56"><SelectValue placeholder="Select workflow" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="wf in workflows" :key="wf.id" :value="wf.id">{{ wf.name }}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="createWorkflow"><Plus class="size-3.5" /> New</Button>
-          <Button v-if="selectedWorkflow" variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="handleAddNode"><Container class="size-3.5" /> Add Job</Button>
-          <Button v-if="selectedWorkflow" variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="commonSheet = true">
-            <Variable class="size-3.5" /> Common Env Vars
-            <Badge v-if="selectedWorkflow.commonEnvVars.length" variant="secondary" class="ml-1 text-[10px]">{{ selectedWorkflow.commonEnvVars.length }}</Badge>
-          </Button>
-          <div v-if="buildsWithServices.length && selectedWorkflow" class="flex items-center gap-1.5 ml-auto">
-            <Select v-model="importBuildId">
-              <SelectTrigger class="w-48 h-8 text-xs"><SelectValue placeholder="Import from..." /></SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="b in buildsWithServices" :key="b.id" :value="b.id">{{ b.projectName }} ({{ b.services.length }} svc)</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="!importBuildId || importing" @click="importFromCompose">
-              <Loader2 v-if="importing" class="size-3.5 animate-spin" /><Import v-else class="size-3.5" /> Import
-            </Button>
-          </div>
-          <Button v-if="selectedWorkflow" size="sm" class="gap-1.5 cursor-pointer ml-auto" @click="saveWorkflow"><Save class="size-3.5" /> Save</Button>
-          <Button v-if="selectedWorkflow" variant="ghost" size="sm" class="gap-1.5 text-red-500 cursor-pointer" @click="deleteWorkflow"><Trash2 class="size-3.5" /> Delete</Button>
+      <!-- Import flow -->
+      <div v-if="wizardSource === 'import'" class="space-y-3">
+        <div class="flex items-center gap-2">
+          <Input v-model="wizardComposePath" placeholder="Path to docker-compose file" class="text-sm font-mono flex-1" readonly />
+          <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer shrink-0" @click="showFileBrowser = true"><FolderOpen class="size-3.5" /> Browse</Button>
         </div>
-
-        <div v-if="selectedWorkflow" class="flex items-center gap-2">
-          <Label class="text-xs">Name</Label>
-          <Input v-model="selectedWorkflow.name" class="text-sm w-64" />
-        </div>
-
-        <div v-if="selectedWorkflow" class="h-[calc(100vh-280px)] min-h-[300px] rounded-lg border overflow-hidden">
-          <VueFlow v-model:nodes="flowNodes" v-model:edges="flowEdges" fit-view-on-init class="h-full dot-grid">
-            <template #node-batchJob="props">
-              <BatchJobNode v-bind="props" />
-            </template>
-            <MiniMap />
-            <Controls />
-          </VueFlow>
-        </div>
-
-        <div v-else class="h-[calc(100vh-280px)] min-h-[300px] rounded-lg border bg-background flex items-center justify-center">
-          <div class="text-center space-y-2">
-            <p class="text-sm text-muted-foreground">No workflow selected</p>
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="createWorkflow"><Plus class="size-3.5" /> Create Workflow</Button>
-          </div>
+        <div v-if="wizardComposePath" class="rounded-md bg-muted/30 border border-muted px-3 py-2 text-[11px] text-muted-foreground flex items-start gap-2">
+          <Info class="size-3.5 shrink-0 mt-0.5" />
+          <span>Mouseketool will parse this file, identify batch job containers (excluding common auxiliary services like localstack, vault, redis, etc.), and create a visual dependency graph.</span>
         </div>
       </div>
 
-      <TabsContent value="simple" class="mt-4 space-y-4">
-        <p class="text-xs text-muted-foreground">Run your project's docker-compose file directly from Mouseketool.</p>
+      <div class="flex justify-between">
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="wizardStep = 1"><ChevronLeft class="size-3.5" /> Back</Button>
+        <Button v-if="wizardSource === 'import'" size="sm" class="gap-1.5 cursor-pointer" :disabled="!wizardComposePath || importing" @click="importCompose">
+          <Loader2 v-if="importing" class="size-3.5 animate-spin" /><ArrowRight v-else class="size-3.5" /> Import &amp; Configure
+        </Button>
+        <Button v-else-if="wizardSource === 'scratch'" size="sm" class="gap-1.5 cursor-pointer" @click="skipToConfigureEmpty">Next <ArrowRight class="size-3.5" /></Button>
+      </div>
+    </div>
 
-        <!-- Project Selector + Run + Scanned Modal -->
-        <div class="flex items-center gap-3">
-          <Select v-model="selectedProjectId" :disabled="simpleRunning">
-            <SelectTrigger class="w-96"><SelectValue placeholder="Select a batch project" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="b in builds" :key="b.id" :value="b.id">{{ b.name }}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select v-if="selectedProject?.composeFiles?.length > 1" v-model="selectedCompose" :disabled="simpleRunning" @update:model-value="loadProjectEnvVars()">
-            <SelectTrigger class="w-56"><SelectValue placeholder="Select compose file" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="cf in selectedProject.composeFiles" :key="cf" :value="cf">{{ cf }}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Tooltip v-if="selectedProject"><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="scannedModal = true"><Eye class="size-3.5" /> Scanned Env Vars <Badge v-if="totalScannedCount" variant="secondary" class="ml-1 text-[10px]">{{ totalScannedCount }}</Badge></Button></TooltipTrigger><TooltipContent>View all env vars detected from compose and .env files</TooltipContent></Tooltip>
-          <Button v-if="selectedProject" size="sm" class="gap-1.5 cursor-pointer" :disabled="simpleRunning || !selectedCompose" @click="runSimple">
-            <Loader2 v-if="simpleRunning" class="size-3.5 animate-spin" /><Play v-else class="size-3.5" />
-            {{ simpleRunning ? "Running..." : "Run" }}
-          </Button>
-          <Tooltip v-if="simpleRunning || tearing"><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer text-red-500 hover:text-red-400" :disabled="tearing" @click="stopSimple"><Loader2 v-if="tearing" class="size-3.5 animate-spin" /><Square v-else class="size-3.5" /> Stop</Button></TooltipTrigger><TooltipContent>Stop all containers and clean up resources</TooltipContent></Tooltip>
+    <!-- Step 3: Configure (VueFlow) -->
+    <div v-if="wizardStep === 3 && selectedWorkflow" class="space-y-4">
+      <!-- Editor toolbar -->
+      <div v-if="editorMode" class="flex items-center gap-2 flex-wrap">
+        <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 cursor-pointer" @click="editorMode = false; wizardStep = 0"><ArrowLeft class="size-4" /></Button></TooltipTrigger><TooltipContent>Back to workflows</TooltipContent></Tooltip>
+        <span class="text-lg font-semibold">{{ selectedWorkflow.name }}</span>
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning" @click="addNode"><Container class="size-3.5" /> Add Job</Button>
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning" @click="commonSheet = true">
+          <Variable class="size-3.5" /> Common Env Vars
+          <Badge v-if="selectedWorkflow.commonEnvVars.length" variant="secondary" class="ml-1 text-[10px]">{{ selectedWorkflow.commonEnvVars.length }}</Badge>
+        </Button>
+        <div class="ml-auto flex items-center gap-1.5">
+          <Button size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning || !selectedWorkflow?.composePath" @click="runWorkflow"><Loader2 v-if="workflowRunning" class="size-3.5 animate-spin" /><RotateCcw v-else-if="workflowLogs.length" class="size-3.5" /><Play v-else class="size-3.5" /> {{ workflowRunning ? "Running..." : workflowLogs.length ? "Re-run" : "Run" }}</Button>
+          <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer text-red-500 hover:text-red-400" :disabled="!workflowRunning || workflowStopping" @click="stopWorkflow"><Loader2 v-if="workflowStopping" class="size-3.5 animate-spin" /><Square v-else class="size-3.5" /> Stop</Button></TooltipTrigger><TooltipContent>Stop all containers and clean up</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning || !selectedWorkflow?.composePath" @click="downloadCompose"><FileDown class="size-3.5" /> Download Compose</Button></TooltipTrigger><TooltipContent>Download the effective docker-compose file used for execution</TooltipContent></Tooltip>
+          <Button variant="ghost" size="sm" class="gap-1.5 text-red-500 cursor-pointer" :disabled="workflowRunning" @click="confirmDeleteWorkflow"><Trash2 class="size-3.5" /> Delete</Button>
         </div>
+      </div>
+      <!-- Wizard toolbar -->
+      <div v-else class="flex items-center gap-2 flex-wrap">
+        <Input v-model="selectedWorkflow.name" class="text-sm w-64" />
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="addNode"><Container class="size-3.5" /> Add Job</Button>
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="commonSheet = true">
+          <Variable class="size-3.5" /> Common Env Vars
+          <Badge v-if="selectedWorkflow.commonEnvVars.length" variant="secondary" class="ml-1 text-[10px]">{{ selectedWorkflow.commonEnvVars.length }}</Badge>
+        </Button>
+        <div class="ml-auto flex items-center gap-1.5">
+          <Button size="sm" class="gap-1.5 cursor-pointer" @click="saveWorkflow"><Save class="size-3.5" /> Save</Button>
+          <Button variant="ghost" size="sm" class="gap-1.5 text-red-500 cursor-pointer" @click="confirmDeleteWorkflow"><Trash2 class="size-3.5" /> Delete</Button>
+        </div>
+      </div>
 
-        <div v-if="selectedProject" class="space-y-4">
-          <div v-if="!selectedProject.composeFiles?.length" class="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 flex items-center gap-2">
-            <AlertTriangle class="size-4 shrink-0" /> No docker-compose file was detected in this project. Please check that a compose file exists in the project directory.
+      <div :class="workflowLogs.length || workflowRunning ? 'h-[calc(100vh-420px)] min-h-[200px]' : 'h-[calc(100vh-220px)] min-h-[300px]'" class="rounded-lg border overflow-hidden">
+        <VueFlow v-model:nodes="flowNodes" v-model:edges="flowEdges" fit-view-on-init class="h-full dot-grid" @node-click="({ node }) => onNodeClick(node.id)">
+          <template #node-batchJob="props"><BatchJobNode v-bind="props" /></template>
+          <MiniMap />
+          <Controls />
+          <svg class="absolute" width="0" height="0">
+            <defs>
+              <marker id="arrowhead" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" class="fill-zinc-500" />
+              </marker>
+            </defs>
+          </svg>
+        </VueFlow>
+      </div>
+      <!-- Console Panel -->
+      <div v-if="workflowLogs.length || workflowRunning" ref="workflowLogSection" class="space-y-0 rounded-lg border overflow-hidden">
+        <button class="w-full flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted/80 transition-colors cursor-pointer" @click="consolePanelCollapsed = !consolePanelCollapsed">
+          <component :is="consolePanelCollapsed ? ChevronRight : ChevronDown" class="size-3.5 text-muted-foreground" />
+          <span class="text-xs font-medium">Consoles</span>
+          <Badge variant="secondary" class="text-[10px]">{{ openConsoleTabs.length + 1 }}</Badge>
+        </button>
+        <div v-if="!consolePanelCollapsed">
+          <div class="flex items-center gap-0.5 px-2 py-1 border-t bg-background overflow-x-auto">
+            <button class="flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer whitespace-nowrap" :class="activeConsoleTab === 'all' ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'" @click="activeConsoleTab = 'all'">All</button>
+            <button v-for="tab in openConsoleTabs" :key="tab" class="flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer whitespace-nowrap" :class="activeConsoleTab === tab ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'" @click="activeConsoleTab = tab">
+              {{ tab }}
+              <X class="size-3 hover:text-red-500" @click.stop="closeConsoleTab(tab)" />
+            </button>
           </div>
-
-          <!-- Project Info -->
-          <div class="rounded-lg border p-3 space-y-3">
-            <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Project Info</p>
-            <div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 text-xs">
-              <span class="text-muted-foreground">Path</span>
-              <span class="font-mono truncate" :title="selectedProject.projectPath">{{ selectedProject.projectPath }}</span>
-              <span class="text-muted-foreground">Dockerfile</span>
-              <span class="font-mono">{{ selectedProject.dockerfile }}</span>
-              <span class="text-muted-foreground">Compose</span>
-              <span class="font-mono">{{ selectedCompose || 'N/A' }}</span>
-            </div>
-            <div v-if="projectServices.length">
-              <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Containers ({{ projectServices.length }})</p>
-              <div class="space-y-1.5">
-                <div v-for="svc in projectServices" :key="svc.name" class="rounded-md border text-xs">
-                  <button class="flex items-center gap-3 w-full px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors" @click="expandedService = expandedService === svc.name ? '' : svc.name">
-                    <ChevronRight class="size-3 text-muted-foreground transition-transform shrink-0" :class="expandedService === svc.name ? 'rotate-90' : ''" />
-                    <span class="font-medium">{{ svc.name }}</span>
-                    <Badge v-if="svc.image" variant="outline" class="text-[9px] font-mono">{{ svc.image }}</Badge>
-                    <Badge v-else-if="svc.build" variant="secondary" class="text-[9px]">build</Badge>
-                    <Tooltip v-for="p in (svc.ports || [])" :key="p"><TooltipTrigger as-child><Badge variant="outline" class="text-[9px] font-mono">{{ p }}</Badge></TooltipTrigger><TooltipContent>Port mapping</TooltipContent></Tooltip>
-                  </button>
-                  <div v-if="expandedService === svc.name" class="px-3 pb-3 space-y-3 border-t pt-3">
-                    <div v-if="svc.volumes?.length" class="space-y-1.5">
-                      <div class="flex items-center gap-1.5"><HardDrive class="size-3 text-muted-foreground" /><span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Volumes</span></div>
-                      <div v-for="v in svc.volumes" :key="v" class="flex items-center gap-2 ml-4">
-                        <div class="flex items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-[10px] font-mono w-full">
-                          <FolderOpen class="size-3 text-muted-foreground shrink-0" />
-                          <span class="text-muted-foreground">{{ v.split(':')[0] }}</span>
-                          <span class="text-muted-foreground/50 mx-0.5">&rarr;</span>
-                          <span>{{ v.split(':').slice(1).join(':') }}</span>
-                          <Tooltip v-if="v.split(':')[0].endsWith('.sh')"><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-5 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground ml-auto" @click.stop="viewFile(v.split(':')[0])"><FileText class="size-3" /></Button></TooltipTrigger><TooltipContent>View file contents</TooltipContent></Tooltip>
-                        </div>
-                      </div>
-                    </div>
-                    <div v-if="svc.envVars?.length" class="space-y-1.5">
-                      <div class="flex items-center gap-1.5"><KeyRound class="size-3 text-muted-foreground" /><span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Environment</span></div>
-                      <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 ml-4">
-                        <template v-for="ev in svc.envVars" :key="ev.key">
-                          <Badge variant="secondary" class="text-[9px] font-mono justify-self-start">{{ ev.key }}</Badge>
-                          <span class="text-[10px] font-mono text-muted-foreground truncate">{{ ev.value }}</span>
-                        </template>
-                      </div>
-                    </div>
-                    <p v-if="!svc.volumes?.length && !svc.envVars?.length" class="text-[10px] text-muted-foreground text-center py-1">No volumes or env vars configured.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Presets Panel -->
-          <div class="rounded-lg border p-3 space-y-3">
-            <div class="flex items-center justify-between">
-              <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Environment Presets</p>
-              <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer h-7 text-xs" @click="forkModal = true"><GitFork class="size-3" /> Fork Env Vars</Button>
-            </div>
-            <div class="rounded-md bg-muted/30 border border-muted px-3 py-2 text-[11px] text-muted-foreground flex items-start gap-2">
-              <Info class="size-3.5 shrink-0 mt-0.5" />
-              <span>By default, the project runs with the env var configuration detected from your compose and .env files (viewable via "Scanned Env Vars"). To customize, click <strong>Fork Env Vars</strong> to create a named preset. <span v-if="!activePreset">No preset is active — using scanned defaults.</span><span v-else>Active preset: <strong>{{ activePreset.name }}</strong></span></span>
-            </div>
-
-            <div v-if="!presets.length" class="text-xs text-muted-foreground text-center py-4">No presets yet. Fork the scanned env vars to create one.</div>
-
-            <!-- Preset list -->
-            <div v-for="preset in presets" :key="preset.id" class="rounded-lg border">
-              <div class="flex items-center gap-2 px-3 py-2">
-                <button class="flex items-center gap-2 flex-1 cursor-pointer" @click="presetCollapsed[preset.id] = !presetCollapsed[preset.id]">
-                  <ChevronRight class="size-3 text-muted-foreground transition-transform shrink-0" :class="!presetCollapsed[preset.id] ? 'rotate-90' : ''" />
-                  <span class="text-xs font-medium">{{ preset.name }}</span>
-                  <Badge variant="secondary" class="text-[10px]">{{ presetTotalCount(preset.id) }}</Badge>
-                  <Badge v-if="preset.active" class="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px] gap-1"><Check class="size-2.5" />Active</Badge>
-                </button>
-                <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-7 cursor-pointer" :class="preset.active ? 'text-emerald-500' : 'text-muted-foreground hover:text-foreground'" @click="activatePreset(preset.id)"><Check class="size-3.5" /></Button></TooltipTrigger><TooltipContent>{{ preset.active ? 'Deactivate preset' : 'Activate preset' }}</TooltipContent></Tooltip>
-                <Button v-if="presetDirty[preset.id]" variant="outline" size="sm" class="h-7 text-xs gap-1 cursor-pointer" @click="savePreset(preset.id)"><Save class="size-3" /> Save</Button>
-                <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-red-500 cursor-pointer" @click="deletePreset(preset.id)"><Trash2 class="size-3.5" /></Button></TooltipTrigger><TooltipContent>Delete preset</TooltipContent></Tooltip>
-              </div>
-              <div v-if="!presetCollapsed[preset.id] && presetSections[preset.id]" class="px-3 pb-3 space-y-2 border-t pt-3">
-                <div class="grid gap-2 items-start" :class="presetSections[preset.id].length > 1 ? 'md:grid-cols-2' : ''">
-                  <div v-for="(section, si) in presetSections[preset.id]" :key="section.source" class="rounded-md border">
-                    <div class="flex items-center gap-2 px-2.5 py-1.5 bg-muted/30">
-                      <button class="flex items-center gap-1.5 flex-1 cursor-pointer" @click="section.collapsed = !section.collapsed">
-                        <ChevronRight class="size-3 text-muted-foreground transition-transform shrink-0" :class="!section.collapsed ? 'rotate-90' : ''" />
-                        <span class="text-[11px] font-medium font-mono">{{ section.source }}</span>
-                        <Badge variant="secondary" class="text-[9px]">{{ section.vars.length }}</Badge>
-                      </button>
-                      <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-5 cursor-pointer text-muted-foreground hover:text-foreground" @click="section.sort = cycleSort(section.sort)">
-                        <ArrowUpAZ v-if="section.sort === 'az'" class="size-3" /><ArrowDownAZ v-else-if="section.sort === 'za'" class="size-3" /><ListOrdered v-else class="size-3" />
-                      </Button></TooltipTrigger><TooltipContent>Sort: {{ section.sort === 'az' ? 'A→Z' : section.sort === 'za' ? 'Z→A' : 'Default' }}</TooltipContent></Tooltip>
-                      <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-5 cursor-pointer text-muted-foreground hover:text-foreground" @click="addPresetVar(preset.id, si)"><Plus class="size-3" /></Button></TooltipTrigger><TooltipContent>Add env var</TooltipContent></Tooltip>
-                    </div>
-                    <div v-if="!section.collapsed" class="p-2 space-y-1 max-h-72 overflow-y-auto scrollbar-thin">
-                      <div v-for="(ev, vi) in sortedVars(section.vars, section.sort, section.originalVars)" :key="vi" class="flex items-center gap-1.5">
-                        <Input v-model="ev.key" placeholder="KEY" class="text-[11px] font-mono flex-1 h-7" @input="markPresetDirty(preset.id)" />
-                        <Input v-model="ev.value" placeholder="value" class="text-[11px] font-mono flex-1 h-7" @input="markPresetDirty(preset.id)" />
-                        <Button variant="ghost" size="icon" class="size-5 shrink-0 cursor-pointer text-muted-foreground hover:text-red-500" @click="removePresetVar(preset.id, si, vi)"><Trash2 class="size-2.5" /></Button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Log Console -->
-          <div v-if="simpleLogs.length || simpleRunning" ref="logSection" class="space-y-1 min-w-0 overflow-hidden">
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-muted-foreground">Output ({{ simpleLogs.length }} lines)</span>
-              <Tooltip v-if="activePreset"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px] text-emerald-500 border-emerald-500/30 gap-1"><Settings2 class="size-2.5" /> {{ activePreset.name }}</Badge></TooltipTrigger><TooltipContent>Running with preset "{{ activePreset.name }}"</TooltipContent></Tooltip>
-              <Badge v-else variant="outline" class="text-[10px] text-muted-foreground gap-1">scanned defaults</Badge>
-              <Tooltip v-if="portRemaps.length"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px] text-amber-500 border-amber-500/30 gap-1">{{ portRemaps.length }} port(s) remapped</Badge></TooltipTrigger><TooltipContent>Some ports were in use and were automatically remapped</TooltipContent></Tooltip>
-              <Tooltip v-if="portRemaps.length"><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-6 cursor-pointer text-muted-foreground hover:text-foreground" @click="loadEffectiveConfig"><FileText class="size-3.5" /></Button></TooltipTrigger><TooltipContent>View effective docker-compose config</TooltipContent></Tooltip>
-            </div>
-            <LogViewer
-              :logs="simpleLogs.map(l => l.line)"
-              :loading="simpleRunning"
-              loading-text="Starting containers..."
-              empty-text="Run output will appear here"
-              :root-cause-lines="rootCauseLines"
-              :kiro-available="kiroAvailable"
-              :ai-explaining="aiExplaining"
-              :ai-explanation="aiExplanation"
-              @explain="explainBatchError"
-            >
-              <template #after-root-cause-mini>
-                <p v-if="kiroAvailable" class="mt-2 text-[10px] text-violet-400/60 italic">Expand log to explain with Kiro</p>
-              </template>
-            </LogViewer>
-            <div v-if="simpleResult && !simpleError" class="flex items-center gap-2 text-sm text-green-500"><Check class="size-4" /> Completed successfully</div>
-            <div v-if="simpleError" class="flex items-center gap-2 text-sm text-red-500"><X class="size-4" /> {{ simpleError }}</div>
+          <div class="border-t">
+            <LogViewer v-if="activeConsoleTab === 'all'" :logs="workflowLogs.map(l => l.line)" :loading="workflowRunning" loading-text="Starting workflow..." empty-text="Workflow output will appear here" />
+            <LogViewer v-else :logs="activeTabLogs.map(l => l.line)" :loading="workflowRunning" loading-text="Starting workflow..." empty-text="No output for this container yet" :root-cause-lines="activeTabRootCause" :kiro-available="kiroAvailable" :ai-explaining="aiExplaining" :ai-explanation="aiExplanation" @explain="explainContainerErrors" />
           </div>
         </div>
-
-        <div v-if="!selectedProject" class="rounded-lg border bg-background py-12 text-center">
-          <p class="text-sm text-muted-foreground">Select a batch project to get started.</p>
-        </div>
-      </TabsContent>
-
-      <TabsContent value="runs" class="mt-4">
-        <Card><CardContent class="py-12 text-center text-sm text-muted-foreground">Run history will be available in the next update.</CardContent></Card>
-      </TabsContent>
-    </Tabs>
+      </div>
+    </div>
 
     <!-- Node Edit Sheet -->
     <Sheet v-model:open="editSheet">
@@ -751,15 +583,12 @@ onUnmounted(() => { watchSource?.close(); });
           </div>
           <div class="space-y-4 rounded-lg border p-4">
             <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Execution</p>
-            <div class="space-y-2 min-w-0">
+            <div class="space-y-2">
               <Label class="text-xs">Docker Image</Label>
-              <Select v-model="editingNode.imageName">
-                <SelectTrigger class="!w-full overflow-hidden"><SelectValue placeholder="Select image" /></SelectTrigger>
-                <SelectContent><SelectItem v-for="b in builds" :key="b.id" :value="b.imageTag">{{ b.name }}</SelectItem></SelectContent>
-              </Select>
+              <Input v-model="editingNode.imageName" class="text-sm font-mono" placeholder="e.g. my-batch:latest" />
             </div>
             <div class="space-y-2">
-              <Label class="text-xs flex items-center gap-1">Command Override <Tooltip><TooltipTrigger as-child><Info class="size-3 text-muted-foreground cursor-help" /></TooltipTrigger><TooltipContent class="max-w-[220px]">Overrides the Dockerfile CMD/ENTRYPOINT. Leave empty to use the default. Auto-filled when importing from docker-compose.</TooltipContent></Tooltip></Label>
+              <Label class="text-xs flex items-center gap-1">Command Override <Tooltip><TooltipTrigger as-child><Info class="size-3 text-muted-foreground cursor-help" /></TooltipTrigger><TooltipContent class="max-w-[220px]">Overrides the Dockerfile CMD/ENTRYPOINT.</TooltipContent></Tooltip></Label>
               <Input v-model="editingNode.command" class="text-sm font-mono" placeholder="e.g. java -cp app.jar com.example.Main" />
             </div>
             <div class="space-y-2"><Label class="text-xs">Timeout (seconds)</Label><Input v-model.number="editingNode.timeout" type="number" class="text-sm w-32" /></div>
@@ -769,13 +598,12 @@ onUnmounted(() => { watchSource?.close(); });
               <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Node-Specific Env Vars</p>
               <Button variant="ghost" size="sm" class="h-6 text-xs cursor-pointer" @click="addNodeEnvVar"><Plus class="size-3 mr-1" /> Add</Button>
             </div>
-            <p class="text-[10px] text-muted-foreground">These override common and scanned env vars for this job only.</p>
             <div v-for="(ev, i) in editingNode.envVars" :key="i" class="flex items-center gap-2">
               <Input v-model="ev.key" placeholder="KEY" class="text-xs font-mono flex-1" />
               <Input v-model="ev.value" placeholder="value" class="text-xs font-mono flex-1" />
               <Button variant="ghost" size="icon" class="size-6 shrink-0 cursor-pointer" @click="removeNodeEnvVar(i)"><Trash2 class="size-3" /></Button>
             </div>
-            <p v-if="!editingNode.envVars.length" class="text-xs text-muted-foreground text-center py-2">No overrides. This job will use common env vars only.</p>
+            <p v-if="!editingNode.envVars.length" class="text-xs text-muted-foreground text-center py-2">No overrides.</p>
           </div>
           <div class="flex justify-end"><Button size="sm" class="gap-1.5 cursor-pointer" @click="saveNodeEdit"><Save class="size-3.5" /> Save</Button></div>
         </div>
@@ -784,20 +612,13 @@ onUnmounted(() => { watchSource?.close(); });
 
     <!-- Common Env Vars Sheet -->
     <Sheet v-model:open="commonSheet">
-      <SheetContent class="w-[420px] sm:max-w-[420px] overflow-y-auto overflow-x-hidden p-6">
+      <SheetContent class="w-[560px] sm:max-w-[560px] overflow-y-auto overflow-x-hidden p-6">
         <SheetHeader class="mb-0">
           <SheetTitle class="flex items-center gap-2"><Variable class="size-4" /> Common Environment Variables</SheetTitle>
-          <SheetDescription>Shared across all jobs in this workflow. Node-specific vars take precedence on conflicts.</SheetDescription>
+          <SheetDescription>Shared across all jobs. Node-specific vars take precedence.</SheetDescription>
         </SheetHeader>
         <div v-if="selectedWorkflow" class="space-y-2">
-          <div v-if="selectedWorkflow.scannedEnvVars.length" class="space-y-4 rounded-lg border p-4">
-            <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Scanned from Project</p>
-            <p class="text-[10px] text-muted-foreground">Auto-detected from .env files and config. Read-only.</p>
-            <div v-for="ev in selectedWorkflow.scannedEnvVars" :key="ev.key" class="flex items-center gap-2 opacity-60">
-              <Input :model-value="ev.key" disabled class="text-xs font-mono flex-1" />
-              <Input :model-value="ev.value" disabled class="text-xs font-mono flex-1" />
-            </div>
-          </div>
+          <Tooltip v-if="(selectedWorkflow as any).originalComposePath"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px] gap-1 cursor-default"><Info class="size-3" /> Imported</Badge></TooltipTrigger><TooltipContent class="max-w-[400px] font-mono text-[10px]">{{ (selectedWorkflow as any).originalComposePath }}</TooltipContent></Tooltip>
           <div class="space-y-4 rounded-lg border p-4">
             <div class="flex items-center justify-between">
               <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Common Env Vars</p>
@@ -810,169 +631,51 @@ onUnmounted(() => { watchSource?.close(); });
             </div>
             <p v-if="!selectedWorkflow.commonEnvVars.length" class="text-xs text-muted-foreground text-center py-2">No common env vars defined yet.</p>
           </div>
+          <div class="flex justify-end"><Button size="sm" class="gap-1.5 cursor-pointer" :disabled="savingCommon" @click="saveCommonEnvVars"><Loader2 v-if="savingCommon" class="size-3.5 animate-spin" /><Save v-else class="size-3.5" /> Save</Button></div>
         </div>
       </SheetContent>
     </Sheet>
 
-    <!-- Project Picker -->
-    <Dialog v-model:open="pickProjectOpen">
+    <!-- File Browser -->
+    <FolderBrowser v-model="showFileBrowser" title="Select Docker Compose File" description="Navigate to your compose file." mode="file" :file-filter="'\\.ya?ml$'" @select="p => wizardComposePath = p" />
+
+    <!-- Delete Confirmation -->
+    <Dialog :open="!!deleteTarget" @update:open="v => { if (!v) deleteTarget = null }">
       <DialogContent class="sm:max-w-md">
-        <DialogHeader><DialogTitle>Select Batch Project</DialogTitle></DialogHeader>
-        <div class="space-y-2 py-2">
-          <div v-for="b in builds" :key="b.id" class="flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-colors" :class="pickedProjectTag === b.imageTag ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'" @click="pickedProjectTag = b.imageTag">
-            <Container class="size-4 shrink-0" />
-            <div class="min-w-0"><p class="text-sm font-medium">{{ b.name }}</p><p class="text-xs text-muted-foreground font-mono truncate">{{ b.imageTag }}</p></div>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" class="cursor-pointer" @click="pickProjectOpen = false">Cancel</Button>
-          <Button size="sm" class="cursor-pointer" :disabled="!pickedProjectTag" @click="confirmPickProject">Add Job</Button>
+        <DialogHeader>
+          <DialogTitle>Delete Workflow</DialogTitle>
+          <DialogDescription>Are you sure you want to delete "{{ deleteTarget?.name }}"? This cannot be undone.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter class="gap-2">
+          <Button variant="outline" class="cursor-pointer" @click="deleteTarget = null">Cancel</Button>
+          <Button variant="destructive" class="cursor-pointer" @click="executeDelete">Delete</Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    <!-- Scanned Env Vars Modal -->
-    <Dialog v-model:open="scannedModal">
-      <DialogContent class="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Scanned Environment Variables</DialogTitle>
-          <DialogDescription>Auto-detected from your compose file and .env files. These are read-only — fork them to create an editable preset.</DialogDescription>
-        </DialogHeader>
-        <div class="space-y-2 py-2">
-          <div v-for="group in groupedScanned" :key="group.source" class="rounded-md border">
-            <button class="flex items-center gap-2 w-full px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors" @click="scannedCollapsed[group.source] = !scannedCollapsed[group.source]">
-              <ChevronRight class="size-3 text-muted-foreground transition-transform shrink-0" :class="!scannedCollapsed[group.source] ? 'rotate-90' : ''" />
-              <span class="text-xs font-medium font-mono">{{ group.source }}</span>
-              <Badge variant="secondary" class="text-[10px]">{{ group.vars.length }}</Badge>
-              <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-5 ml-auto cursor-pointer text-muted-foreground hover:text-foreground" @click.stop="scannedSort[group.source] = cycleSort(scannedSort[group.source] || 'default')">
-                <ArrowUpAZ v-if="scannedSort[group.source] === 'az'" class="size-3" /><ArrowDownAZ v-else-if="scannedSort[group.source] === 'za'" class="size-3" /><ListOrdered v-else class="size-3" />
-              </Button></TooltipTrigger><TooltipContent>Sort: {{ (scannedSort[group.source] || 'default') === 'az' ? 'A→Z' : (scannedSort[group.source] || 'default') === 'za' ? 'Z→A' : 'Default' }}</TooltipContent></Tooltip>
-            </button>
-            <div v-if="!scannedCollapsed[group.source]" class="px-3 pb-3 space-y-1 border-t pt-2">
-              <div v-for="ev in sortedVars(group.vars, scannedSort[group.source] || 'default', group.vars)" :key="ev.key" class="flex items-center gap-2">
-                <Input :model-value="ev.key" disabled class="text-[11px] font-mono flex-1 h-7" />
-                <Input :model-value="ev.value" disabled class="text-[11px] font-mono flex-1 h-7" />
-              </div>
-            </div>
-          </div>
-          <p v-if="!groupedScanned.length" class="text-xs text-muted-foreground text-center py-4">No env vars detected.</p>
-        </div>
-      </DialogContent>
-    </Dialog>
-
-    <!-- Fork Env Vars Modal -->
-    <Dialog v-model:open="forkModal">
-      <DialogContent class="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle>Fork Environment Variables</DialogTitle>
-          <DialogDescription>Create a named preset from the currently scanned env vars. You can then edit them independently.</DialogDescription>
-        </DialogHeader>
-        <div class="space-y-2 py-2">
-          <Label class="text-xs">Preset Name</Label>
-          <Input v-model="forkName" placeholder="e.g. local-debug, staging-test" class="text-sm" @keydown.enter="forkEnvVars" />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" class="cursor-pointer" @click="forkModal = false">Cancel</Button>
-          <Button class="cursor-pointer" :disabled="!forkName.trim()" @click="forkEnvVars">Create Preset</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-
-    <!-- Effective Config Modal -->
-    <Dialog v-model:open="effectiveConfigOpen">
-      <DialogContent class="sm:max-w-4xl max-h-[80vh] flex flex-col overflow-hidden">
-        <DialogHeader>
-          <DialogTitle class="flex items-center gap-2 text-sm"><FileText class="size-4" /> Effective Docker Compose Config</DialogTitle>
-          <DialogDescription>This is the generated compose file Mouseketool used for the run. Port remappings are applied here.</DialogDescription>
-        </DialogHeader>
-        <div v-if="portRemaps.length" class="rounded-md border p-3 space-y-2">
-          <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Port Changes</p>
-          <div class="grid gap-1.5">
-            <div v-for="r in portRemaps" :key="r.original" class="flex items-center gap-2 text-xs rounded-md bg-muted/30 px-3 py-1.5">
-              <Badge variant="secondary" class="font-mono text-[10px]">{{ r.service }}</Badge>
-              <div class="flex items-center gap-1.5 font-mono">
-                <span class="text-red-500 line-through">{{ r.hostPort }}:{{ r.containerPort }}</span>
-                <span class="text-muted-foreground">→</span>
-                <span class="text-emerald-500">{{ r.newHostPort }}:{{ r.containerPort }}</span>
-              </div>
-              <Badge variant="outline" class="text-[9px] text-amber-500 border-amber-500/30">remapped</Badge>
-            </div>
-          </div>
-        </div>
-        <div class="flex-1 min-h-0 rounded-md border bg-zinc-100 dark:bg-zinc-950 p-4 overflow-auto scrollbar-thin scrollbar-thumb-zinc-400 dark:scrollbar-thumb-zinc-700">
-          <pre class="text-xs font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre leading-5" v-html="highlightedConfig"></pre>
-        </div>
-      </DialogContent>
-    </Dialog>
-
-    <!-- File Viewer Modal -->
-    <Dialog v-model:open="fileViewerOpen">
-      <DialogContent class="sm:max-w-4xl max-h-[80vh]">
-        <DialogHeader>
-          <DialogTitle class="flex items-center gap-2 font-mono text-sm"><FileText class="size-4" /> {{ fileViewerPath }}</DialogTitle>
-        </DialogHeader>
-        <ScrollArea class="h-96 rounded-md border bg-zinc-100 dark:bg-zinc-950 p-4">
-          <Loader2 v-if="fileViewerLoading" class="size-4 animate-spin text-muted-foreground" />
-          <pre v-else class="text-xs font-mono text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap leading-5" v-html="fileViewerPath.endsWith('.sh') ? highlightSh(fileViewerContent) : fileViewerContent"></pre>
-        </ScrollArea>
       </DialogContent>
     </Dialog>
 
     <!-- Toast -->
     <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
-      <AlertTriangle v-if="toastType === 'warning'" class="size-4" />{{ toastMsg }}
+      {{ toastMsg }}
     </div>
   </div>
 </template>
 
 <style>
-.sh-comment { color: #a1a1aa; }
-.sh-keyword { color: #a855f7; }
-.sh-cmd { color: #3b82f6; }
-.sh-var { color: #f59e0b; }
-.sh-string { color: #22c55e; }
-:root:not(.dark) .sh-comment { color: #71717a; }
-:root:not(.dark) .sh-keyword { color: #7c3aed; }
-:root:not(.dark) .sh-cmd { color: #2563eb; }
-:root:not(.dark) .sh-var { color: #d97706; }
-:root:not(.dark) .sh-string { color: #16a34a; }
-.yaml-key { color: #3b82f6; }
-.yaml-num { color: #f59e0b; }
-.yaml-bool { color: #a855f7; }
-:root:not(.dark) .yaml-key { color: #2563eb; }
-:root:not(.dark) .yaml-num { color: #d97706; }
-:root:not(.dark) .yaml-bool { color: #7c3aed; }
-.vue-flow__handle {
-  background: hsl(var(--primary)) !important;
-  border-color: hsl(var(--background)) !important;
-}
-.dot-grid {
-  background-image: radial-gradient(circle, #a1a1aa 1px, transparent 1px) !important;
-  background-size: 16px 16px !important;
-}
-:root.dark .dot-grid {
-  background-image: radial-gradient(circle, #3f3f46 1px, transparent 1px) !important;
-}
-.vue-flow__controls {
-  background: hsl(var(--muted)) !important;
-  border: 1px solid hsl(var(--border)) !important;
-  border-radius: 8px !important;
-  box-shadow: none !important;
-  overflow: hidden;
-}
-.vue-flow__controls-button {
-  background: hsl(var(--muted)) !important;
-  border: none !important;
-  border-bottom: 1px solid hsl(var(--border)) !important;
-  color: hsl(var(--foreground));
-}
+.vue-flow__handle { background: hsl(var(--primary)) !important; border-color: hsl(var(--background)) !important; }
+.vue-flow__handle.target { width: 8px !important; height: 8px !important; min-width: 0 !important; min-height: 0 !important; opacity: 0.5 !important; }
+.vue-flow__handle.source { width: 8px !important; height: 8px !important; }
+.vue-flow__node, .vue-flow__node * { opacity: 1 !important; }
+.vue-flow__node.selected, .vue-flow__node:focus { outline: none !important; box-shadow: none !important; }
+.dot-grid { background-image: radial-gradient(circle, #a1a1aa 1px, transparent 1px) !important; background-size: 16px 16px !important; }
+:root.dark .dot-grid { background-image: radial-gradient(circle, #3f3f46 1px, transparent 1px) !important; }
+.vue-flow__controls { background: hsl(var(--muted)) !important; border: 1px solid hsl(var(--border)) !important; border-radius: 8px !important; box-shadow: none !important; overflow: hidden; }
+.vue-flow__controls-button { background: hsl(var(--muted)) !important; border: none !important; border-bottom: 1px solid hsl(var(--border)) !important; color: hsl(var(--foreground)); }
 .vue-flow__controls-button svg { fill: currentColor !important; }
 .vue-flow__controls-button svg path { fill: currentColor !important; }
 .vue-flow__controls-button:hover { background: hsl(var(--accent)) !important; }
-.vue-flow__minimap {
-  background: hsl(var(--background)) !important;
-  border: 1px solid hsl(var(--border)) !important;
-  border-radius: 8px !important;
-}
+.vue-flow__minimap { background: hsl(var(--background)) !important; border: 1px solid hsl(var(--border)) !important; border-radius: 8px !important; }
+
+.vue-flow__edge-path { stroke: #71717a !important; stroke-width: 2 !important; stroke-dasharray: 8 4 !important; animation: dash-flow 0.6s linear infinite !important; transition: stroke 0.2s; }
+.vue-flow__edge:hover .vue-flow__edge-path { stroke: #a1a1aa !important; }
+@keyframes dash-flow { to { stroke-dashoffset: -12; } }
 </style>

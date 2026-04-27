@@ -24,11 +24,16 @@ router.get("/status", async (_req, res) => {
 });
 
 router.post("/explain", async (req, res) => {
-  const { error, logs, functionName, runtime, memoryMB, envVars, handler, timeout } = req.body;
+  const { error, logs, functionName, runtime, memoryMB, envVars, handler, timeout, context } = req.body;
   if (!error) return res.status(400).json({ error: "error field required" });
+  const kiro = await detectKiro();
+  if (!kiro.available) return res.status(503).json({ error: "Kiro CLI is not running. Start Kiro to enable AI explanations." });
+  const isDocker = context?.includes("docker-compose");
   const prompt = [
-    "You are a concise AWS Lambda debugging assistant. The Lambda is running locally on LocalStack (not real AWS). LocalStack emulates AWS services but has quirks — timeouts, cold starts, and container reuse can cause issues that wouldn't happen in production.",
-    "Explain the error in 2-3 sentences, then suggest a fix. If the error looks LocalStack-specific, say so.",
+    isDocker
+      ? "You are a concise Docker debugging assistant. The containers are running via docker-compose locally. Explain the error in 2-3 sentences, then suggest a fix."
+      : "You are a concise AWS Lambda debugging assistant. The Lambda is running locally on LocalStack (not real AWS). LocalStack emulates AWS services but has quirks — timeouts, cold starts, and container reuse can cause issues that wouldn't happen in production.",
+    isDocker ? "" : "Explain the error in 2-3 sentences, then suggest a fix. If the error looks LocalStack-specific, say so.",
     `--- Lambda metadata ---`,
     `Function: ${functionName || "unknown"}`,
     runtime ? `Runtime: ${runtime}` : "",
