@@ -619,11 +619,16 @@ onMounted(async () => {
           <p class="text-sm font-medium">Import compose file</p>
           <p class="text-xs text-muted-foreground mt-1">Browse your filesystem and select a docker-compose file. Mouseketool will detect batch jobs and dependencies.</p>
         </button>
-        <button class="rounded-lg border p-4 text-left cursor-pointer transition-colors hover:bg-muted/50" :class="wizardSource === 'scratch' ? 'border-primary bg-primary/5' : ''" @click="wizardSource = 'scratch'">
-          <FileCode2 class="size-5 mb-2 text-primary" />
-          <p class="text-sm font-medium">Start from scratch</p>
-          <p class="text-xs text-muted-foreground mt-1">Begin with an empty canvas and add job nodes manually.</p>
-        </button>
+        <Tooltip :disabled="kiroAvailable">
+          <TooltipTrigger as-child>
+            <button class="rounded-lg border p-4 text-left transition-colors" :class="!kiroAvailable ? 'opacity-50 cursor-not-allowed' : wizardSource === 'scratch' ? 'border-primary bg-primary/5 cursor-pointer' : 'cursor-pointer hover:bg-muted/50'" :disabled="!kiroAvailable" @click="kiroAvailable && (wizardSource = 'scratch')">
+              <FileCode2 class="size-5 mb-2 text-primary" />
+              <p class="text-sm font-medium">Start from scratch</p>
+              <p class="text-xs text-muted-foreground mt-1">Use Compose Studio with AI to build your compose file.</p>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Kiro AI is not available. Start Kiro CLI to enable this feature.</TooltipContent>
+        </Tooltip>
       </div>
 
       <!-- Import flow -->
