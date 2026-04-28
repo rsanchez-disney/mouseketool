@@ -231,4 +231,123 @@ router.post("/save-feedback", async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+
+router.post("/compose", async (req, res) => {
+  const { action, serviceName, currentYaml, context } = req.body as {
+    action: 'generate' | 'add-service' | 'add-healthchecks' | 'wire-dependencies' | 'explain';
+    serviceName?: string; currentYaml?: string; context?: any;
+  };
+  const validActions = ['generate', 'add-service', 'add-healthchecks', 'wire-dependencies', 'explain'] as const;
+  if (!action || !validActions.includes(action)) return res.status(400).json({ error: "valid action required" });
+  if (action === 'add-service' && !serviceName) return res.status(400).json({ error: "serviceName required for add-service" });
+  const kiro = await detectKiro();
+  if (!kiro.available) return res.status(503).json({ error: "Kiro CLI not available" });
+
+  try {
+    const projectNames = (context?.projects || []).map((p: any) => p.name).join(", ") || "my services";
+    const projectSummary = (context?.projects || []).map((p: any) => {
+      const svcs = (p.services || []).map((svc: any) => {
+        const lines = [svc.build ? `  - ${svc.name}: build=${svc.build} (Dockerfile in project dir)` : `  - ${svc.name}: image=${svc.image}`];
+        if (svc.ports?.length) lines.push(`    ports: ${svc.ports.join(", ")}`);
+        if (svc.envVars?.length) lines.push(`    env: ${svc.envVars.map((e: any) => typeof e === "string" ? e : e.key + "=" + e.value).join(", ")}`);
+        if (svc.volumes?.length) lines.push(`    volumes: ${svc.volumes.join(", ")}`);
+        if (svc.dependsOn?.length) lines.push(`    depends_on: ${svc.dependsOn.join(", ")}`);
+        if (svc.healthcheck) lines.push(`    healthcheck: ${JSON.stringify(svc.healthcheck)}`);
+        return lines.join("\n");
+      }).join("\n");
+      return `Project: ${p.name} (image: ${p.imageTag})\nServices:\n${svcs}`;
+    }).join("\n\n");
+
+    const actionPrompts: Record<string, string> = {
+      generate: `Generate a docker-compose.yml for these batch projects: ${projectNames}. Include infrastructure services they depend on (MySQL, Redis, etc.) with healthchecks. Use depends_on with service_healthy conditions.`,
+      'add-service': `Add a ${serviceName} service to this docker-compose. Include appropriate healthcheck, ports, volumes, and environment variables. Wire it into existing depends_on chains where appropriate.`,
+      'add-healthchecks': "Add healthchecks to all services in this docker-compose that don't have one. Use appropriate health check commands for each service type (mysqladmin ping for mysql, redis-cli ping for redis, curl for web services, etc.).",
+      'wire-dependencies': "Analyze the services in this docker-compose and add appropriate depends_on relationships. Infrastructure services (mysql, redis, localstack) should start first. Batch/application services should depend on their infrastructure with condition: service_healthy where healthchecks exist.",
+      explain: "Explain what each service in this docker-compose does, how they're connected, and the startup order.",
+    };
+
+    const bt = "`";
+    const fence = bt + bt + bt;
+    const promptParts = [
+      "You are a Docker Compose expert. Generate valid docker-compose YAML based on the user request.",
+      "Rules:",
+      action === 'explain'
+        ? "- Provide a clear explanation only. No YAML output needed."
+        : `- Output the YAML inside a ${fence}yaml code fence, followed by a brief explanation.`,
+      `- The container_name can be the same as the service name (the YAML section key). No special suffix needed.`,
+      "- For batch/application services from registered projects: use \`build:\\n  context: <absolute project path>\\n  dockerfile: Dockerfile\` (NOT image:). The project path is provided in the context below.",
+      "- For infrastructure services (mysql, redis, localstack, etc.): use \`image:\` with the standard Docker Hub image.",
+      "- Use the actual env vars, volumes, and ports from the registered projects when applicable.",
+      "- Include healthchecks for infrastructure services (mysql, redis, postgres, etc.).",
+      "- Use depends_on with condition: service_healthy where a healthcheck exists.",
+      "- Include a shared network named `cs-batch-network`.",
+      "- Use version-less compose format (no `version:` key).",
+      "",
+      projectSummary ? `--- Registered projects and services ---\n${projectSummary}` : "",
+      currentYaml ? `--- Current YAML (modify this) ---\n${currentYaml}` : "",
+      "",
+      actionPrompts[action],
+    ];
+
+    // Load favorites (good samples) and feedback (bad samples)
+    let favorites: string[] = [];
+    try {
+      const { readFile: rf } = await import("fs/promises");
+      const { FAVORITES_DIR } = await import("../config/constants.js");
+      favorites = JSON.parse(await rf(join(FAVORITES_DIR, "compose-compose-studio.json"), "utf-8"));
+    } catch {}
+    if (favorites.length) {
+      promptParts.push("\n--- Previously approved compose files (use as reference) ---");
+      for (const f of favorites.slice(-3)) promptParts.push(f.slice(0, 500));
+    }
+    promptParts.push(...await loadFeedback("compose", "compose-studio"));
+
+    const systemPrompt = promptParts.filter(Boolean).join("\n");
+
+    const result = await askKiro(systemPrompt, 120000);
+
+    let yaml = "";
+    let explanation = result;
+    // Try fenced YAML first
+    const yamlMatch = result.match(/```ya?ml\n([\s\S]*?)```/);
+    if (yamlMatch) {
+      yaml = yamlMatch[1].trim();
+      explanation = result.replace(yamlMatch[0], "").trim();
+    } else if (action !== "explain") {
+      // Fallback: if response starts with or contains "services:" it's likely raw YAML
+      const svcIdx = result.indexOf("services:");
+      if (svcIdx !== -1) {
+        // Split at double-newline boundaries, keep only the YAML part
+        const afterSvc = result.substring(svcIdx);
+        // Find where YAML ends: look for a blank line followed by a line that doesn't start with space, #, -, or a yaml key pattern
+        const parts = afterSvc.split(/\n\n/);
+        const yamlParts: string[] = [];
+        for (const part of parts) {
+          const firstLine = part.trimStart().split("\n")[0];
+          // If first line looks like prose (contains ** or starts with a sentence), stop
+          if (firstLine.includes("**") || firstLine.startsWith("Explanation") || (/^[A-Z][a-z]+ [a-z]/.test(firstLine) && !firstLine.includes(":"))) break;
+          yamlParts.push(part);
+        }
+        yaml = yamlParts.join("\n\n").trim();
+        explanation = result.substring(0, svcIdx).trim() + " " + afterSvc.substring(yaml.length).trim();
+        explanation = explanation.trim() || "Generated compose file.";
+      }
+    }
+
+
+    const defaultExplanations: Record<string, string> = {
+      generate: "Generated a docker-compose file based on your registered batch projects. Review the services, ports, and dependencies, then click Apply to Canvas when ready.",
+      "add-service": "Added the requested service to your compose file with appropriate configuration.",
+      "add-healthchecks": "Added healthchecks to services that were missing them.",
+      "wire-dependencies": "Analyzed services and added depends_on relationships.",
+      explain: explanation || "No explanation available.",
+    };
+    if (!explanation || explanation.length < 10) explanation = defaultExplanations[action] || "Done.";
+    if (yaml && action === "generate") yaml = "# Generated by Kiro based on your registered batch projects.\n# The more projects you register, the richer this compose will be.\n\n" + yaml;
+    res.json({ yaml, explanation });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

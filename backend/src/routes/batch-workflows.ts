@@ -1,13 +1,16 @@
 import { Router } from "express";
 import { readFile, writeFile, mkdir, copyFile, rm } from "fs/promises";
 import { join, dirname, basename } from "path";
-import { existsSync, cpSync, mkdirSync } from "fs";
+import { tmpdir } from "os";
+import { existsSync, cpSync, mkdirSync, readFileSync } from "fs";
+import { execSync } from "child_process";
 import { v4 as uuid } from "uuid";
 import * as yaml from "js-yaml";
 import { loadSettings } from "../helpers/settings.js";
 
 const WORKFLOWS_FILE = join(process.cwd(), ".data", "batch-workflows.json");
 const WORKFLOWS_DIR = join(process.cwd(), ".data", "batch-workflows");
+const BUILDS_FILE = join(process.cwd(), ".data", "batch-projects.json");
 const router = Router();
 
 interface BatchJobNode {
@@ -22,6 +25,8 @@ interface BatchWorkflow {
   commonEnvVars: { key: string; value: string }[];
   nodes: BatchJobNode[]; edges: { source: string; target: string }[];
   createdAt: string; updatedAt: string;
+  type?: 'imported' | 'scratch';
+  complete?: boolean;
 }
 
 
@@ -65,6 +70,7 @@ router.post("/", async (req, res) => {
     id: uuid(), name: name || "New Workflow",
     scannedEnvVars: [], commonEnvVars: [], nodes: [], edges: [],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    type: 'scratch', complete: false,
   };
   const wfDir = join(WORKFLOWS_DIR, wf.id);
   await mkdir(wfDir, { recursive: true });
@@ -216,14 +222,46 @@ function layoutNodes(services: { name: string; dependsOn: string[] }[], auxiliar
 const DEFAULT_EXCLUDE = ["localstack", "mockoon", "vault", "vault-setup", "redis", "dynamodb-local", "minio", "zookeeper", "kafka", "elasticsearch", "postgres", "mysql", "mongo", "rabbitmq", "nginx", "traefik", "consul", "etcd", "adminer", "sftp"];
 
 router.post("/:id/import-file", async (req, res) => {
-  const { filePath, exclude = [] } = req.body;
-  if (!filePath) return res.status(400).json({ error: "filePath required" });
+  const { filePath: rawFilePath, content: rawContent, exclude = [] } = req.body;
+  let filePath = rawFilePath;
+  let tempFile: string | null = null;
+  if (rawContent) {
+    const wfDir = join(WORKFLOWS_DIR, req.params.id);
+    await mkdir(wfDir, { recursive: true });
+    tempFile = join(wfDir, "docker-compose.yml");
+    await writeFile(tempFile, rawContent);
+    filePath = tempFile;
+  }
+  if (!filePath) return res.status(400).json({ error: "filePath or content required" });
   if (!existsSync(filePath)) return res.status(404).json({ error: "File not found" });
 
   const wfs = await loadWorkflows();
   const wf = wfs.find(w => w.id === req.params.id);
   if (!wf) return res.status(404).json({ error: "Workflow not found" });
 
+
+  // Validate compose file with docker compose config (up to 3 attempts)
+  const isWin = process.platform === "win32";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const wslPath = isWin ? filePath.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`) : filePath;
+      const validateCmd = isWin
+        ? `wsl bash -c "docker compose -f '${wslPath}' config 2>&1"`
+        : `bash -c 'docker compose -f "${filePath}" config 2>&1'`;
+      execSync(validateCmd, { encoding: "utf-8", timeout: 15000 });
+      break;
+    } catch (e: any) {
+      const stderr = e.stdout || e.stderr || e.message || "";
+      if (attempt >= 2) return res.status(400).json({ error: "Invalid compose file", details: stderr.split("\n").slice(0, 5).join("\n") });
+      let content = await readFile(filePath, "utf-8");
+      let fixed = false;
+      if (stderr.includes("version")) { content = content.replace(/^version:.*\n/m, ""); fixed = true; }
+      if (content.includes(": null")) { content = content.replace(/: null/g, ": {}"); fixed = true; }
+      if (content.includes("environment: {}")) { content = content.replace(/\n\s*environment: \{\}/g, ""); fixed = true; }
+      if (fixed) await writeFile(filePath, content);
+      else return res.status(400).json({ error: "Invalid compose file", details: stderr.split("\n").slice(0, 5).join("\n") });
+    }
+  }
   const raw = await readFile(filePath, "utf-8");
   const doc = yaml.load(raw) as any;
   if (!doc?.services) return res.status(400).json({ error: "No services found in compose file" });
@@ -357,6 +395,31 @@ router.post("/:id/import-file", async (req, res) => {
     }
   }
 
+  // Resolve "build: ." to actual project paths using registered batch projects
+  if (rawContent) {
+    let projects: any[] = [];
+    try { projects = JSON.parse(await readFile(BUILDS_FILE, "utf-8")); } catch {}
+    for (const [svcName, svc] of Object.entries(doc.services) as [string, any][]) {
+      if (!svc.build) continue;
+      const buildVal = typeof svc.build === "string" ? svc.build : svc.build?.context;
+      if (buildVal === "." || buildVal === wfDir || buildVal?.includes("batch-workflows")) {
+        // Find matching project by service name
+        const match = projects.find((p: any) => {
+          const pName = (p.name || "").toLowerCase().replace(/^wdpr-app-/, "").replace(/^wdpr-/, "").replace(/-container$/, "");
+          const sName = svcName.toLowerCase().replace(/-container$/, "").replace(/-cs-batch$/, "");
+          return sName.includes(pName) || pName.includes(sName);
+        });
+        if (match?.projectPath) {
+          // Convert to WSL path on Windows
+          let resolved = match.projectPath;
+          if (process.platform === "win32") resolved = resolved.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`);
+          svc.build = resolved;
+        }
+      }
+    }
+    await writeFile(copiedCompose, inlineHealthcheckTests(yaml.dump(doc, { lineWidth: -1, noRefs: true })));
+  }
+
   // Parse services for nodes
   const allServices = Object.entries(doc.services).map(([name, svc]: [string, any]) => ({
     name,
@@ -379,7 +442,7 @@ router.post("/:id/import-file", async (req, res) => {
     nodeMap.set(s.name, id);
     const pos = positions.get(s.name) || { x: 0, y: 0 };
     return {
-      id, name: s.name, imageName: s.image || s.build || "",
+      id, name: s.name, imageName: s.image || (s.build && s.build !== "." ? s.build.split("/").pop() || s.name : s.name),
       command: Array.isArray(s.command) ? s.command.join(" ") : s.command || undefined,
       args: [], envVars: s.envVars,
       timeout: 300, position: pos,
@@ -400,13 +463,40 @@ router.post("/:id/import-file", async (req, res) => {
   wf.nodes = nodes;
   wf.edges = edges;
   wf.commonEnvVars = commonEnvVars;
+  wf.complete = true;
+  wf.type = rawContent ? 'scratch' : 'imported';
   wf.updatedAt = new Date().toISOString();
   (wf as any).composePath = copiedCompose;
   (wf as any).originalComposePath = filePath;
   (wf as any).envFilePath = join(wfDir, envFileName || ".env");
   (wf as any).excludeList = [...excludeSet];
-  (wf as any).auxiliaryServices = [...auxiliaryNames];
+  (wf as any).auxiliaryServices = allServices.filter(s => excludeSet.has(s.name.toLowerCase())).map(s => ({ name: s.name, image: s.image || s.build || "", ports: s.ports || [], containerName: s.name }));
+  // Auto-register batch projects from compose
+  if (!rawContent && composeDir) {
+    try {
+      const bpFile = join(process.cwd(), ".data", "batch-projects.json");
+      let batchProjects: any[] = [];
+      try { batchProjects = JSON.parse(await readFile(bpFile, "utf-8")); } catch {}
+      // Register the compose project directory if not already registered
+      const projectPath = composeDir;
+      const projectName = projectPath.split(/[\/\\]/).pop() || "unknown";
+      if (!batchProjects.some((p: any) => p.projectPath === projectPath)) {
+        const { v4: uuidGen } = await import("uuid");
+        batchProjects.push({ id: uuidGen(), name: projectName, projectPath, dockerfile: "Dockerfile", composefile: basename(filePath), composeFiles: [basename(filePath)], imageTag: `mouseketool-batch/${projectName}:latest`, services: batchServices.map(s => ({ name: s.name, image: s.image })), createdAt: new Date().toISOString() });
+        await writeFile(bpFile, JSON.stringify(batchProjects, null, 2));
+      }
+    } catch {}
+  }
+
+  await saveWorkflows(wfs);
   res.json({ ...wf, warnings });
+});
+
+router.post("/:id/save-compose", async (req, res) => {
+  const wfDir = join(WORKFLOWS_DIR, req.params.id);
+  if (!existsSync(wfDir)) return res.status(404).json({ error: "Workflow not found" });
+  await writeFile(join(wfDir, "docker-compose.yml"), req.body.content);
+  res.json({ saved: true });
 });
 
 // Save env vars back to files
