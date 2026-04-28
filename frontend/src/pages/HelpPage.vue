@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   Rocket, Hammer, CloudCog, Zap, AlertTriangle, Terminal, Shield,
   Database, Bell, Inbox, Clock, Keyboard, Sparkles, RefreshCw,
-  Container, Play, MonitorPlay,
+  Container, Play, MonitorPlay, Layers,
 } from "lucide-vue-next";
 
 const tabs = [
@@ -666,7 +666,7 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
       </CardContent>
     </Card>
 
-    <!-- LAUNCHPAD -->
+    ﻿    <!-- LAUNCHPAD -->
     <Card v-if="active === 'launchpad'">
       <CardHeader class="pb-3">
         <CardTitle class="flex items-center gap-2 text-base"><Layers class="size-4" /> Launchpad</CardTitle>
@@ -710,12 +710,52 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
           on the canvas. Connect nodes by dragging from one handle to another.</li>
           <li><strong>Importing from compose</strong> -- If a registered project has docker-compose services, you can
           import them into a workflow. Services become nodes, <code class="text-xs bg-muted px-1 rounded">depends_on</code>
-          relationships become edges, and shared environment variables are extracted into the common env vars pool.</li>
+          relationships become edges, and shared environment variables are extracted into the common env vars pool.
+          Batch projects referenced in the imported compose file are auto-registered if not already present.</li>
           <li><strong>Common env vars</strong> -- Variables shared across all jobs in the workflow. Node-specific
           overrides take precedence on key conflicts.</li>
           <li><strong>Node editing</strong> -- Click a node to open the edit sheet where you can configure the job
           name, Docker image, command override, timeout, and node-specific environment variables.</li>
+          <li><strong>Search and filters</strong> -- The workflow list includes a search bar for filtering by name
+          and filter controls for workflow type (imported vs scratch) and completion state.</li>
+          <li><strong>Workflow types</strong> -- Workflows are classified as <strong>imported</strong> (created from
+          an existing compose file) or <strong>scratch</strong> (built manually on the canvas). Each workflow tracks
+          a completion state that reflects whether all nodes have been configured and connected.</li>
         </ul>
+
+        <p class="font-medium text-foreground">Compose Studio</p>
+        <p>Compose Studio is an AI-powered compose file builder available when creating a workflow from scratch.
+        It provides a Monaco editor for direct YAML editing alongside structured AI actions:</p>
+        <ul class="list-disc list-inside space-y-1.5 ml-1">
+          <li><strong>Generate</strong> -- Produces a complete docker-compose file from a natural language prompt.
+          Kiro generates the YAML based on your description of the services you need.</li>
+          <li><strong>Add Batch Project</strong> -- Inserts a service block for a registered batch project into the
+          current compose file, including its image, ports, and environment variables.</li>
+          <li><strong>Add Service</strong> -- Adds a new service definition to the compose file based on a
+          description of what the service should do.</li>
+          <li><strong>Add Healthchecks</strong> -- Generates healthcheck configurations for all services in the
+          current compose file that do not already have one.</li>
+          <li><strong>Evaluate</strong> -- Sends the current compose file to Kiro for review. Returns feedback on
+          potential issues, missing configurations, and improvement suggestions.</li>
+        </ul>
+
+        <p class="font-medium text-foreground">Workflow execution</p>
+        <p>Clicking "Run" on a workflow starts a foreground <code class="text-xs bg-muted px-1 rounded">docker compose up</code>
+        process. Each node on the canvas displays a live status indicator (pending, running, healthy, exited, error)
+        updated by per-node observers that track container state. Logs stream in real-time to the output panel.
+        Stopping the workflow sends a compose down signal and tears down all containers.</p>
+
+        <p class="font-medium text-foreground">Infrastructure services panel</p>
+        <p>The VueFlow canvas includes an infrastructure services panel that lists supporting containers (databases,
+        message brokers, caches) defined in the workflow. These are displayed separately from application nodes to
+        keep the dependency graph focused on your batch jobs while still showing the full picture of running
+        services.</p>
+
+        <p class="font-medium text-foreground">Auto-registration of batch projects</p>
+        <p>When importing a compose file into a workflow, Mouseketool checks each service against the batch project
+        registry. Services that reference a project directory not yet registered are automatically added to the
+        Batch Projects page. This keeps the registry in sync without requiring manual registration for every
+        project in a multi-service compose file.</p>
       </CardContent>
     </Card>
 

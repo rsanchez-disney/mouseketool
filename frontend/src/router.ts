@@ -12,6 +12,7 @@ export default createRouter({
     { path: "/triggers/:id/edit", component: () => import("./pages/PipelineEditPage.vue") },
     { path: "/settings", component: () => import("./pages/SettingsPage.vue") },
     { path: "/batch-projects", component: () => import("./pages/BatchProjectsPage.vue") },
+    { path: "/batch-projects/:id/run", component: () => import("./pages/BatchRunPage.vue") },
     { path: "/launchpad", component: () => import("./pages/LaunchpadPage.vue") },
     { path: "/help", component: () => import("./pages/HelpPage.vue") },
   ],

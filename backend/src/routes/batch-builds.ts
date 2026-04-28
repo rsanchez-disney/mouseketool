@@ -138,8 +138,34 @@ async function parseDockerCompose(projectPath: string, composefile?: string): Pr
     envVars: parseEnvVars(svc.environment),
     envFiles: Array.isArray(svc.env_file) ? svc.env_file : svc.env_file ? [svc.env_file] : [],
     dependsOn: Array.isArray(svc.depends_on) ? svc.depends_on : svc.depends_on ? Object.keys(svc.depends_on) : [],
+    healthcheck: svc.healthcheck || null,
   }));
 }
+
+
+router.get("/context", async (_req, res) => {
+  const projects = await loadProjects();
+  const enriched = await Promise.all(projects.map(async (p) => {
+    const allServices: any[] = [];
+    const files = p.composeFiles?.length ? p.composeFiles : (p.composefile ? [p.composefile] : []);
+    for (const cf of files) {
+      try {
+        const svcs = await parseDockerCompose(p.projectPath, cf);
+        for (const svc of svcs) {
+          if (!allServices.some(s => s.name === svc.name)) allServices.push(svc);
+        }
+      } catch {}
+    }
+    return {
+      name: p.name,
+      projectPath: p.projectPath,
+      imageTag: p.imageTag,
+      services: allServices,
+      composeFiles: files,
+    };
+  }));
+  res.json({ projects: enriched });
+});
 
 function parseEnvVars(env: any): { key: string; value: string }[] {
   if (!env) return [];

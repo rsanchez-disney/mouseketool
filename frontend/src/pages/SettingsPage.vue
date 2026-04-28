@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import Toggle from "@/components/ui/Toggle.vue";
-import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye, Cpu, Flame, Sparkles } from "lucide-vue-next";
+import { Save, Check, Loader2, Server, KeyRound, Trash2, Clock, Eye, Cpu, Flame, Sparkles, Container } from "lucide-vue-next";
 
 const settings = ref({
   localstack: { host: "localhost", port: 4566, protocol: "http" },
@@ -17,7 +17,7 @@ const settings = ref({
   lambda: { memoryMB: 2048 },
   heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
   ai: { learnedStorage: "local" as "local" | "s3" },
-
+  workflow: { autoBumpHealthchecks: false },
 });
 const saving = ref(false);
 const saved = ref(false);
@@ -218,6 +218,28 @@ async function save() {
       </CardContent>
     </Card>
 
+    <Card>
+      <CardHeader>
+        <div class="flex items-center gap-2">
+          <Container class="size-5 text-muted-foreground" />
+          <div>
+            <CardTitle class="text-base">Workflow Settings</CardTitle>
+            <CardDescription>Configure batch workflow behavior.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <Label class="text-sm">Auto-bump healthchecks</Label>
+            <p class="text-xs text-muted-foreground mt-0.5">Automatically increase healthcheck intervals, timeouts, start periods, and retries when importing a docker-compose file. Also auto-adds healthchecks for MySQL, Postgres, and Redis containers.</p>
+          </div>
+          <button class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer" :class="settings.workflow.autoBumpHealthchecks ? 'bg-primary' : 'bg-muted'" @click="settings.workflow.autoBumpHealthchecks = !settings.workflow.autoBumpHealthchecks">
+            <span class="inline-block size-3.5 transform rounded-full bg-white transition-transform" :class="settings.workflow.autoBumpHealthchecks ? 'translate-x-4.5' : 'translate-x-0.5'" />
+          </button>
+        </div>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader>

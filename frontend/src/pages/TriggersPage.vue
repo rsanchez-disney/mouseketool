@@ -449,6 +449,15 @@ async function runQuickTest() {
 
 function selectTable(t: DynamoTable) { if (t.streamEnabled) selectedTable.value = t; }
 import { formatBytes } from "@/lib/format";
+const pipelineSteps = [
+  { label: "Source", description: "Choose event source" },
+  { label: "DynamoDB", description: "Select table" },
+  { label: "SNS", description: "Select topic" },
+  { label: "SQS", description: "Select queue" },
+  { label: "Lambdas", description: "Wire pipeline" },
+  { label: "Add-ons", description: "Configure add-ons" },
+];
+
 function startWizard() { view.value = "wizard"; stepIndex.value = 0; selectedSource.value = null; selectedTable.value = null; selectedTopic.value = null; selectedQueue.value = null; selectedGlueFunction.value = null; selectedTargetFunction.value = null; wireResult.value = null; wireError.value = ""; pipelineName.value = ""; heavyLoad.value = false; vaultEnabled.value = false; vaultUrl.value = ""; vaultToken.value = ""; vaultSecrets.value = []; vaultTestResult.value = null; filterEnabled.value = false; filterScope.value = "MessageBody"; filterRules.value = []; topics.value = []; queues.value = []; tables.value = []; topicCreatedByUs.value = false; queueCreatedByUs.value = false; }
 function isTemplateDeployed(t: Template) { return functions.value.some(f => f.templateId === t.id); }
 function startOver() { loadMappings(); view.value = "list"; }
@@ -513,6 +522,20 @@ onMounted(loadMappings);
       </div>
     </template>
     <template v-if="view === 'wizard'">
+    <!-- Breadcrumb Stepper -->
+    <div class="flex items-center gap-2 mb-2">
+      <button class="text-xs text-muted-foreground hover:text-foreground cursor-pointer" @click="view = 'list'">Pipelines</button>
+      <template v-for="(step, i) in pipelineSteps" :key="i">
+        <ChevronRight class="size-3 text-muted-foreground" />
+        <button class="flex items-center gap-1.5 text-xs cursor-pointer" :class="stepIndex === i ? 'text-foreground font-medium' : stepIndex > i ? 'text-emerald-500' : 'text-muted-foreground'" @click="stepIndex > i ? goToStep(i) : undefined">
+          <div class="size-5 rounded-full flex items-center justify-center text-[10px] font-bold border" :class="stepIndex === i ? 'border-primary bg-primary text-primary-foreground' : stepIndex > i ? 'border-emerald-500 bg-emerald-500/10 text-emerald-500' : 'border-muted-foreground/30'">
+            <Check v-if="stepIndex > i" class="size-3" />
+            <span v-else>{{ i + 1 }}</span>
+          </div>
+          {{ step.label }}
+        </button>
+      </template>
+    </div>
     <div class="overflow-x-hidden"><div class="flex transition-transform duration-300 ease-in-out" :style="{ transform: `translateX(-${stepIndex * 100}%)` }">
         <!-- Step 1: Source -->
         <div class="min-w-full space-y-4 px-px shrink-0" style="width: 0">

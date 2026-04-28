@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from "vue";
+import { ref, watch, nextTick, computed, onMounted } from "vue";
 import { Copy, Check, Maximize2, Minimize2, Search, X, ArrowDown } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -78,6 +78,7 @@ function onScroll(el: HTMLElement | null) {
 
 function clickFollow() {
   follow.value = true;
+  scrollToBottom(miniInner.value);
   scrollToBottom(expandedInner.value);
 }
 
@@ -110,6 +111,13 @@ watch(() => props.loading, (now, was) => {
     nextTick(() => { if (expandedInner.value) expandedInner.value.scrollTop = 0; });
   }
 });
+
+onMounted(() => {
+  setTimeout(() => {
+    scrollToBottom(miniInner.value);
+    scrollToBottom(expandedInner.value);
+  }, 50);
+});
 </script>
 
 <template>
@@ -137,6 +145,9 @@ watch(() => props.loading, (now, was) => {
     <!-- Minimized toolbar -->
     <template v-if="logs.length">
       <slot name="toolbar-extra" />
+      <Button variant="ghost" size="icon" class="absolute top-2 right-[4.5rem] size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="clickFollow">
+        <ArrowDown :class="follow ? 'size-3.5 text-emerald-400' : 'size-3.5'" />
+      </Button>
       <Button variant="ghost" size="icon" class="absolute top-2 right-10 size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs">
         <Check v-if="copied" class="size-3.5 text-green-500" /><Copy v-else class="size-3.5" />
       </Button>

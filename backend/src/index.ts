@@ -19,6 +19,9 @@ import batchRunsRoutes from "./routes/batch-runs.js";
 import { watcher } from "./services/pipeline-watcher.js";
 import { initShadowInfra } from "./services/shadow-infra.js";
 import { reconcilePipelines } from "./services/reconcile.js";
+import { readdirSync, existsSync } from "fs";
+
+
 
 const app = express();
 app.use(cors());
@@ -31,7 +34,7 @@ app.get("/api/health", async (_req, res) => {
   try {
     const s = await (await import("./helpers/settings.js")).loadSettings();
     const url = `${s.localstack.protocol}://${s.localstack.host}:${s.localstack.port}/_localstack/health`;
-    const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (r.ok) return res.json({ status: "ok", localstack: true, reconciling });
     res.json({ status: "ok", localstack: false, reconciling });
   } catch { res.json({ status: "ok", localstack: false, reconciling }); }
@@ -65,7 +68,8 @@ app.listen(PORT, () => {
 });
 
 
-let lsWasDown = true; // assume down on startup so first successful check triggers reconciliation
+let lsWasDown = true;
+let consecutiveFailures = 0; // assume down on startup so first successful check triggers reconciliation
 async function checkLocalStack(): Promise<boolean> {
   try {
     const s = await (await import("./helpers/settings.js")).loadSettings();
@@ -86,8 +90,14 @@ function startHealthMonitor() {
       try { await initShadowInfra(); } catch {}
       reconciling = false;
     } else if (!up && !lsWasDown) {
-      console.log("[health] LocalStack went down");
-      lsWasDown = true;
+      consecutiveFailures++;
+      if (consecutiveFailures >= 3) {
+        console.log("[health] LocalStack went down (3 consecutive failures)");
+        lsWasDown = true;
+        consecutiveFailures = 0;
+      }
+    } else if (up) {
+      consecutiveFailures = 0;
     }
   }, 5000);
 }

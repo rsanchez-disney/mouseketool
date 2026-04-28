@@ -6,7 +6,7 @@ export interface Settings {
   lambda: { memoryMB: number };
   heavyLoad: { batchSize: number; batchWindowSeconds: number };
   ai: { learnedStorage: "local" | "s3" };
-
+  workflow: { autoBumpHealthchecks: boolean };
 }
 
 export const DEFAULTS: Settings = {
@@ -17,7 +17,7 @@ export const DEFAULTS: Settings = {
   lambda: { memoryMB: 2048 },
   heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
   ai: { learnedStorage: "local" },
-
+  workflow: { autoBumpHealthchecks: false },
 };
 
 export interface BuildMeta {
