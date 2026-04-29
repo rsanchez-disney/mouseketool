@@ -8,13 +8,14 @@ import { extractLogsFromPayload } from "../helpers/lambda-diagnostics.js";
 import { localClassDiagnose, getDeploymentInfo } from "../helpers/lambda-diagnostics.js";
 import { getCapturedPayload } from "./shadow-infra.js";
 import { loadSettings } from "../helpers/settings.js";
+import { getPipelineType } from "./pipeline-types.js";
 import { PIPELINES_FILE, SETTINGS_DIR } from "../config/constants.js";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 
 // --- Types ---
 
 export interface Pipeline {
-  id: string; name: string; sourceType: string; tableName: string;
+  id: string; name: string; type?: string; sourceType: string; tableName: string;
   topicName: string; topicArn: string; queueName: string; queueUrl: string;
   glueFunctionName: string; targetFunctionName: string; uuids: string[];
   subscriptionArn?: string; filterPolicy?: Record<string, unknown>; filterPolicyScope?: string;
@@ -93,9 +94,12 @@ class PipelineWatcher {
     const p = pipelines.find(pp => pp.id === pipelineId);
     if (!p) return;
     const stubId = `manual-${Date.now()}`;
+    const td = getPipelineType(p.type || "app-pipeline");
     const run: PipelineRun = {
       id: stubId, timestamp: Date.now(), item: item ?? null, source: "manual",
-      handler: { requestId: stubId, logs: ["Waiting for stream handler..."], error: false },
+      handler: { requestId: stubId, logs: td?.steps.includes("stream-handler") ? ["Waiting for stream handler..."] : ["Waiting for target Lambda..."], error: false },
+      ...(td?.triggerKind === "sqs-send" ? { sqs: { status: "success", logs: ["Message sent to queue"] } } : {}),
+      ...(td?.triggerKind === "sns-publish" ? { sns: { status: "success", logs: ["Message published to topic"] } } : {}),
       target: null, status: "pending",
     };
     p.runs.push(run);
@@ -127,7 +131,10 @@ class PipelineWatcher {
     const cw = await getCWClient();
     for (const pipeline of pipelines) {
       try {
-        const logGroup = `/aws/lambda/${pipeline.glueFunctionName}`;
+        const typeDef = getPipelineType(pipeline.type || "app-pipeline");
+        const detectFunction = typeDef?.steps.includes("stream-handler") ? pipeline.glueFunctionName : pipeline.targetFunctionName;
+        if (!detectFunction) continue;
+        const logGroup = `/aws/lambda/${detectFunction}`;
         const streams = await cw.send(new DescribeLogStreamsCommand({ logGroupName: logGroup, orderBy: "LastEventTime", descending: true, limit: 3 }));
         for (const stream of streams.logStreams ?? []) {
           const since = Date.now() - 300000;
@@ -194,6 +201,16 @@ class PipelineWatcher {
       target: null, status: error ? "error" : "pending",
     };
 
+    // For non-stream-handler types, the detected logs ARE the target Lambda result
+    const typeDef2 = getPipelineType(pipeline.type || "app-pipeline");
+    const isDirectTarget = !typeDef2?.steps.includes("stream-handler");
+    if (isDirectTarget) {
+      run.target = { requestId, logs, error, elapsed: handlerElapsed } as any;
+      run.handler = { requestId: "", logs: [], error: false } as any;
+      run.status = error ? "error" : "success";
+      run.sns = undefined; run.sqs = undefined;
+    }
+
     const pipelines = loadPipelines();
     const p = pipelines.find(pp => pp.id === pipeline.id);
     if (p) {
@@ -205,7 +222,11 @@ class PipelineWatcher {
 
     this.newRun$.next({ pipelineId: pipeline.id, run });
 
-    if (!error) {
+    if (isDirectTarget) {
+      // No observer needed — detection IS the final result
+      console.log(`[watcher] Direct target run ${requestId.slice(0, 8)} — ${run.status}`);
+      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: run.status, logs, elapsed: handlerElapsed });
+    } else if (!error) {
       console.log(`[watcher] Spawning observer thread for run ${requestId.slice(0, 8)}`);
       this.spawnObserver(pipeline, run);
     } else {
@@ -241,12 +262,16 @@ class PipelineWatcher {
       console.log(`${tag} Run status updated → ${updates.status ?? "partial update"}`);
     };
 
-    try {
-      // --- SNS → SQS: poll queue for message arrival ---
-      send("sns", "running", ["Waiting for SNS to deliver message to SQS..."]);
+    const typeDef = getPipelineType(pipeline.type || "app-pipeline");
+    const typeSteps = typeDef?.steps || ["dynamodb", "stream-handler", "sns", "sqs", "lambda"];
 
+    try {
       const settings = await loadSettings();
       const pollMs = settings.pipeline.observerPollingMs;
+
+      // --- SNS → SQS: poll queue for message arrival (only for types with SNS/SQS) ---
+      if (typeSteps.includes("sns") && typeSteps.includes("sqs") && pipeline.queueUrl) {
+      send("sns", "running", ["Waiting for SNS to deliver message to SQS..."]);
       const sqsTimeout = pipeline.filterPolicy ? 10000 : 60000;
       console.log(`${tag} Polling SQS (interval: ${pollMs}ms, timeout: ${sqsTimeout / 1000}s, hasFilter: ${!!pipeline.filterPolicy})`);
 
@@ -344,6 +369,8 @@ class PipelineWatcher {
       });
 
       }
+
+      } // end SNS/SQS observation
 
       // --- Target Lambda: poll CloudWatch logs ---
       send("target", "running", ["Waiting for target Lambda to process message..."]);

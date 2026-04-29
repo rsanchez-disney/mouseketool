@@ -21,7 +21,7 @@ const route = useRoute();
 const router = useRouter();
 const pipelineId = route.params.id as string;
 
-interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; topicArn: string; queueUrl: string; subscriptionArn?: string; filterPolicy?: Record<string, unknown>; filterPolicyScope?: string; heavyLoad?: boolean; targetMissing?: boolean; vaultIncomplete?: boolean; addons?: string[]; vaultConfig?: { url: string; token: string; paths: string[] }; }
+interface Pipeline { id: string; name: string; type?: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; topicArn: string; queueUrl: string; subscriptionArn?: string; filterPolicy?: Record<string, unknown>; filterPolicyScope?: string; heavyLoad?: boolean; targetMissing?: boolean; vaultIncomplete?: boolean; addons?: string[]; vaultConfig?: { url: string; token: string; paths: string[] }; }
 
 const pipeline = ref<Pipeline | null>(null);
 const resources = ref<Record<string, any>>({});
@@ -105,7 +105,7 @@ const insertsOnly = ref(false);
 const origInsertsOnly = ref(false);
 const origVaultUrl = ref("");
 const origVaultToken = ref("");
-const origVaultSecrets = ref("");
+const origVaultSecrets = ref("[]");
 const vaultTesting = ref(false);
 const vaultTestResult = ref<{ ok: boolean; message: string } | null>(null);
 const vaultCleanup = ref(false);
@@ -221,7 +221,7 @@ const hasChanges = computed(() => {
   if (!pipeline.value) return false;
   const p = pipeline.value;
   if (heavyLoad.value !== !!p.heavyLoad) return true;
-  if (insertsOnly.value !== origInsertsOnly.value) return true;
+  if (pipeline.value?.glueFunctionName && insertsOnly.value !== origInsertsOnly.value) return true;
   if (JSON.stringify(addons.value) !== JSON.stringify(p.addons ?? [])) return true;
   const currentPolicy = buildFilterPolicy();
   const origPolicy = p.filterPolicy && Object.keys(p.filterPolicy).length ? p.filterPolicy : null;
@@ -232,13 +232,19 @@ const hasChanges = computed(() => {
   return false;
 });
 
-const steps = [
-  { key: "dynamodb" as const, label: "DynamoDB", icon: Database },
-  { key: "streamHandler" as const, label: "Stream Handler", icon: Zap },
-  { key: "sns" as const, label: "SNS Topic", icon: Bell },
-  { key: "sqs" as const, label: "SQS Queue", icon: Inbox },
-  { key: "target" as const, label: "Target Lambda", icon: Zap },
+const allEditSteps = [
+  { key: "dynamodb" as const, label: "DynamoDB", icon: Database, kinds: ["dynamodb"] },
+  { key: "streamHandler" as const, label: "Stream Handler", icon: Zap, kinds: ["stream-handler"] },
+  { key: "sns" as const, label: "SNS Topic", icon: Bell, kinds: ["sns"] },
+  { key: "sqs" as const, label: "SQS Queue", icon: Inbox, kinds: ["sqs"] },
+  { key: "target" as const, label: "Target Lambda", icon: Zap, kinds: ["lambda"] },
 ];
+const steps = computed(() => {
+  const t = pipeline.value?.type || "app-pipeline";
+  const typeMap: Record<string, string[]> = { "app-pipeline": ["dynamodb","stream-handler","sns","sqs","lambda"], "direct-stream": ["dynamodb","lambda"], "queue-consumer": ["sqs","lambda"], "sns-fanout": ["sns","sqs","lambda"] };
+  const active = typeMap[t] || typeMap["app-pipeline"];
+  return allEditSteps.filter(s => s.kinds.some(k => active.includes(k)));
+});
 
 function formatBytes(b: number) { if (b < 1024) return `${b} B`; if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`; return `${(b / 1048576).toFixed(1)} MB`; }
 
@@ -271,6 +277,7 @@ onMounted(async () => {
       if (pipeline.value.targetMissing) loadAvailableDeployments();
 
       try {
+        if (!pipeline.value.glueFunctionName) throw new Error("skip");
         const glueEnv = await (await fetch(`/api/deployments/lambda-env/${pipeline.value.glueFunctionName}`)).json();
         insertsOnly.value = glueEnv.some((e: any) => e.key === "STREAM_INSERTS_ONLY" && e.value === "true");
         origInsertsOnly.value = insertsOnly.value;
@@ -581,7 +588,8 @@ async function save() {
             </div>
             <div class="pt-2 space-y-1.5">
               <span class="text-xs text-muted-foreground">Connected Resources</span>
-              <div class="flex items-center gap-2 text-[10px] font-mono bg-muted/50 rounded-md px-3 py-1.5"><Inbox class="size-3 shrink-0 text-muted-foreground" /> Triggered by <span class="font-semibold">{{ resources.target.connectedQueue?.name }}</span></div>
+              <div v-if="pipeline?.type === 'direct-stream'" class="flex items-center gap-2 text-[10px] font-mono bg-muted/50 rounded-md px-3 py-1.5"><Database class="size-3 shrink-0 text-muted-foreground" /> Triggered by DynamoDB Stream <span class="font-semibold">{{ pipeline.tableName }}</span></div>
+              <div v-else-if="resources.target.connectedQueue?.name" class="flex items-center gap-2 text-[10px] font-mono bg-muted/50 rounded-md px-3 py-1.5"><Inbox class="size-3 shrink-0 text-muted-foreground" /> Triggered by <span class="font-semibold">{{ resources.target.connectedQueue.name }}</span></div>
             </div>
           </CardContent>
           <CardContent v-else class="text-xs text-muted-foreground">Unable to fetch function details</CardContent>

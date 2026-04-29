@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import PipelineRunStep from "@/components/PipelineRunStep.vue";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import LogViewer from "@/components/LogViewer.vue";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -18,12 +20,31 @@ const router = useRouter();
 const pipelineId = route.params.id as string;
 const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 
-interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
+interface Pipeline { id: string; name: string; type?: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
 interface RunStep { requestId: string; logs: string[]; error: boolean; }
 interface InferredStep { status: string; logs: string[]; elapsed?: number; }
 interface Run { id: string; timestamp: number; item?: string | null; items?: string[]; source?: "manual" | "external"; handler: RunStep; sns?: InferredStep | null; sqs?: InferredStep | null; target: RunStep & { elapsed?: number } | null; status: string; diagAvailable?: boolean; totalElapsed?: number; }
 
 const pipeline = ref<Pipeline | null>(null);
+interface HistoryStepDef { id: string; label: string; icon: string; detailField: string; dataField: string; }
+const historySteps = ref<HistoryStepDef[]>([]);
+function getStepState(run: Run, step: HistoryStepDef): { status: string; logs: string[]; elapsed?: number } {
+  if (step.dataField === "item") {
+    // DynamoDB insert is always success if the run exists
+    return { status: "success", logs: run.items?.length ? [`Batched ${run.items.length} items`, ...run.items] : [run.item || "No item data"], elapsed: undefined };
+  }
+  if (step.dataField === "handler") {
+    return { status: run.handler?.error ? "error" : "success", logs: run.handler?.logs || [], elapsed: (run.handler as any)?.elapsed };
+  }
+  if (step.dataField === "target") {
+    if (!run.target) return { status: run.status === "pending" ? "pending" : "pending", logs: ["No invocation detected yet"] };
+    return { status: run.target.error ? "error" : run.status === "filtered" ? "filtered" : "success", logs: run.target.logs || [], elapsed: (run.target as any)?.elapsed };
+  }
+  // sns or sqs
+  const data = (run as any)[step.dataField];
+  if (!data) return { status: "pending", logs: [] };
+  return { status: data.status || "pending", logs: data.logs || [], elapsed: data.elapsed };
+}
 const runs = ref<Run[]>([]);
 const loading = ref(true);
 const expandedRun = ref<string | null>(null);
@@ -71,6 +92,7 @@ let eventSource: EventSource | null = null;
 async function loadPipeline() {
   const all = await (await fetch("/api/triggers/pipelines")).json();
   pipeline.value = all.find((p: Pipeline) => p.id === pipelineId) ?? null;
+  try { const types = await (await fetch("/api/triggers/types")).json(); const td = types.find((t: any) => t.id === (pipeline.value?.type || "app-pipeline")); if (td?.historySteps) historySteps.value = td.historySteps; } catch {}
 }
 
 async function loadHistory(silent = false) {
@@ -83,6 +105,7 @@ async function loadHistory(silent = false) {
 
 const clearing = ref(false);
 const confirmClear = ref(false);
+const clearIncludePending = ref(false);
 
 const aiExplaining = ref(false);
 const aiExplanation = ref("");
@@ -98,7 +121,8 @@ async function explainError(errors: string[], logs: string[], runId: string) {
 }
 async function clearHistory() {
   clearing.value = true;
-  await fetch(`/api/triggers/pipelines/${pipelineId}/history`, { method: "DELETE" });
+  await fetch(`/api/triggers/pipelines/${pipelineId}/history${clearIncludePending.value ? "?includePending=true" : ""}`, { method: "DELETE" });
+  clearIncludePending.value = false;
   await loadHistory(true);
   clearing.value = false;
   toastMsg.value = "History cleared"; setTimeout(() => toastMsg.value = "", 2000);
@@ -118,8 +142,8 @@ function startLive() {
     else if (data.type === "step-update") {
       const run = runs.value.find(r => r.id === data.runId);
       if (run) {
-        if (data.step === "sns" && data.status !== "running") run.sns = { status: data.status, logs: data.logs, elapsed: data.elapsed };
-        else if (data.step === "sqs" && data.status !== "running") run.sqs = { status: data.status, logs: data.logs, elapsed: data.elapsed };
+        if ((data.step === "sns" || data.step === "sns-trigger") && data.status !== "running") run.sns = { status: data.status, logs: data.logs, elapsed: data.elapsed };
+        else if ((data.step === "sqs" || data.step === "sqs-trigger") && data.status !== "running") run.sqs = { status: data.status, logs: data.logs, elapsed: data.elapsed };
         else if (data.step === "target") {
           if (data.status === "running") return;
           if (data.status === "diagnosing") {
@@ -234,156 +258,24 @@ onMounted(async () => {
 
         <!-- Expanded: pipeline steps -->
         <div v-if="expandedRun === run.id" class="border-t px-4 py-3 space-y-0">
-          <!-- DynamoDB Insert -->
-          <div class="border rounded-lg overflow-hidden border-green-500/40">
-            <button class="w-full flex items-center gap-3 px-3 py-2 text-left cursor-pointer hover:bg-muted/30" @click="toggleStep(run.id, 'dynamo')">
-              <div class="size-6 rounded-full bg-green-500/20 flex items-center justify-center"><Database class="size-3 text-green-500" /></div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-semibold">DynamoDB Insert</p>
-                <p class="text-[10px] text-muted-foreground">{{ formatTime(run.timestamp) }}</p>
-              </div>
-              <Badge v-if="run.items?.length" variant="outline" class="text-[10px]">{{ run.items.length }} items</Badge>
-              <Badge class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px]">success</Badge>
-              <ChevronDown v-if="expandedStep===run.id+':dynamo'" class="size-3.5 text-muted-foreground" />
-              <ChevronRight v-else class="size-3.5 text-muted-foreground" />
-            </button>
-            <div v-if="expandedStep===run.id+':dynamo'" class="border-t bg-zinc-950">
-              <div class="flex items-center justify-end gap-1 px-2 pt-1">
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs(run.items?.length ? [`Received: ${new Date(run.timestamp).toISOString()}`, '', `Batched ${run.items.length} items:`, ...run.items.flatMap((it, i) => [`[${i+1}] ${it}`])] : [`Received: ${new Date(run.timestamp).toISOString()}`, '', run.item || 'No item data available'])"><Copy class="size-3" /></Button>
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':dynamo', run.items?.length ? [`Received: ${new Date(run.timestamp).toISOString()}`, '', `Batched ${run.items.length} items:`, ...run.items.flatMap((it, i) => [`[${i+1}] ${it}`])] : [`Received: ${new Date(run.timestamp).toISOString()}`, '', run.item || 'No item data available'])"><Maximize2 class="size-3" /></Button>
-              </div>
-              <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <pre class="text-xs text-zinc-300 font-mono whitespace-pre leading-relaxed">Received: {{ new Date(run.timestamp).toISOString() }}
-<template v-if="run.items?.length">
-Batched {{ run.items.length }} items:
-<template v-for="(it, idx) in run.items" :key="idx">[{{ idx + 1 }}] {{ it }}
-</template></template><template v-else>
-{{ run.item || 'No item data available' }}</template></pre>
-              </div>
-            </div>
-          </div>
-          <div class="pl-[11px]"><div class="w-0.5 h-4 bg-green-500" /></div>
+          <PipelineRunStep
+            v-for="(step, i) in historySteps"
+            :key="step.id"
+            :icon="step.icon"
+            :label="step.label"
+            :detail="(pipeline as any)?.[step.detailField] || ''"
+            :status="getStepState(run, step).status"
+            :logs="getStepState(run, step).logs"
+            :elapsed="getStepState(run, step).elapsed"
+            :expanded="expandedStep === run.id + ':' + step.id"
+            :show-connector="i < historySteps.length - 1"
+            :show-kiro-hint="kiroAvailable && i === historySteps.length - 1 && (getStepState(run, step).status === 'error' || getStepState(run, step).status === 'timeout')"
+            :ai-explaining="aiExplaining && aiRunId === run.id"
+            :ai-explanation="aiRunId === run.id ? aiExplanation : ''"
+            @toggle="toggleStep(run.id, step.id)"
+            @explain="explainError(getStepState(run, step).logs.filter(l => l.includes('Error') || l.includes('Exception') || l.includes('Caused by')), getStepState(run, step).logs, run.id)"
+          />
 
-          <!-- Stream Handler -->
-          <div class="border rounded-lg overflow-hidden" :class="[run.handler.error?'border-red-500/40':'border-green-500/40']">
-            <button class="w-full flex items-center gap-3 px-3 py-2 text-left cursor-pointer hover:bg-muted/30" @click="toggleStep(run.id, 'handler')">
-              <div class="size-6 rounded-full flex items-center justify-center" :class="[run.handler.error?'bg-red-500/20':'bg-green-500/20']">
-                <AlertTriangle v-if="run.handler.error" class="size-3 text-red-500" />
-                <Zap v-else class="size-3 text-green-500" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-semibold">Stream Handler</p>
-                <p class="text-[10px] text-muted-foreground font-mono truncate">{{ pipeline?.glueFunctionName }}</p>
-              </div>
-              <span v-if="showElapsed && (run.handler as any).elapsed" class="text-[10px] text-muted-foreground font-mono shrink-0">{{ formatMs((run.handler as any).elapsed) }}</span>
-              <Badge :class="[run.handler.error?'bg-red-500/20 text-red-500 border-red-500/40':'bg-green-500/20 text-green-500 border-green-500/40']" class="text-[10px]">{{ run.handler.error ? 'error' : 'success' }}</Badge>
-              <ChevronDown v-if="expandedStep===run.id+':handler'" class="size-3.5 text-muted-foreground" />
-              <ChevronRight v-else class="size-3.5 text-muted-foreground" />
-            </button>
-            <div v-if="expandedStep===run.id+':handler'" class="border-t bg-zinc-950">
-              <div class="flex items-center justify-end gap-1 px-2 pt-1">
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs(run.handler.logs)"><Copy class="size-3" /></Button>
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':handler', run.handler.logs)"><Maximize2 class="size-3" /></Button>
-              </div>
-              <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-for="(line, i) in run.handler.logs" :key="i" :class="[line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- SNS -->
-          <div class="pl-[11px]"><div class="w-0.5 h-4" :class="run.handler.error?'bg-red-500':'bg-green-500'" /></div>
-          <div class="border rounded-lg overflow-hidden" :class="[!run.sns||run.sns.status==='skipped'?'border-dashed opacity-60':run.sns.status==='filtered'?'border-blue-400/40':run.sns.status==='success'?'border-green-500/40':'border-amber-500/40']">
-            <button class="w-full flex items-center gap-3 px-3 py-2 text-left cursor-pointer hover:bg-muted/30" @click="toggleStep(run.id, 'sns')">
-              <div class="size-6 rounded-full flex items-center justify-center" :class="[!run.sns||run.sns.status==='skipped'?'bg-muted':run.sns.status==='filtered'?'bg-blue-400/20':run.sns.status==='success'?'bg-green-500/20':'bg-amber-500/20']">
-                <Bell class="size-3" :class="[!run.sns||run.sns.status==='skipped'?'text-muted-foreground':run.sns.status==='filtered'?'text-blue-400':run.sns.status==='success'?'text-green-500':'text-amber-500']" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-semibold">SNS Publish</p>
-                <p class="text-[10px] text-muted-foreground">{{ pipeline?.topicName }}</p>
-              </div>
-              <span v-if="showElapsed && run.sns?.elapsed" class="text-[10px] text-muted-foreground font-mono shrink-0">{{ formatMs(run.sns.elapsed) }}</span>
-              <Badge :class="[!run.sns||run.sns.status==='skipped'?'bg-muted text-muted-foreground':run.sns.status==='filtered'?'bg-blue-400/20 text-blue-400 border-blue-400/40':run.sns.status==='success'?'bg-green-500/20 text-green-500 border-green-500/40':'bg-amber-500/20 text-amber-500 border-amber-500/40']" class="text-[10px]">{{ run.sns?.status ?? 'pending' }}</Badge>
-              <ChevronDown v-if="expandedStep===run.id+':sns'" class="size-3.5 text-muted-foreground" />
-              <ChevronRight v-else class="size-3.5 text-muted-foreground" />
-            </button>
-            <div v-if="expandedStep===run.id+':sns' && run.sns?.logs?.length" class="border-t bg-zinc-950">
-              <div class="flex items-center justify-end gap-1 px-2 pt-1">
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs(run.sns.logs)"><Copy class="size-3" /></Button>
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':sns', run.sns.logs)"><Maximize2 class="size-3" /></Button>
-              </div>
-              <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-for="(line, i) in run.sns.logs" :key="i" class="text-xs font-mono whitespace-pre leading-relaxed text-zinc-300">{{ line }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- SQS -->
-          <div class="pl-[11px]"><div class="w-0.5 h-4" :class="[!run.sqs||run.sqs.status==='skipped'?'bg-border':run.sqs.status==='filtered'?'bg-blue-400':run.sqs.status==='success'?'bg-green-500':'bg-amber-500']" /></div>
-          <div class="border rounded-lg overflow-hidden" :class="[!run.sqs||run.sqs.status==='skipped'?'border-dashed opacity-60':run.sqs.status==='filtered'?'border-blue-400/40':run.sqs.status==='success'?'border-green-500/40':'border-amber-500/40']">
-            <button class="w-full flex items-center gap-3 px-3 py-2 text-left cursor-pointer hover:bg-muted/30" @click="toggleStep(run.id, 'sqs')">
-              <div class="size-6 rounded-full flex items-center justify-center" :class="[!run.sqs||run.sqs.status==='skipped'?'bg-muted':run.sqs.status==='filtered'?'bg-blue-400/20':run.sqs.status==='success'?'bg-green-500/20':'bg-amber-500/20']">
-                <Inbox class="size-3" :class="[!run.sqs||run.sqs.status==='skipped'?'text-muted-foreground':run.sqs.status==='filtered'?'text-blue-400':run.sqs.status==='success'?'text-green-500':'text-amber-500']" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-semibold">SQS Deliver</p>
-                <p class="text-[10px] text-muted-foreground">{{ pipeline?.queueName }}</p>
-              </div>
-              <span v-if="showElapsed && run.sqs?.elapsed" class="text-[10px] text-muted-foreground font-mono shrink-0">{{ formatMs(run.sqs.elapsed) }}</span>
-              <Badge :class="[!run.sqs||run.sqs.status==='skipped'?'bg-muted text-muted-foreground':run.sqs.status==='filtered'?'bg-blue-400/20 text-blue-400 border-blue-400/40':run.sqs.status==='success'?'bg-green-500/20 text-green-500 border-green-500/40':'bg-amber-500/20 text-amber-500 border-amber-500/40']" class="text-[10px]">{{ run.sqs?.status ?? 'pending' }}</Badge>
-              <ChevronDown v-if="expandedStep===run.id+':sqs'" class="size-3.5 text-muted-foreground" />
-              <ChevronRight v-else class="size-3.5 text-muted-foreground" />
-            </button>
-            <div v-if="expandedStep===run.id+':sqs' && run.sqs?.logs?.length" class="border-t bg-zinc-950">
-              <div class="flex items-center justify-end gap-1 px-2 pt-1">
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs(run.sqs.logs)"><Copy class="size-3" /></Button>
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':sqs', run.sqs.logs)"><Maximize2 class="size-3" /></Button>
-              </div>
-              <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-for="(line, i) in run.sqs.logs" :key="i" class="text-xs font-mono whitespace-pre leading-relaxed text-zinc-300">{{ line }}</div>
-              </div>
-            </div>
-          </div>
-          <div class="pl-[11px]"><div class="w-0.5 h-4" :class="run.status==='filtered'?'bg-blue-400':run.status==='diagnosing'?'bg-purple-500 animate-pulse':run.target?run.target.error?'bg-red-500':'bg-green-500':'bg-border'" /></div>
-
-          <!-- Target Lambda -->
-          <div v-if="run.target" class="border rounded-lg overflow-hidden" :class="[run.target.error?'border-red-500/40':run.status==='filtered'?'border-blue-400/40':run.status==='diagnosing'?'border-purple-500/40 animate-pulse':'border-green-500/40']">
-            <button class="w-full flex items-center gap-3 px-3 py-2 text-left cursor-pointer hover:bg-muted/30" @click="toggleStep(run.id, 'target')">
-              <div class="size-6 rounded-full flex items-center justify-center" :class="[run.target.error?'bg-red-500/20':run.status==='filtered'?'bg-blue-400/20':run.status==='diagnosing'?'bg-purple-500/20':'bg-green-500/20']">
-                <AlertTriangle v-if="run.target.error" class="size-3 text-red-500" />
-                <Bell v-else-if="run.status==='filtered'" class="size-3 text-blue-400" />
-                <Search v-else-if="run.status==='diagnosing'" class="size-3 text-purple-500" />
-                <Zap v-else class="size-3 text-green-500" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-semibold">Target Lambda</p>
-                <p class="text-[10px] text-muted-foreground font-mono truncate">{{ pipeline?.targetFunctionName }}</p>
-              </div>
-              <Tooltip v-if="run.diagAvailable"><TooltipTrigger as-child><Info class="size-3.5 text-blue-400 shrink-0 cursor-help" /></TooltipTrigger><TooltipContent>Error logs available from diagnostic invoke</TooltipContent></Tooltip>
-              <span v-if="showElapsed && run.target.elapsed" class="text-[10px] text-muted-foreground font-mono shrink-0">{{ formatMs(run.target.elapsed) }}</span>
-              <Badge :class="[run.target.error?'bg-red-500/20 text-red-500 border-red-500/40':run.status==='filtered'?'bg-blue-400/20 text-blue-400 border-blue-400/40':run.status==='diagnosing'?'bg-purple-500/20 text-purple-500 border-purple-500/40':'bg-green-500/20 text-green-500 border-green-500/40']" class="text-[10px]">{{ run.status === 'filtered' ? 'filtered' : run.status === 'diagnosing' ? 'diagnosing...' : run.target.error ? 'error' : 'success' }}</Badge>
-              <ChevronDown v-if="expandedStep===run.id+':target'" class="size-3.5 text-muted-foreground" />
-              <ChevronRight v-else class="size-3.5 text-muted-foreground" />
-            </button>
-            <div v-if="expandedStep===run.id+':target'" class="border-t bg-zinc-950">
-              <div class="flex items-center justify-end gap-1 px-2 pt-1">
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs(run.target.logs)"><Copy class="size-3" /></Button>
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandLogs(run.id+':target', run.target.logs)"><Maximize2 class="size-3" /></Button>
-              </div>
-              <div class="px-3 pb-2 max-h-48 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-if="run.target.error && extractErrors(run.target.logs).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
-                  <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
-                  <div v-for="(line, i) in extractErrors(run.target.logs)" :key="'err'+i" class="text-xs font-mono text-red-300 whitespace-pre leading-relaxed">{{ line.trim() }}</div>
-                  <template v-if="kiroAvailable"><div class="mt-2 flex items-center gap-1.5 text-[10px] text-violet-400/70 font-medium"><svg class="size-3 shrink-0" viewBox="0 0 1200 1200" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="1200" rx="260" fill="#9046FF"/><mask id="khi" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#khi)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></svg> Expand to use Kiro Assistance</div></template>
-                </div>
-                <div v-for="(line, i) in run.target.logs" :key="i" :class="[line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
-              </div>
-            </div>
-          </div>
-          <div v-else class="border border-dashed rounded-lg px-3 py-2 flex items-center gap-3 opacity-60">
-            <div class="size-6 rounded-full bg-muted flex items-center justify-center"><Zap class="size-3 text-muted-foreground" /></div>
-            <p class="text-xs text-muted-foreground">Target Lambda — no invocation detected yet</p>
-          </div>
         </div>
       </Card>
     </div>
@@ -400,7 +292,10 @@ Batched {{ run.items.length }} items:
       @explain="explainError(expandedRootCause, expandedLogContent, expandedLogKey)"
     />
 
-    <ConfirmDialog v-model="confirmClear" title="Clear history?" description="This will delete all completed invocation records. Runs that are still pending or being diagnosed will be preserved." @confirm="clearHistory" />
+    <Dialog v-model:open="confirmClear"><DialogContent class="sm:max-w-sm"><DialogHeader><DialogTitle>Clear history?</DialogTitle><DialogDescription>This will delete all completed invocation records.</DialogDescription></DialogHeader>
+      <label class="flex items-center gap-2 text-sm cursor-pointer"><input v-model="clearIncludePending" type="checkbox" class="accent-primary" /><span class="text-muted-foreground">Also remove pending/diagnosing runs</span></label>
+      <div class="flex justify-end gap-2 pt-2"><Button variant="outline" size="sm" @click="confirmClear = false">Cancel</Button><Button variant="destructive" size="sm" @click="confirmClear = false; clearHistory()">Clear</Button></div>
+    </DialogContent></Dialog>
 
     <!-- Toast -->
     <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">

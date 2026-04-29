@@ -21,7 +21,7 @@ const router = useRouter();
 const pipelineId = route.params.id as string;
 const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 
-interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
+interface Pipeline { id: string; name: string; type?: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
 interface Step { id: string; label: string; detail: string; status: "pending" | "running" | "success" | "timeout" | "error" | "filtered" | "diagnosing" | "unknown"; logs: string[]; collapsed: boolean; elapsed?: number; }
 
 const pipeline = ref<Pipeline | null>(null);
@@ -32,13 +32,30 @@ const executing = ref(false);
 const steps = ref<Step[]>([]);
 
 function initSteps(p: Pipeline): Step[] {
-  return [
-    { id: "dynamodb", label: "DynamoDB Insert", detail: p.tableName, status: "pending", logs: [], collapsed: false },
-    { id: "glue", label: "Stream Handler", detail: p.glueFunctionName, status: "pending", logs: [], collapsed: false },
-    { id: "sns", label: "SNS Publish", detail: p.topicName, status: "pending", logs: [], collapsed: false },
-    { id: "sqs", label: "SQS Deliver", detail: p.queueName, status: "pending", logs: [], collapsed: false },
-    { id: "target", label: "Target Lambda", detail: p.targetFunctionName, status: "pending", logs: [], collapsed: false },
-  ];
+  const type = p.type || "app-pipeline";
+  const stepDefs: Record<string, { id: string; label: string; detail: string }[]> = {
+    "app-pipeline": [
+      { id: "dynamodb", label: "DynamoDB Insert", detail: p.tableName },
+      { id: "glue", label: "Stream Handler", detail: p.glueFunctionName },
+      { id: "sns", label: "SNS Publish", detail: p.topicName },
+      { id: "sqs", label: "SQS Deliver", detail: p.queueName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+    "direct-stream": [
+      { id: "dynamodb", label: "DynamoDB Insert", detail: p.tableName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+    "queue-consumer": [
+      { id: "sqs-trigger", label: "SQS Send", detail: p.queueName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+    "sns-fanout": [
+      { id: "sns-trigger", label: "SNS Publish", detail: p.topicName },
+      { id: "sqs", label: "SQS Deliver", detail: p.queueName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+  };
+  return (stepDefs[type] || stepDefs["app-pipeline"]).map(s => ({ ...s, status: "pending" as const, logs: [], collapsed: false }));
 }
 
 const allDone = computed(() => steps.value.every(s => s.status !== "pending" && s.status !== "running"));
@@ -56,6 +73,8 @@ const batchCount = ref(0);
 const batchBaseline = ref(0);
 const generating = ref(false);
 const generateOpen = ref(false);
+const lastIntent = ref("");
+const generateIntents = ref<{ id: string; label: string; description: string }[]>([]);
 const lastGenerated = ref("");
 const showEvaluate = ref(false);
 const evaluated = ref(false);
@@ -117,8 +136,9 @@ async function loadPipeline() {
     pipeline.value = all.find((p: Pipeline) => p.id === pipelineId) ?? null;
     if (pipeline.value) {
       steps.value = initSteps(pipeline.value);
+      try { const types = await (await fetch("/api/triggers/types")).json(); const td = types.find((t: any) => t.id === (pipeline.value?.type || "app-pipeline")); if (td?.generateIntents) generateIntents.value = td.generateIntents; } catch {}
       // Load key schema for template
-      try {
+      if (pipeline.value.tableName) try {
         const { keys } = await (await fetch(`/api/dynamodb/tables/${pipeline.value.tableName}/describe`)).json();
         const t: Record<string, any> = {}; for (const k of keys) t[k.name] = k.attributeType === "N" ? 0 : "value";
         itemJson.value = JSON.stringify(t, null, 2);
@@ -271,7 +291,7 @@ onMounted(loadPipeline);
                   <Sparkles v-if="!generating" class="size-3" /><Loader2 v-else class="size-3 animate-spin" /> {{ generating ? 'Generating...' : 'Generate' }}
                 </Button>
                 <div v-if="generateOpen" class="absolute right-0 top-7 z-50 w-48 rounded-lg border bg-popover p-1 shadow-lg">
-                  <button v-for="opt in [{v:'success',l:'Successful item'},{v:'filtered',l:'Filtered item'},{v:'edge',l:'Failure item'}]" :key="opt.v" class="w-full text-left px-3 py-1.5 text-xs rounded-md hover:bg-muted cursor-pointer" @click="generateItem(opt.v)">{{ opt.l }}</button>
+                  <button v-for="opt in generateIntents" :key="opt.id" class="w-full text-left px-3 py-1.5 text-xs rounded-md hover:bg-muted cursor-pointer" @click="generateItem(opt.id)"><span class="font-medium">{{ opt.label }}</span><span class="block text-muted-foreground text-[10px]">{{ opt.description }}</span></button>
                 </div>
                 </div>
                 </TooltipTrigger>
@@ -356,7 +376,7 @@ onMounted(loadPipeline);
 
     <div v-else class="text-center py-16 text-muted-foreground"><p>Pipeline not found.</p></div>
 
-    <EvaluateModal v-if="kiroAvailable" v-model="showEvaluate" type="pipeline" :id="pipelineId" :sample="lastGenerated" @good="evaluated = true" @bad="evaluated = true" />
+    <EvaluateModal v-if="kiroAvailable" v-model="showEvaluate" type="pipeline" :id="pipelineId" :sample="lastGenerated" :subtype="lastIntent" @good="evaluated = true" @bad="evaluated = true" />
 
     <!-- Expanded log modal -->
     <LogViewer

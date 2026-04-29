@@ -47,6 +47,7 @@ export async function reconcilePipelines(): Promise<ReconcileResult[]> {
   const results: ReconcileResult[] = [];
 
   for (const p of pipelines) {
+    if (p.type && p.type !== 'app-pipeline') continue;
     const r: ReconcileResult = { pipelineId: p.id, pipelineName: p.name, actions: [], warnings: [], targetMissing: false };
     try {
       await reconcileOne(p, r);

@@ -1,3 +1,4 @@
+import { PIPELINE_TYPES } from "../services/pipeline-types.js";
 import { Router } from "express";
 import { watcher, registerManualRun, loadPipelines, savePipelines, type Pipeline, type PipelineRun } from "../services/pipeline-watcher.js";
 import {
@@ -40,7 +41,7 @@ function templateHash(sourceFile: string): string {
   return createHash("md5").update(readFileSync(srcPath)).digest("hex").slice(0, 8);
 }
 
-const TEMPLATES = [
+const TEMPLATES: any[] = [
   {
     id: "dynamodb-to-sns",
     name: "DynamoDB Stream → SNS Forwarder",
@@ -50,8 +51,12 @@ const TEMPLATES = [
     sourceFile: "dynamodb-to-sns.js",
     envVars: ["SNS_TOPIC_ARN"],
     get hash() { return templateHash(this.sourceFile); },
+    compatibleTypes: ["app-pipeline"],
   },
 ];
+
+// GET /api/triggers/types — list available pipeline types
+router.get("/types", (_req, res) => { res.json(PIPELINE_TYPES); });
 
 // GET /api/triggers/templates — list available template lambdas
 router.get("/templates", (_req, res) => {
@@ -112,7 +117,7 @@ router.get("/functions", async (_req, res) => {
     const client = await getLambdaClient();
     const { Functions = [] } = await client.send(new ListFunctionsCommand({}));
 
-    const fns = await Promise.all(Functions.map(async f => {
+    const fns = await Promise.all(Functions.filter(f => !f.FunctionName?.startsWith("mk-shadow-")).map(async f => {
       let templateId: string | null = null;
       let outdated = false;
       try {
@@ -132,9 +137,17 @@ router.get("/functions", async (_req, res) => {
 
 // POST /api/triggers/wire — full chain: DynamoDB Stream → Stream Handler, SNS→SQS subscription, SQS → target Lambda
 router.post("/wire", async (req, res) => {
-  const { streamArn, glueFunctionName, topicArn, queueUrl, targetFunctionName, pipelineName, addons, filterPolicy, filterPolicyScope, topicCreatedByUs, queueCreatedByUs, vaultConfig, heavyLoad } = req.body;
-  if (!streamArn || !glueFunctionName || !topicArn || !queueUrl || !targetFunctionName)
-    return res.status(400).json({ error: "streamArn, glueFunctionName, topicArn, queueUrl, and targetFunctionName are required" });
+  const { type, streamArn, glueFunctionName, topicArn, queueUrl, targetFunctionName, pipelineName, addons, filterPolicy, filterPolicyScope, topicCreatedByUs, queueCreatedByUs, vaultConfig, heavyLoad } = req.body;
+  const typeDef = type ? (await import("../services/pipeline-types.js")).getPipelineType(type) : undefined;
+  const pipelineType = typeDef?.id || "app-pipeline";
+  const steps = typeDef?.steps || ["dynamodb", "stream-handler", "sns", "sqs", "lambda"];
+
+  // Validate required fields based on type
+  if (!targetFunctionName) return res.status(400).json({ error: "targetFunctionName is required" });
+  if (steps.includes("dynamodb") && !streamArn) return res.status(400).json({ error: "streamArn is required for this pipeline type" });
+  if (steps.includes("stream-handler") && !glueFunctionName) return res.status(400).json({ error: "glueFunctionName is required for this pipeline type" });
+  if (steps.includes("sns") && !topicArn) return res.status(400).json({ error: "topicArn is required for this pipeline type" });
+  if (steps.includes("sqs") && !queueUrl) return res.status(400).json({ error: "queueUrl is required for this pipeline type" });
 
   try {
     const lambdaClient = await getLambdaClient();
@@ -143,13 +156,16 @@ router.post("/wire", async (req, res) => {
     const { SubscribeCommand, SetSubscriptionAttributesCommand } = await import("@aws-sdk/client-sns");
     const snsClient = await getSnsClient();
 
-    // Get queue ARN
-    const { Attributes = {} } = await sqsClient.send(new GetQueueAttributesCommand({
-      QueueUrl: queueUrl,
-      AttributeNames: [QueueAttributeName.QueueArn],
-    }));
-    const queueArn = Attributes.QueueArn;
-    if (!queueArn) return res.status(400).json({ error: "Could not resolve queue ARN" });
+    // Get queue ARN (only needed for types with SQS)
+    let queueArn: string | undefined;
+    if (steps.includes("sqs") && queueUrl) {
+      const { Attributes = {} } = await sqsClient.send(new GetQueueAttributesCommand({
+        QueueUrl: queueUrl,
+        AttributeNames: [QueueAttributeName.QueueArn],
+      }));
+      queueArn = Attributes.QueueArn;
+      if (!queueArn) return res.status(400).json({ error: "Could not resolve queue ARN" });
+    }
 
     const results: { step: string; detail: string }[] = [];
     const settings = await loadSettings();
@@ -167,41 +183,56 @@ router.post("/wire", async (req, res) => {
       return res.UUID!;
     }
 
-    // 1. DynamoDB Stream → Stream Handler
-    const streamUuid = await findOrCreateMapping(streamArn, glueFunctionName, "LATEST");
-    results.push({ step: "DynamoDB Stream → Stream Handler", detail: `UUID: ${streamUuid}` });
+    let SubscriptionArn: string | undefined;
 
-    // 2. SNS → SQS subscription (idempotent by default)
-    const { SubscriptionArn } = await snsClient.send(new SubscribeCommand({
-      TopicArn: topicArn,
-      Protocol: "sqs",
-      Endpoint: queueArn,
-    }));
-    results.push({ step: "SNS → SQS Subscription", detail: `Sub: ${SubscriptionArn}` });
-
-    // 2b. Apply filter policy if provided
-    if (filterPolicy && SubscriptionArn) {
-      await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn, AttributeName: "FilterPolicy", AttributeValue: JSON.stringify(filterPolicy) }));
-      if (filterPolicyScope) await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn, AttributeName: "FilterPolicyScope", AttributeValue: filterPolicyScope }));
-      results.push({ step: "Filter Policy", detail: `Scope: ${filterPolicyScope || "MessageAttributes"}, keys: ${Object.keys(filterPolicy).join(", ")}` });
+    // DynamoDB Stream → Stream Handler (APP Pipeline)
+    if (steps.includes("dynamodb") && steps.includes("stream-handler")) {
+      const streamUuid = await findOrCreateMapping(streamArn, glueFunctionName, "LATEST");
+      results.push({ step: "DynamoDB Stream → Stream Handler", detail: `UUID: ${streamUuid}` });
     }
 
-    // 3. SQS → Target Lambda
-    const sqsUuid = await findOrCreateMapping(queueArn, targetFunctionName);
-    results.push({ step: "SQS → Target Lambda", detail: `UUID: ${sqsUuid}` });
+    // DynamoDB Stream → Target Lambda directly (Direct Stream)
+    if (steps.includes("dynamodb") && !steps.includes("stream-handler")) {
+      const streamUuid = await findOrCreateMapping(streamArn, targetFunctionName, "LATEST");
+      results.push({ step: "DynamoDB Stream → Target Lambda", detail: `UUID: ${streamUuid}` });
+    }
+
+    // SNS → SQS subscription
+    if (steps.includes("sns") && steps.includes("sqs")) {
+      const sub = await snsClient.send(new SubscribeCommand({ TopicArn: topicArn, Protocol: "sqs", Endpoint: queueArn }));
+      SubscriptionArn = sub.SubscriptionArn ?? undefined;
+      results.push({ step: "SNS → SQS Subscription", detail: `Sub: ${SubscriptionArn}` });
+
+      // Apply filter policy if provided
+      if (filterPolicy && SubscriptionArn) {
+        await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn, AttributeName: "FilterPolicy", AttributeValue: JSON.stringify(filterPolicy) }));
+        if (filterPolicyScope) await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn, AttributeName: "FilterPolicyScope", AttributeValue: filterPolicyScope }));
+        results.push({ step: "Filter Policy", detail: `Scope: ${filterPolicyScope || "MessageAttributes"}, keys: ${Object.keys(filterPolicy).join(", ")}` });
+      }
+    }
+
+    // SQS → Target Lambda
+    if (steps.includes("sqs") && steps.includes("lambda")) {
+      const sqsUuid = await findOrCreateMapping(queueArn!, targetFunctionName);
+      results.push({ step: "SQS → Target Lambda", detail: `UUID: ${sqsUuid}` });
+    }
 
     // Save pipeline
-    const tableName = streamArn.split("/")[1] ?? streamArn;
+    const tableName = streamArn ? (streamArn.split("/")[1] ?? streamArn) : "";
+    const queueName = queueUrl ? (queueUrl.split("/").pop() ?? "") : "";
+    const topicName = topicArn ? (topicArn.split(":").pop() ?? "") : "";
+    const defaultName = tableName ? `${tableName} → ${targetFunctionName}` : queueName ? `${queueName} → ${targetFunctionName}` : topicName ? `${topicName} → ${targetFunctionName}` : targetFunctionName;
     const pipeline: Pipeline = {
       id: crypto.randomUUID(),
-      name: pipelineName || `${tableName} → ${targetFunctionName}`,
-      sourceType: "dynamodb",
+      type: pipelineType,
+      name: pipelineName || defaultName,
+      sourceType: typeDef?.triggerKind === "dynamodb-insert" ? "dynamodb" : typeDef?.triggerKind === "sqs-send" ? "sqs" : "sns",
       tableName,
-      topicName: topicArn.split(":").pop() ?? topicArn,
-      topicArn, queueName: queueUrl.split("/").pop() ?? queueUrl,
-      queueUrl, glueFunctionName, targetFunctionName,
+      topicName: topicArn ? (topicArn.split(":").pop() ?? topicArn) : "",
+      topicArn: topicArn || "", queueName: queueUrl ? (queueUrl.split("/").pop() ?? queueUrl) : "",
+      queueUrl: queueUrl || "", glueFunctionName: glueFunctionName || "", targetFunctionName,
       uuids: results.filter(r => r.detail.startsWith("UUID:")).map(r => r.detail.replace("UUID: ", "")),
-      subscriptionArn: SubscriptionArn ?? undefined,
+      subscriptionArn: SubscriptionArn,
       ...(filterPolicy ? { filterPolicy, filterPolicyScope: filterPolicyScope || "MessageAttributes" } : {}),
       topicCreatedByUs: !!topicCreatedByUs,
       queueCreatedByUs: !!queueCreatedByUs,
@@ -227,8 +258,8 @@ router.post("/wire", async (req, res) => {
     pipelines.push(pipeline);
     savePipelines(pipelines);
 
-    // Subscribe shadow queue to this pipeline's SNS topic
-    try {
+    // Subscribe shadow queue (only for types with SNS)
+    if (steps.includes("sns") && topicArn) try {
       const { subscribeShadowQueue } = await import("../services/shadow-infra.js");
       const shadowSubArn = await subscribeShadowQueue(topicArn, filterPolicy, filterPolicyScope);
       if (shadowSubArn) {
@@ -401,7 +432,8 @@ router.put("/pipelines/:id/edit", async (req, res) => {
       } catch {}
       pipeline.targetFunctionName = newTargetFunctionName;
       (pipeline as any).targetMissing = false;
-      pipeline.runs = []; // Clear logs
+      const includePending = req.query.includePending === "true";
+  pipeline.runs = includePending ? [] : pipeline.runs.filter(r => r.status === "pending" || r.status === "diagnosing"); // Clear logs
     }
 
     savePipelines(pipelines);
@@ -520,9 +552,10 @@ router.post("/pipelines/:id/execute", async (req, res) => {
   };
 
   try {
-    // Step 1: Insert DynamoDB item
-    send("dynamodb", "running", ["Inserting item into " + pipeline.tableName + "..."]);
-    const dynamoClient = await getDynamoClient();
+    const typeDef = (await import("../services/pipeline-types.js")).getPipelineType(pipeline.type || "app-pipeline");
+    const triggerKind = typeDef?.triggerKind || "dynamodb-insert";
+    const steps = typeDef?.steps || ["dynamodb", "stream-handler", "sns", "sqs", "lambda"];
+
     function toDynamoValue(v: any): any {
       if (typeof v === "string") return { S: v };
       if (typeof v === "number") return { N: String(v) };
@@ -532,28 +565,109 @@ router.post("/pipelines/:id/execute", async (req, res) => {
       if (typeof v === "object") return { M: Object.fromEntries(Object.entries(v).map(([k, val]) => [k, toDynamoValue(val)])) };
       return { S: String(v) };
     }
-    const dynamoItem = Object.fromEntries(Object.entries(item).map(([k, v]) => [k, toDynamoValue(v)]));
-    // Add a unique timestamp to ensure DynamoDB Stream fires even on rerun with same key
-    dynamoItem._mk_ts = { S: new Date().toISOString() };
-    await dynamoClient.send(new PutItemCommand({ TableName: pipeline.tableName, Item: dynamoItem }));
-    send("dynamodb", "success", ["Item inserted into " + pipeline.tableName]);
+
+    // Trigger based on pipeline type
+    if (triggerKind === "dynamodb-insert") {
+      send("dynamodb", "running", ["Inserting item into " + pipeline.tableName + "..."]);
+      const dynamoClient = await getDynamoClient();
+      const dynamoItem = Object.fromEntries(Object.entries(item).map(([k, v]) => [k, toDynamoValue(v)]));
+      dynamoItem._mk_ts = { S: new Date().toISOString() };
+      await dynamoClient.send(new PutItemCommand({ TableName: pipeline.tableName, Item: dynamoItem }));
+      send("dynamodb", "success", ["Item inserted into " + pipeline.tableName]);
+    } else if (triggerKind === "sqs-send") {
+      send("sqs-trigger", "running", ["Sending message to " + pipeline.queueName + "..."]);
+      const sqsClient = await getSqsClient();
+      const { SendMessageCommand } = await import("@aws-sdk/client-sqs");
+      await sqsClient.send(new SendMessageCommand({ QueueUrl: pipeline.queueUrl, MessageBody: JSON.stringify(item) }));
+      send("sqs-trigger", "success", ["Message sent to " + pipeline.queueName]);
+    } else if (triggerKind === "sns-publish") {
+      send("sns-trigger", "running", ["Publishing to " + pipeline.topicName + "..."]);
+      const { getSnsClient } = await import("../helpers/sns-client.js");
+      const { PublishCommand } = await import("@aws-sdk/client-sns");
+      const snsClient = await getSnsClient();
+      await snsClient.send(new PublishCommand({ TopicArn: pipeline.topicArn, Message: JSON.stringify(item) }));
+      send("sns-trigger", "success", ["Message published to " + pipeline.topicName]);
+    }
 
     registerManualRun(pipeline.id);
     watcher.createStubRun(pipeline.id, JSON.stringify(item));
 
-    // Show waiting state for stream handler
-    send("glue", "running", ["Waiting for DynamoDB Stream to trigger stream handler..."]);
+    // For types with stream handler, show waiting state
+    if (steps.includes("stream-handler")) {
+      send("glue", "running", ["Waiting for DynamoDB Stream to trigger stream handler..."]);
+    } else if (steps.includes("dynamodb") && !steps.includes("stream-handler")) {
+      // Direct stream — waiting for target Lambda
+      send("target", "running", ["Waiting for DynamoDB Stream to trigger target Lambda..."]);
+    } else {
+      // Queue Consumer / SNS Fan-out — waiting for target Lambda
+      send("target", "running", ["Waiting for event source mapping to trigger target Lambda..."]);
+    }
 
     let done = false;
     req.on("close", () => { done = true; });
 
     // Timeout for stream handler detection — if ESM doesn't trigger within 60s, notify user
-    const esmTimeout = setTimeout(() => {
+    const esmTimeout = setTimeout(async () => {
       if (!done && !esmDetected) {
-        send("glue", "timeout", ["DynamoDB Stream ESM did not trigger the stream handler within 60 seconds.", "", "This is a known LocalStack issue — the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
-        send("sns", "error", ["Skipped — stream handler not triggered"]);
-        send("sqs", "error", ["Skipped — stream handler not triggered"]);
-        send("target", "error", ["Skipped — stream handler not triggered"]);
+        if (steps.includes("stream-handler")) {
+          send("glue", "timeout", ["DynamoDB Stream ESM did not trigger the stream handler within 60 seconds.", "", "This is a known LocalStack issue — the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
+          if (steps.includes("sns")) send("sns", "error", ["Skipped — stream handler not triggered"]);
+          if (steps.includes("sqs")) send("sqs", "error", ["Skipped — stream handler not triggered"]);
+          send("target", "error", ["Skipped — stream handler not triggered"]);
+        } else {
+          // For non-stream-handler types, check if Lambda failed during init
+          let diagReqId = "diag-" + Date.now().toString(36);
+          let diagTargetLogs: string[] = [];
+          try {
+            const lambdaClient = await getLambdaClient();
+            const fnState = await lambdaClient.send(new GetFunctionCommand({ FunctionName: pipeline.targetFunctionName }));
+            if (fnState.Configuration?.State === "Failed" || fnState.Configuration?.LastUpdateStatus === "Failed") {
+              diagTargetLogs = ["Lambda is in Failed state: " + (fnState.Configuration?.StateReasonCode || fnState.Configuration?.StateReason || "Unknown"), "", "The function failed during initialization."];
+              send("target", "error", diagTargetLogs);
+            } else {
+              // Try diagnostic invoke
+              send("target", "diagnosing", ["ESM timeout — running diagnostic invoke..."]);
+              try {
+                const { InvokeCommand: InvCmd } = await import("@aws-sdk/client-lambda");
+                const stubPayload = triggerKind === "dynamodb-insert"
+                  ? JSON.stringify({ Records: [{ eventSource: "aws:dynamodb", dynamodb: { NewImage: item } }] })
+                  : JSON.stringify({ Records: [{ body: JSON.stringify(item), eventSource: "aws:sqs" }] });
+                const invRes = await lambdaClient.send(new InvCmd({ FunctionName: pipeline.targetFunctionName, Payload: Buffer.from(stubPayload), LogType: "Tail" }));
+                diagReqId = (invRes.$metadata?.requestId || (invRes.LogResult ? (Buffer.from(invRes.LogResult, "base64").toString().match(/START RequestId: ([\w-]+)/)?.[1] ?? "") : "") || diagReqId) as string;
+                const payload = invRes.Payload ? JSON.parse(Buffer.from(invRes.Payload).toString()) : null;
+                const logResult = invRes.LogResult ? Buffer.from(invRes.LogResult, "base64").toString() : "";
+                const diagLogs: string[] = ["Diagnostic invoke result:"];
+                if (invRes.FunctionError) diagLogs.push("FunctionError: " + invRes.FunctionError);
+                if (payload?.errorMessage) diagLogs.push("Error: " + payload.errorMessage);
+                if (payload?.errorType) diagLogs.push("Type: " + payload.errorType);
+                if (logResult) diagLogs.push("", ...logResult.split("\n").filter((l: string) => l.trim()));
+                diagTargetLogs = diagLogs;
+                send("target", "error", diagLogs);
+              } catch (diagErr: any) {
+                send("target", "error", ["ESM did not trigger the target Lambda within 60 seconds.", "Diagnostic invoke also failed: " + diagErr.message, "", "This is a known LocalStack issue — the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
+              }
+            }
+          } catch {
+            send("target", "timeout", ["ESM did not trigger the target Lambda within 60 seconds.", "", "This is a known LocalStack issue — the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
+          }
+          // Update the persisted stub run with the error result
+          try {
+            const pips = loadPipelines();
+            const pip = pips.find(pp => pp.id === pipeline.id);
+            if (pip) {
+              const stubRun = pip.runs.find(r => r.id.startsWith("manual-") && (r.status === "pending" || r.status === "error"));
+              if (stubRun) {
+                stubRun.id = diagReqId;
+                stubRun.status = "error";
+                stubRun.target = { requestId: diagReqId, logs: diagTargetLogs.length ? diagTargetLogs : ["Lambda failed during invocation"], error: true } as any;
+                stubRun.handler = { requestId: "", logs: [], error: false } as any;
+                if (triggerKind === "sqs-send") (stubRun as any).sqs = { status: "success", logs: ["Message sent to queue"] };
+                if (triggerKind === "sns-publish") (stubRun as any).sns = { status: "success", logs: ["Message published to topic"] };
+                savePipelines(pips);
+              }
+            }
+          } catch {}
+        }
         send("done", "complete", []);
         done = true; runSub.unsubscribe(); stepSub.unsubscribe(); res.end();
       }
@@ -563,11 +677,13 @@ router.post("/pipelines/:id/execute", async (req, res) => {
     const runSub = watcher.onNewRun.subscribe(event => {
       if (event.pipelineId !== pipeline.id || done) return;
       esmDetected = true; clearTimeout(esmTimeout);
-      send("glue", event.run.handler.error ? "error" : "success", event.run.handler.logs, (event.run.handler as any).elapsed);
+      if (steps.includes("stream-handler")) {
+        send("glue", event.run.handler.error ? "error" : "success", event.run.handler.logs, (event.run.handler as any).elapsed);
+      }
       if (event.run.handler.error) {
-        send("sns", "error", ["Skipped — stream handler failed"]);
-        send("sqs", "error", ["Skipped — stream handler failed"]);
-        send("target", "error", ["Skipped — stream handler failed"]);
+        if (steps.includes("sns")) send("sns", "error", ["Skipped — stream handler failed"]);
+        if (steps.includes("sqs")) send("sqs", "error", ["Skipped — stream handler failed"]);
+        send("target", "error", ["Skipped — handler failed"]);
         send("done", "complete", []);
         done = true; runSub.unsubscribe(); stepSub.unsubscribe(); res.end();
       }
@@ -615,7 +731,7 @@ router.delete("/pipelines/:id/history", (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
-  pipeline.runs = pipeline.runs.filter(r => r.status === "pending" || r.status === "diagnosing");
+  pipeline.runs = [];
   savePipelines(pipelines);
   res.json({ cleared: true });
 });
