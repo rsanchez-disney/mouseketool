@@ -177,22 +177,39 @@ class PipelineWatcher {
       } catch {}
     }
 
-    // Check for stale pending stub runs (no CloudWatch logs detected within 65s)
-    const staleStubs = pipelines.flatMap(p => p.runs.filter(r => r.id.startsWith("manual-") && r.status === "pending").map(r => ({ name: p.name, id: r.id, age: Date.now() - r.timestamp }))); if (staleStubs.length && this.pollCount % 15 === 0) console.log("[watcher] Pending stubs:", staleStubs);
+    const allStubs = pipelines.flatMap(p => { const td2 = getPipelineType(p.type || "app-pipeline"); if (td2?.steps.includes("stream-handler")) return []; return p.runs.filter(r => r.id.startsWith("manual-")).map(r => ({ pipe: p.name, id: r.id, status: r.status, age: Date.now() - r.timestamp })); }); if (allStubs.length && this.pollCount % 15 === 0) console.log("[watcher] Stale check — stubs:", JSON.stringify(allStubs));
+    // Check for stale pending stub runs (no CloudWatch logs detected within 15s)
     for (const pipeline of pipelines) {
-      const typeDef = getPipelineType(pipeline.type || "app-pipeline");
-      if (typeDef?.steps.includes("stream-handler")) continue; // APP Pipeline handles this differently
+      const td = getPipelineType(pipeline.type || "app-pipeline");
+      if (td?.steps.includes("stream-handler")) continue;
       for (const run of pipeline.runs) {
-        if (run.id.startsWith("manual-") && run.status === "pending" && Date.now() - run.timestamp > 65000) {
-          // Stub is stale — run diagnostic
+        if (run.id.startsWith("manual-") && run.status === "pending" && Date.now() - run.timestamp > 15000) {
+          // Run diagnostic invoke
+          let diagLogs: string[] = ["Target Lambda was not invoked within 15 seconds."];
+          try {
+            const lambdaClient = await getLambdaClient();
+            const { InvokeCommand } = await import("@aws-sdk/client-lambda");
+            const stubPayload = td?.triggerKind === "dynamodb-insert"
+              ? JSON.stringify({ Records: [{ eventSource: "aws:dynamodb", dynamodb: { NewImage: {} } }] })
+              : JSON.stringify({ Records: [{ body: "{}", eventSource: "aws:sqs" }] });
+            const invRes = await lambdaClient.send(new InvokeCommand({ FunctionName: pipeline.targetFunctionName, Payload: Buffer.from(stubPayload), LogType: "Tail" }));
+            const payload = invRes.Payload ? JSON.parse(Buffer.from(invRes.Payload).toString()) : null;
+            const logResult = invRes.LogResult ? Buffer.from(invRes.LogResult, "base64").toString() : "";
+            diagLogs = ["Diagnostic invoke result:"];
+            if (invRes.FunctionError) diagLogs.push("FunctionError: " + invRes.FunctionError);
+            if (payload?.errorMessage) diagLogs.push("Error: " + payload.errorMessage);
+            if (payload?.errorType) diagLogs.push("Type: " + payload.errorType);
+            if (logResult) diagLogs.push("", ...logResult.split("\n").filter((l: string) => l.trim()));
+            run.id = invRes.$metadata?.requestId || run.id;
+          } catch (e: any) { diagLogs.push("Diagnostic failed: " + e.message); }
           run.status = "error";
-          run.target = { requestId: "timeout", logs: ["Target Lambda was not invoked within 65 seconds.", "The ESM may have stopped or the Lambda failed during initialization."], error: true } as any;
-          if (typeDef?.triggerKind === "sqs-send") (run as any).sqs = (run as any).sqs || { status: "success", logs: ["Message sent"] };
-          if (typeDef?.triggerKind === "sns-publish") { (run as any).sns = (run as any).sns || { status: "success", logs: ["Published"] }; (run as any).sqs = (run as any).sqs || { status: "success", logs: ["Delivered"] }; }
+          run.target = { requestId: run.id, logs: diagLogs, error: true } as any;
+          if (td?.triggerKind === "sqs-send") (run as any).sqs = (run as any).sqs || { status: "success", logs: ["Message sent"] };
+          if (td?.triggerKind === "sns-publish") { (run as any).sns = (run as any).sns || { status: "success", logs: ["Published"] }; (run as any).sqs = (run as any).sqs || { status: "success", logs: ["Delivered"] }; }
           savePipelines(pipelines);
-          this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "error", logs: (run.target as any)?.logs || [], elapsed: undefined });
+          this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "error", logs: diagLogs, elapsed: undefined });
           this.newRun$.next({ pipelineId: pipeline.id, run });
-          console.log(`[watcher] Stale stub ${run.id} for "${pipeline.name}" — marked as error`);
+          console.log(`[watcher] Stale stub ${run.id} for "${pipeline.name}" — diagnostic complete`);
         }
       }
     }

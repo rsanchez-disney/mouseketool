@@ -546,10 +546,9 @@ router.post("/pipelines/:id/execute", async (req, res) => {
 
   // SSE setup
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  res.on("error", () => {}); // Prevent unhandled error crash on client disconnect
   const send = (step: string, status: string, logs: string[], elapsed?: number) => {
-    if (res.writableEnded || res.closed) return;
-    res.write(`data: ${JSON.stringify({ step, status, logs, elapsed })}\n\n`);
-    if (typeof (res as any).flush === "function") (res as any).flush();
+    try { if (res.writableEnded || res.closed) return; res.write(`data: ${JSON.stringify({ step, status, logs, elapsed })}\n\n`); if (typeof (res as any).flush === "function") (res as any).flush(); } catch {}
   };
 
   try {
@@ -672,7 +671,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
           } catch {}
         }
         send("done", "complete", []);
-        done = true; runSub.unsubscribe(); stepSub.unsubscribe(); res.end();
+        done = true; runSub.unsubscribe(); stepSub.unsubscribe(); try { res.end(); } catch {};
       }
     }, 60000);
     let esmDetected = false;
@@ -688,7 +687,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
         if (steps.includes("sqs")) send("sqs", "error", ["Skipped — stream handler failed"]);
         send("target", "error", ["Skipped — handler failed"]);
         send("done", "complete", []);
-        done = true; runSub.unsubscribe(); stepSub.unsubscribe(); res.end();
+        done = true; runSub.unsubscribe(); stepSub.unsubscribe(); try { res.end(); } catch {};
       }
     });
 
@@ -697,17 +696,17 @@ router.post("/pipelines/:id/execute", async (req, res) => {
       send(event.step, event.status, event.logs, event.elapsed);
       if (event.step === "target" && ["success", "error", "filtered", "timeout"].includes(event.status)) {
         send("done", "complete", []);
-        done = true; runSub.unsubscribe(); stepSub.unsubscribe(); res.end();
+        done = true; runSub.unsubscribe(); stepSub.unsubscribe(); try { res.end(); } catch {};
       }
     });
 
     setTimeout(() => {
-      if (!done) { done = true; runSub.unsubscribe(); stepSub.unsubscribe(); send("done", "timeout", []); res.end(); }
+      if (!done) { done = true; runSub.unsubscribe(); stepSub.unsubscribe(); send("done", "timeout", []); try { res.end(); } catch {}; }
     }, 180000);
 
   } catch (err: any) {
     send("error", "error", [err.message]);
-    res.end();
+    try { res.end(); } catch {};
   }
 });
 
@@ -750,6 +749,7 @@ router.get("/pipelines/:id/history/live", async (req, res) => {
 
   const runSub = watcher.onNewRun.subscribe(event => {
     if (event.pipelineId !== pipeline.id) return;
+    console.log("[live-sse] Sending new-run event for", event.run.id);
     res.write(`data: ${JSON.stringify({ type: "new-run", runId: event.run.id, source: event.run.source, timestamp: event.run.timestamp })}\n\n`);
     if (typeof (res as any).flush === "function") (res as any).flush();
   });
