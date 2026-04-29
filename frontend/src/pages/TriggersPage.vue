@@ -18,7 +18,7 @@ import {
   HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone,
 } from "lucide-vue-next";
 
-interface PipelineTypeDef { id: string; name: string; description: string; icon: string; steps: string[]; triggerKind: string; requiresStreamHandler: boolean; requiresFilterPolicy: boolean; supportsHeavyLoad: boolean; heavyLoadLabel?: string; aiLearningSource: string; templateLambda?: string; }
+interface PipelineTypeDef { id: string; name: string; description: string; icon: string; steps: string[]; triggerKind: string; requiresStreamHandler: boolean; requiresFilterPolicy: boolean; supportsHeavyLoad: boolean; heavyLoadLabel?: string; aiLearningSource: string; templateLambda?: string; disabled?: boolean; disabledReason?: string; }
 
 const triggerRouter = useRouter();
 type SourceType = "dynamodb" | "s3";
@@ -601,12 +601,17 @@ onMounted(loadMappings);
       <div class="space-y-4">
         <div><h2 class="text-lg font-semibold">Choose a pipeline type</h2><p class="text-sm text-muted-foreground">Select the architecture pattern for your new pipeline.</p></div>
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          <button v-for="t in pipelineTypes" :key="t.id" class="rounded-xl border p-5 text-left cursor-pointer transition-all hover:border-primary/50 hover:bg-muted/50 active:scale-[0.98] space-y-2" @click="selectPipelineType(t)">
-            <component :is="typeIcons[t.icon] || Workflow" class="size-7 text-primary" />
-            <p class="text-sm font-semibold">{{ t.name }}</p>
-            <p class="text-xs text-muted-foreground leading-relaxed">{{ t.description }}</p>
-            <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge></div>
-          </button>
+          <Tooltip v-for="t in pipelineTypes" :key="t.id" :disabled="!t.disabled">
+            <TooltipTrigger as-child>
+              <button class="rounded-xl border p-5 text-left transition-all space-y-2" :class="t.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-primary/50 hover:bg-muted/50 active:scale-[0.98]'" @click="!t.disabled && selectPipelineType(t)">
+                <component :is="typeIcons[t.icon] || Workflow" class="size-7 text-primary" />
+                <p class="text-sm font-semibold">{{ t.name }}</p>
+                <p class="text-xs text-muted-foreground leading-relaxed">{{ t.description }}</p>
+                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge></div>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent v-if="t.disabled">{{ t.disabledReason }}</TooltipContent>
+          </Tooltip>
           <Tooltip><TooltipTrigger as-child>
             <div class="rounded-xl border border-dashed p-5 text-left opacity-50 cursor-not-allowed space-y-2">
               <HardDrive class="size-7 text-muted-foreground" />

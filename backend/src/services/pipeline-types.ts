@@ -31,6 +31,8 @@ export interface PipelineTypeDefinition {
   templateLambda?: string;
   generateIntents: GenerateIntent[];
   historySteps: HistoryStep[];
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export const PIPELINE_TYPES: PipelineTypeDefinition[] = [
@@ -90,8 +92,7 @@ export const PIPELINE_TYPES: PipelineTypeDefinition[] = [
     triggerKind: "sqs-send",
     requiresStreamHandler: false,
     requiresFilterPolicy: false,
-    supportsHeavyLoad: true,
-    heavyLoadLabel: "Increase SQS batch size for high-throughput queues",
+    supportsHeavyLoad: false,
     aiLearningSource: "shadow-sqs",
     generateIntents: [
       { id: "dynamodb-event", label: "DynamoDB stream event", description: "A DynamoDB Streams record as it would arrive from a table change" },
@@ -116,6 +117,8 @@ export const PIPELINE_TYPES: PipelineTypeDefinition[] = [
     requiresFilterPolicy: true,
     supportsHeavyLoad: false,
     aiLearningSource: "shadow-sns",
+    disabled: true,
+    disabledReason: 'Coming in a future release',
     generateIntents: [
       { id: "success", label: "Passes filter", description: "Generate a message that passes the SNS filter policy" },
       { id: "filtered", label: "Filtered out", description: "Generate a message that gets blocked by the filter policy" },

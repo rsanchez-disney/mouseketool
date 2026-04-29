@@ -72,6 +72,9 @@ const expandedRootCause = computed(() => extractErrors(expandedLogContent.value)
 // Heavy load batch counter
 const batchCount = ref(0);
 const batchBaseline = ref(0);
+const isHeavyLoad = computed(() => !!pipeline.value?.heavyLoad);
+const isPayloadInvalid = computed(() => { try { const o = JSON.parse(itemJson.value); return typeof o !== "object" || o === null || !Object.keys(o).length; } catch { return true; } });
+const executeDisabledReason = computed(() => { if (isHeavyLoad.value) return "Manual execution is disabled while heavy load mode is active"; if (isPayloadInvalid.value) return "Payload must be a non-empty valid JSON object"; return ""; });
 const generating = ref(false);
 const generateOpen = ref(false);
 const lastIntent = ref("");
@@ -308,10 +311,10 @@ onMounted(loadPipeline);
         </div>
         <div class="flex flex-col gap-2 mt-6 shrink-0">
           <div class="flex items-center gap-2">
-            <Button :disabled="executing" class="gap-2 cursor-pointer active:scale-95 transition-transform min-w-[120px]" @click="execute">
+            <Tooltip :disabled="!executeDisabledReason"><TooltipTrigger as-child><Button :disabled="executing || isHeavyLoad || isPayloadInvalid" class="gap-2 cursor-pointer active:scale-95 transition-transform min-w-[120px]" @click="execute">
               <Loader2 v-if="executing" class="size-4 animate-spin" /><Play v-else class="size-4" />
               {{ executing ? 'Running...' : allDone && steps[0].status !== 'pending' ? 'Re-run' : 'Execute' }}
-            </Button>
+            </Button></TooltipTrigger><TooltipContent>{{ executeDisabledReason }}</TooltipContent></Tooltip>
             <Button variant="destructive" :disabled="!executing" class="gap-2 cursor-pointer" @click="stopExecution"><Square class="size-3.5" /> Stop</Button>
           </div>
         </div>

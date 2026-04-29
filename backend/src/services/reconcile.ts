@@ -47,7 +47,7 @@ export async function reconcilePipelines(): Promise<ReconcileResult[]> {
   const results: ReconcileResult[] = [];
 
   for (const p of pipelines) {
-    if (p.type && p.type !== 'app-pipeline') continue;
+    // Reconcile all pipeline types
     const r: ReconcileResult = { pipelineId: p.id, pipelineName: p.name, actions: [], warnings: [], targetMissing: false };
     try {
       await reconcileOne(p, r);
@@ -55,6 +55,22 @@ export async function reconcilePipelines(): Promise<ReconcileResult[]> {
       r.warnings.push(`Fatal: ${e.message}`);
     }
     if (r.actions.length || r.warnings.length) results.push(r);
+  }
+
+  // Shadow infrastructure reconciliation for ALL pipeline types
+  const allPipelines = loadPipelines();
+  for (const p of allPipelines) {
+    if (!p.type || !p.shadow) continue;
+    try {
+      const { reconcileShadow } = await import("./shadow-deploy.js");
+      const updated = await reconcileShadow(p);
+      if (updated) {
+        const pps = loadPipelines();
+        const pp = pps.find(x => x.id === p.id);
+        if (pp) { pp.shadow = updated; savePipelines(pps); }
+        console.log(`[reconcile] Shadow infra restored for "${p.name}"`);
+      }
+    } catch (e: any) { console.error(`[reconcile] Shadow reconcile failed for "${p.name}":`, e.message); }
   }
 
   savePipelines(pipelines);
@@ -232,11 +248,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
   }
 
   // 8. Shadow infrastructure subscription
-  try {
-    const { subscribeShadowQueue } = await import("./shadow-infra.js");
-    const shadowSubArn = await subscribeShadowQueue(p.topicArn, p.filterPolicy, p.filterPolicyScope);
-    if (shadowSubArn) p.shadowSubscriptionArn = shadowSubArn;
-  } catch {}
+  // Shadow infra reconciliation handled by reconcileShadow() in shadow-deploy.ts
 
   // Mark target missing on pipeline for UI
   (p as any).targetMissing = r.targetMissing;

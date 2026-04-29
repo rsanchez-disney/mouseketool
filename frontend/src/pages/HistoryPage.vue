@@ -88,7 +88,6 @@ const toastMsg = ref("");
 const showElapsed = ref(localStorage.getItem("mk:showElapsed") !== "false");
 const live = ref(false);
 let eventSource: EventSource | null = null;
-let livePollInterval: ReturnType<typeof setInterval> | null = null;
 
 async function loadPipeline() {
   const all = await (await fetch("/api/triggers/pipelines")).json();
@@ -133,8 +132,6 @@ let liveInterval: ReturnType<typeof setInterval> | null = null;
 
 function startLive() {
   if (eventSource) eventSource.close();
-  if (livePollInterval) clearInterval(livePollInterval);
-  livePollInterval = setInterval(() => loadHistory(true), 3000);
   live.value = true;
   loadHistory(true);
   eventSource = new EventSource(`/api/triggers/pipelines/${pipelineId}/history/live`);
@@ -167,7 +164,6 @@ function startLive() {
 }
 
 function stopLive() {
-  if (livePollInterval) { clearInterval(livePollInterval); livePollInterval = null; }
   live.value = false;
   eventSource?.close(); eventSource = null;
 }

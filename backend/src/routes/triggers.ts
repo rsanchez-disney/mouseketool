@@ -211,8 +211,8 @@ router.post("/wire", async (req, res) => {
       }
     }
 
-    // SQS → Target Lambda
-    if (steps.includes("sqs") && steps.includes("lambda")) {
+    // SQS → Target Lambda (only for types without relay — Direct Stream has no SQS step so this is effectively dead code now)
+    if (steps.includes("sqs") && steps.includes("lambda") && pipelineType === "sns-fanout") { // disabled type — dead code
       const sqsUuid = await findOrCreateMapping(queueArn!, targetFunctionName);
       results.push({ step: "SQS → Target Lambda", detail: `UUID: ${sqsUuid}` });
     }
@@ -258,16 +258,17 @@ router.post("/wire", async (req, res) => {
     pipelines.push(pipeline);
     savePipelines(pipelines);
 
+    // Deploy per-pipeline shadow infrastructure
+    try {
+      const { deployShadowForPipeline } = await import("../services/shadow-deploy.js");
+      const shadowMeta = await deployShadowForPipeline(pipeline);
+      pipeline.shadow = shadowMeta;
+      savePipelines(pipelines);
+      results.push({ step: "Shadow Infrastructure", detail: `Folder: ${shadowMeta.folder}` });
+    } catch (e: any) { console.error("[wire] Shadow deploy failed:", e.message); }
+
     // Subscribe shadow queue (only for types with SNS)
-    if (steps.includes("sns") && topicArn) try {
-      const { subscribeShadowQueue } = await import("../services/shadow-infra.js");
-      const shadowSubArn = await subscribeShadowQueue(topicArn, filterPolicy, filterPolicyScope);
-      if (shadowSubArn) {
-        const updated = loadPipelines();
-        const p = updated.find(pp => pp.id === pipeline.id);
-        if (p) { p.shadowSubscriptionArn = shadowSubArn; savePipelines(updated); }
-      }
-    } catch {}
+    // Shadow infra deployed by shadow-deploy service (Step 5)
 
     res.json({ wired: true, results, pipeline });
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
@@ -478,8 +479,7 @@ router.delete("/pipelines/:id", async (req, res) => {
   // 3b. Unsubscribe shadow queue
   if (pipeline.shadowSubscriptionArn) {
     try {
-      const { unsubscribeShadowQueue } = await import("../services/shadow-infra.js");
-      await unsubscribeShadowQueue(pipeline.shadowSubscriptionArn);
+      // Shadow cleanup handled by destroyShadow (Step 5)
     } catch (e: any) { errors.push(`Shadow unsubscribe: ${e.message}`); }
   }
 
@@ -542,7 +542,8 @@ router.post("/pipelines/:id/execute", async (req, res) => {
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
 
   const { item } = req.body;
-  if (!item || typeof item !== "object") return res.status(400).json({ error: "item is required" });
+  if (!item || typeof item !== "object" || !Object.keys(item).length) return res.status(400).json({ error: "Payload must be a non-empty JSON object" });
+  if (pipeline.heavyLoad) return res.status(400).json({ error: "Manual execution is disabled while heavy load mode is active" });
 
   // SSE setup
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
@@ -591,7 +592,9 @@ router.post("/pipelines/:id/execute", async (req, res) => {
     }
 
     registerManualRun(pipeline.id);
-    watcher.createStubRun(pipeline.id, JSON.stringify(item));
+    const { createHash } = await import("crypto");
+    const itemHash = createHash("sha256").update(JSON.stringify(item)).digest("hex").slice(0, 16);
+    watcher.createStubRun(pipeline.id, JSON.stringify(item), itemHash);
 
     // For types with stream handler, show waiting state
     if (steps.includes("stream-handler")) {
@@ -737,6 +740,27 @@ router.delete("/pipelines/:id/history", (req, res) => {
   pipeline.runs = incPending ? [] : pipeline.runs.filter(r => r.status === "pending" || r.status === "diagnosing");
   savePipelines(pipelines);
   res.json({ cleared: true });
+});
+
+// GET /api/triggers/pipelines/:id/runs/:runId/stream — SSE for a specific run
+router.get("/pipelines/:id/runs/:runId/stream", async (req, res) => {
+  const pipeline = loadPipelines().find(p => p.id === req.params.id);
+  if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+  res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  res.on("error", () => {});
+  const { runId } = req.params;
+  // Send current state immediately
+  const run = pipeline.runs.find(r => r.id === runId);
+  if (run && run.status !== "pending") { res.write(`data: ${JSON.stringify({ type: "done", status: run.status })}\n\n`); try { res.end(); } catch {} return; }
+  const sub = watcher.onStepUpdate.subscribe(event => {
+    if (event.runId !== runId) return;
+    try { res.write(`data: ${JSON.stringify({ type: "step-update", ...event })}\n\n`); if (typeof (res as any).flush === "function") (res as any).flush(); } catch {}
+    if (event.step === "target" && ["success", "error", "filtered", "timeout"].includes(event.status)) {
+      try { res.write(`data: ${JSON.stringify({ type: "done", status: event.status })}\n\n`); } catch {}
+      sub.unsubscribe(); try { res.end(); } catch {}
+    }
+  });
+  req.on("close", () => { sub.unsubscribe(); });
 });
 
 // GET /api/triggers/pipelines/:id/history/live — SSE stream for real-time updates
