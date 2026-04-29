@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { Badge } from "@/components/ui/badge";
 import LogViewer from "@/components/LogViewer.vue";
-import { Database, Zap, Bell, Inbox, AlertTriangle, ChevronDown, ChevronRight } from "lucide-vue-next";
+import { Database, Zap, Bell, Inbox, AlertTriangle, ChevronDown, ChevronRight, Loader2 } from "lucide-vue-next";
 
 const iconMap: Record<string, any> = { Database, Zap, Bell, Inbox };
 
@@ -20,7 +20,7 @@ const props = defineProps<{
   aiExplanation?: string;
 }>();
 
-const emit = defineEmits<{ toggle: []; explain: [] }>();
+const emit = defineEmits<{ toggle: []; explain: []; expand: [logs: string[]] }>();
 
 const rootCauseLines = computed(() =>
   props.logs.filter(l => l.includes("Caused by") || l.includes("FunctionError") || l.includes("errorMessage") || l.includes("Error:") || l.includes("errorType") || l.includes("Type:"))
@@ -39,15 +39,17 @@ function formatMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).to
 <template>
   <div>
     <div class="border rounded-lg overflow-hidden" :class="[
+      status === 'running' ? 'border-primary shadow-md shadow-primary/10' :
       status === 'pending' || status === 'skipped' ? 'border-dashed opacity-60' :
       `border-${color(status)}/40`
     ]">
       <button class="w-full flex items-center gap-3 px-3 py-2 text-left cursor-pointer hover:bg-muted/30" @click="emit('toggle')">
         <div class="size-6 rounded-full flex items-center justify-center" :class="[
-          status === 'pending' || status === 'skipped' ? 'bg-muted' : `bg-${color(status)}/20`
+          status === 'running' ? 'bg-primary/20' : status === 'pending' || status === 'skipped' ? 'bg-muted' : `bg-${color(status)}/20`
         ]">
-          <AlertTriangle v-if="status === 'error' || status === 'timeout'" class="size-3" :class="`text-${color(status)}`" />
-          <component v-else :is="iconMap[icon] || Zap" class="size-3" :class="[
+          <Loader2 v-if="status === 'running'" class="size-3 animate-spin text-primary" />
+          <AlertTriangle v-else-if="status === 'error' || status === 'timeout'" class="size-3" :class="`text-${color(status)}`" />
+          <component v-else-if="status !== 'running'" :is="iconMap[icon] || Zap" class="size-3" :class="[
             status === 'pending' || status === 'skipped' ? 'text-muted-foreground' : `text-${color(status)}`
           ]" />
         </div>

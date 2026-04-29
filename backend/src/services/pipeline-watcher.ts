@@ -87,19 +87,21 @@ class PipelineWatcher {
 
   get onNewRun(): Observable<{ pipelineId: string; run: PipelineRun }> { return this.newRun$.asObservable(); }
   get onStepUpdate(): Observable<StepUpdate> { return this.stepUpdate$.asObservable(); }
+  emitStepUpdate(update: StepUpdate) { this.stepUpdate$.next(update); }
   getBatchCount(pipelineId: string): number { return this.batchState.get(pipelineId)?.count ?? 0; }
 
   createStubRun(pipelineId: string, item?: string) {
     const pipelines = loadPipelines();
     const p = pipelines.find(pp => pp.id === pipelineId);
     if (!p) return;
-    const stubId = `manual-${Date.now()}`;
+    const stubId = `manual-${++stubCounter}`;
     const td = getPipelineType(p.type || "app-pipeline");
     const run: PipelineRun = {
       id: stubId, timestamp: Date.now(), item: item ?? null, source: "manual",
       handler: { requestId: stubId, logs: td?.steps.includes("stream-handler") ? ["Waiting for stream handler..."] : ["Waiting for target Lambda..."], error: false },
       ...(td?.triggerKind === "sqs-send" ? { sqs: { status: "success", logs: ["Message sent to queue"] } } : {}),
       ...(td?.triggerKind === "sns-publish" ? { sns: { status: "success", logs: ["Message published to topic"] } } : {}),
+      ...(td?.triggerKind === "sns-publish" && td?.steps.includes("sqs") ? { sqs: { status: "success", logs: ["Delivered to queue"] } } : {}),
       target: null, status: "pending",
     };
     p.runs.push(run);
@@ -174,6 +176,26 @@ class PipelineWatcher {
         state.prevCount = Count;
       } catch {}
     }
+
+    // Check for stale pending stub runs (no CloudWatch logs detected within 65s)
+    const staleStubs = pipelines.flatMap(p => p.runs.filter(r => r.id.startsWith("manual-") && r.status === "pending").map(r => ({ name: p.name, id: r.id, age: Date.now() - r.timestamp }))); if (staleStubs.length && this.pollCount % 15 === 0) console.log("[watcher] Pending stubs:", staleStubs);
+    for (const pipeline of pipelines) {
+      const typeDef = getPipelineType(pipeline.type || "app-pipeline");
+      if (typeDef?.steps.includes("stream-handler")) continue; // APP Pipeline handles this differently
+      for (const run of pipeline.runs) {
+        if (run.id.startsWith("manual-") && run.status === "pending" && Date.now() - run.timestamp > 65000) {
+          // Stub is stale — run diagnostic
+          run.status = "error";
+          run.target = { requestId: "timeout", logs: ["Target Lambda was not invoked within 65 seconds.", "The ESM may have stopped or the Lambda failed during initialization."], error: true } as any;
+          if (typeDef?.triggerKind === "sqs-send") (run as any).sqs = (run as any).sqs || { status: "success", logs: ["Message sent"] };
+          if (typeDef?.triggerKind === "sns-publish") { (run as any).sns = (run as any).sns || { status: "success", logs: ["Published"] }; (run as any).sqs = (run as any).sqs || { status: "success", logs: ["Delivered"] }; }
+          savePipelines(pipelines);
+          this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "error", logs: (run.target as any)?.logs || [], elapsed: undefined });
+          this.newRun$.next({ pipelineId: pipeline.id, run });
+          console.log(`[watcher] Stale stub ${run.id} for "${pipeline.name}" — marked as error`);
+        }
+      }
+    }
     } catch (e: any) { /* LocalStack unreachable — silently skip this poll cycle */ }
 
   }
@@ -203,12 +225,14 @@ class PipelineWatcher {
 
     // For non-stream-handler types, the detected logs ARE the target Lambda result
     const typeDef2 = getPipelineType(pipeline.type || "app-pipeline");
-    const isDirectTarget = !typeDef2?.steps.includes("stream-handler");
+    const isDirectTarget = !typeDef2?.steps.includes("stream-handler") && !typeDef2?.steps.includes("sns");
     if (isDirectTarget) {
       run.target = { requestId, logs, error, elapsed: handlerElapsed } as any;
       run.handler = { requestId: "", logs: [], error: false } as any;
       run.status = error ? "error" : "success";
-      run.sns = undefined; run.sqs = undefined;
+      // If the target was invoked, intermediate steps must have succeeded
+      run.sns = typeDef2?.steps.includes("sns") ? { status: "success", logs: ["Delivered (inferred from target invocation)"] } : undefined;
+      run.sqs = typeDef2?.steps.includes("sqs") ? { status: "success", logs: ["Delivered (inferred from target invocation)"] } : undefined;
     }
 
     const pipelines = loadPipelines();
@@ -543,4 +567,5 @@ class PipelineWatcher {
   }
 }
 
+let stubCounter = 0;
 export const watcher = new PipelineWatcher();

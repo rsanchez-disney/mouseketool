@@ -547,6 +547,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
   // SSE setup
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
   const send = (step: string, status: string, logs: string[], elapsed?: number) => {
+    if (res.writableEnded || res.closed) return;
     res.write(`data: ${JSON.stringify({ step, status, logs, elapsed })}\n\n`);
     if (typeof (res as any).flush === "function") (res as any).flush();
   };
@@ -587,6 +588,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
       const snsClient = await getSnsClient();
       await snsClient.send(new PublishCommand({ TopicArn: pipeline.topicArn, Message: JSON.stringify(item) }));
       send("sns-trigger", "success", ["Message published to " + pipeline.topicName]);
+      if (steps.includes("sqs")) send("sqs", "success", ["Message delivered to " + (pipeline.queueUrl?.split("/").pop() || pipeline.queueName), "", "Item that passed filter:", JSON.stringify(item, null, 2)]);
     }
 
     registerManualRun(pipeline.id);
@@ -664,6 +666,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
                 if (triggerKind === "sqs-send") (stubRun as any).sqs = { status: "success", logs: ["Message sent to queue"] };
                 if (triggerKind === "sns-publish") (stubRun as any).sns = { status: "success", logs: ["Message published to topic"] };
                 savePipelines(pips);
+                watcher.emitStepUpdate({ pipelineId: pipeline.id, runId: stubRun.id, step: "target", status: "error", logs: (stubRun.target as any)?.logs || [], elapsed: undefined });
               }
             }
           } catch {}
@@ -731,7 +734,8 @@ router.delete("/pipelines/:id/history", (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
-  pipeline.runs = [];
+  const incPending = req.query.includePending === "true";
+  pipeline.runs = incPending ? [] : pipeline.runs.filter(r => r.status === "pending" || r.status === "diagnosing");
   savePipelines(pipelines);
   res.json({ cleared: true });
 });

@@ -664,6 +664,7 @@ onMounted(loadMappings);
         <!-- Step: SNS Topic -->
         <div v-if="currentStepKind === 'sns'" class="space-y-3">
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select an SNS topic</span></div>
+          <div v-if="selectedPipelineType?.id === 'sns-fanout'" class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Info class="size-3.5 shrink-0 text-blue-400" /><span>Multi-subscriber fan-out (multiple SQS queues per topic) will be available in a future release.</span></div>
           <div class="flex items-center gap-2">
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(1);selectedTopic=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTopics"><RefreshCw class="size-3.5" /> Refresh</Button>

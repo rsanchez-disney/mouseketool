@@ -160,7 +160,7 @@ function startLive() {
       } else { loadHistory(true); }
     }
   };
-  eventSource.onerror = () => { stopLive(); };
+  eventSource.onerror = () => { stopLive(); setTimeout(() => startLive(), 3000); };
 }
 
 function stopLive() {
