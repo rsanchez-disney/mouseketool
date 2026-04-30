@@ -220,8 +220,8 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     } catch (e: any) { r.warnings.push(`Stream ESM: ${e.message}`); }
   }
 
-  // SQS → Target Lambda
-  if (queueArn && !r.targetMissing) {
+  // SQS → Target Lambda (skip for queue-consumer — target uses relay queue)
+  if (queueArn && !r.targetMissing && p.type !== "queue-consumer") {
     try {
       const { EventSourceMappings = [] } = await lambda.send(new ListEventSourceMappingsCommand({ EventSourceArn: queueArn, FunctionName: p.targetFunctionName }));
       if (!EventSourceMappings.length) {
