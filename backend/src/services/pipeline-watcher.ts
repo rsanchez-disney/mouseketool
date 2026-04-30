@@ -247,6 +247,10 @@ class PipelineWatcher {
   private detected(pipeline: Pipeline, requestId: string, timestamp: number, logs: string[], error: boolean) {
     this.knownRequestIds.add(requestId);
     this.batchState.delete(pipeline.id);
+    // Dedup: skip if a run already exists within 10s for this pipeline
+    const pps = loadPipelines();
+    const existingPipeline = pps.find(pp => pp.id === pipeline.id);
+    if (existingPipeline?.runs.some(r => Math.abs(r.timestamp - timestamp) < 10000)) return;
     const itemLines = logs.filter(l => l.includes("Item:")).map(l => l.replace(/.*Item:\s*/, ""));
     const item = itemLines[0] ?? null;
     const items = itemLines.length > 1 ? itemLines : undefined;
