@@ -17,7 +17,8 @@ import batchBuildsRoutes from "./routes/batch-builds.js";
 import batchWorkflowsRoutes from "./routes/batch-workflows.js";
 import batchRunsRoutes from "./routes/batch-runs.js";
 import { watcher } from "./services/pipeline-watcher.js";
-import { initShadowInfra } from "./services/shadow-infra.js";
+import { initPipelineWs } from "./services/pipeline-ws.js";
+import { initShadowInfra, ensureBucketExists } from "./services/shadow-infra.js";
 import { reconcilePipelines } from "./services/reconcile.js";
 import { readdirSync, existsSync } from "fs";
 
@@ -60,10 +61,11 @@ setInterval(cleanupBuilds, 30 * 60 * 1000);
 cleanupBuilds();
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
   watcher.start();
   initShadowInfra();
+  initPipelineWs(server);
   startHealthMonitor();
 });
 
@@ -98,9 +100,12 @@ function startHealthMonitor() {
       }
     } else if (up) {
       consecutiveFailures = 0;
+      await ensureBucketExists();
     }
   }, 5000);
 }
 
+process.on("uncaughtException", (err) => { console.error("[FATAL] Uncaught exception (kept alive):", err.message); });
+process.on("unhandledRejection", (err: any) => { console.error("[FATAL] Unhandled rejection (kept alive):", err?.message || err); });
 process.on("SIGINT", () => { watcher.stop(); process.exit(0); });
 process.on("SIGTERM", () => { watcher.stop(); process.exit(0); });

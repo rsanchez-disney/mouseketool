@@ -20,7 +20,7 @@ async function getCWClient() {
   });
 }
 
-async function fetchLambdaLogs(functionName: string): Promise<string[]> {
+export async function fetchLambdaLogs(functionName: string): Promise<string[]> {
   try {
     const cw = await getCWClient();
     const logGroup = `/aws/lambda/${functionName}`;
@@ -82,7 +82,7 @@ router.delete("/:functionName", async (req, res) => {
 
 import { extractLogsFromPayload, diagnoseError, localClassDiagnose } from "../helpers/lambda-diagnostics.js";
 
-async function invokeFunction(client: any, functionName: string, payload: any, buildId?: string, handler?: string) {
+export async function invokeFunction(client: any, functionName: string, payload: any, buildId?: string, handler?: string) {
   const result = await client.send(new InvokeCommand({
     FunctionName: functionName,
     Payload: new TextEncoder().encode(JSON.stringify(payload ?? {})),

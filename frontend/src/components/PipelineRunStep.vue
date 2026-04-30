@@ -23,7 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{ toggle: []; explain: []; expand: [logs: string[]] }>();
 
 const rootCauseLines = computed(() =>
-  props.logs.filter(l => l.includes("Caused by") || l.includes("FunctionError") || l.includes("errorMessage") || l.includes("Error:") || l.includes("errorType") || l.includes("Type:"))
+  props.logs.filter(l => l.includes("Caused by") || l.includes("FunctionError") || l.includes("errorMessage") || l.includes("Error:") || l.includes("errorType") || l.includes("Type:") || l.includes('"Level":"ERROR"') || l.includes('"Level": "ERROR"'))
 );
 
 const statusColor: Record<string, string> = {
@@ -72,6 +72,7 @@ function formatMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).to
       <LogViewer
         v-if="expanded && logs.length"
         :logs="logs"
+        :wrap="false"
         :root-cause-lines="rootCauseLines"
         :kiro-available="showKiroHint"
         :ai-explaining="aiExplaining"

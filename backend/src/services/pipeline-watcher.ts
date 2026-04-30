@@ -50,7 +50,7 @@ export function loadPipelines(): Pipeline[] {
 }
 export function savePipelines(p: Pipeline[]) {
   mkdirSync(SETTINGS_DIR, { recursive: true });
-  writeFileSync(PIPELINES_FILE, JSON.stringify(p, null, 2));
+  writeFileSync(PIPELINES_FILE, JSON.stringify(p));
 }
 
 // --- Manual run registry ---
@@ -152,7 +152,7 @@ class PipelineWatcher {
               reqId = m[1]; logs = [msg]; ts = e.timestamp ?? Date.now(); hasError = false;
             } else if (reqId) {
               logs.push(msg);
-              if (/^\d{4}-\d{2}-\d{2}T.+\bERROR\b/.test(msg)) hasError = true;
+              if (/^\d{4}-\d{2}-\d{2}T.+\bERROR\b/.test(msg) || /"Level"\s*:\s*"ERROR"/.test(msg) || /\bFunctionError\b/.test(msg)) hasError = true;
             }
           }
           if (reqId && !this.knownRequestIds.has(reqId)) this.detected(pipeline, reqId, ts, logs, hasError);
@@ -162,7 +162,7 @@ class PipelineWatcher {
 
     // S3-based detection for Queue Consumer pipelines
     for (const pipeline of pipelines) {
-      if (pipeline.type !== 'queue-consumer' || !pipeline.shadow?.folder) continue;
+      if ((pipeline.type !== 'queue-consumer' && pipeline.type !== 'direct-stream') || !pipeline.shadow?.folder) continue;
       try {
         const { listFolderFiles, readS3Json, moveToProcessed } = await import('./shadow-infra.js');
         const files = await listFolderFiles(pipeline.shadow.folder);
@@ -175,15 +175,14 @@ class PipelineWatcher {
           const run: PipelineRun = {
             id: randomUUID(), timestamp: Date.now(), item: items ? JSON.stringify(items) : null, source,
             handler: { requestId: '', logs: [], error: false },
-            sqs: { status: 'success', logs: items ? [`Received ${Array.isArray(items) ? items.length : 1} item(s)`] : ['Message received'] },
+            ...(pipeline.type === 'queue-consumer' ? { sqs: { status: 'success', logs: items ? [`Received ${Array.isArray(items) ? items.length : 1} item(s)`, '', JSON.stringify(items)] : ['Message received'] } } : {}),
             target: null, status: 'pending',
           };
           const pps = loadPipelines();
           const p = pps.find(pp => pp.id === pipeline.id);
           if (p) {
-            // Match against pending stub by hash
-            const hash = items ? this.computeHash(JSON.stringify(items)) : null;
-            const stubIdx = hash ? p.runs.findIndex(r => r.source === 'manual' && r.status === 'pending' && (r as any).hash === hash) : -1;
+            // Match against pending stub (most recent manual pending run)
+            const stubIdx = p.runs.findIndex(r => r.source === 'manual' && r.status === 'pending');
             if (stubIdx >= 0) { Object.assign(p.runs[stubIdx], run); run.id = p.runs[stubIdx].id; }
             else { p.runs.push(run); }
             savePipelines(pps);
@@ -261,7 +260,7 @@ class PipelineWatcher {
     if (p) {
       const stubIdx = source === "manual" ? p.runs.findIndex(r => r.source === "manual" && r.status === "pending") : -1;
       if (stubIdx >= 0) { Object.assign(p.runs[stubIdx], run); }
-      else { p.runs.push(run); }
+      else { if (!p.runs.some(r => Math.abs(r.timestamp - run.timestamp) < 3000 && r.status === run.status)) p.runs.push(run); }
       savePipelines(pipelines);
     }
 
@@ -308,7 +307,7 @@ class PipelineWatcher {
           if (dynamoItems) {
             run.item = JSON.stringify(dynamoItems);
             updateRun({ item: run.item });
-            this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'dynamodb', status: 'success', logs: [`Inserted: ${JSON.stringify(dynamoItems).slice(0, 200)}`] });
+            this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'dynamodb', status: 'success', logs: ['Inserted:', '', JSON.stringify(Array.isArray(dynamoItems) ? dynamoItems.map((i: any) => { const { _mk_ts, ...rest } = i; return rest; }) : dynamoItems, null, 2)] });
           }
           const dynamoEventFile = dynamoItemsFiles[0].replace('/dynamo-items-', '/dynamo-event-');
           await moveToProcessed(pipeline.shadow.folder, [dynamoItemsFiles[0], dynamoEventFile]);
@@ -320,7 +319,7 @@ class PipelineWatcher {
     if (pipeline.type === 'app-pipeline' && pipeline.shadow?.folder) {
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sns', status: 'running', logs: ['Checking SNS delivery...'] });
       // Poll S3 for sqs-event files (shadow Lambda B captures)
-      const timeout = pipeline.filterPolicy ? 10000 : 30000;
+      const timeout = pipeline.heavyLoad ? 120000 : pipeline.filterPolicy ? 30000 : 45000;
       const sqsCapture = await this.pollFor(async () => {
         const { listFolderFiles, readS3Json } = await import('./shadow-infra.js');
         const files = await listFolderFiles(pipeline.shadow!.folder);
@@ -342,7 +341,7 @@ class PipelineWatcher {
       }
 
       // SNS delivered to SQS
-      const sqsLogs = sqsCapture.items ? [`Received: ${JSON.stringify(sqsCapture.items).slice(0, 200)}`] : ['Message delivered to queue'];
+      const sqsLogs = sqsCapture.items ? ['Received:', '', JSON.stringify(sqsCapture.items), ...(pipeline.heavyLoad ? ['', '⚠ Under heavy load, some captures may be missed due to LocalStack ESM polling limitations.'] : [])] : ['Message delivered to queue'];
       updateRun({ sns: { status: 'success', logs: ['Items passed to SQS queue'] }, sqs: { status: 'success', logs: sqsLogs } });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sns', status: 'success', logs: ['Items passed to SQS queue'] });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sqs', status: 'success', logs: sqsLogs });
@@ -374,6 +373,7 @@ class PipelineWatcher {
             if (foundStart) logs.push(msg);
           }
           if (foundStart && logs.length > 1) {
+            console.log(`${tag} CW logs found: ${logs.length} lines, hasERROR: ${logs.some(l => /ERROR/.test(l))}, sample: ${logs[1]?.slice(0, 80)}`);
             const hasError = logs.some(l => /ERROR|Exception|FunctionError/.test(l));
             const reportLine = logs.find(l => l.includes('REPORT RequestId'));
             const durationMatch = reportLine?.match(/Duration:\s*([\d.]+)\s*ms/);
@@ -387,63 +387,59 @@ class PipelineWatcher {
     }, Date.now() - pollStart < 5000 ? 500 : 1000, 10000);
 
     if (targetResult) {
-      const status = targetResult.error ? 'error' : 'success';
+      const status = targetResult.error ? "error" : "success";
+      let finalLogs = targetResult.logs;
+      // Enrich error logs with diagnostics (same as Deployments page)
+      if (targetResult.error) {
+        try {
+          const lambdaClient = await getLambdaClient();
+          const fnConfig = await lambdaClient.send(new GetFunctionCommand({ FunctionName: pipeline.targetFunctionName }));
+          const envVars = fnConfig.Configuration?.Environment?.Variables || {};
+          const { diagnoseError, extractLogsFromPayload } = await import("../helpers/lambda-diagnostics.js");
+          const hints = diagnoseError(null, envVars);
+          if (hints.length) finalLogs = [...finalLogs, "", "── Diagnostics ──", ...hints];
+        } catch {}
+      }
       console.log(`${tag} Target Lambda ${status} (${targetResult.elapsed}ms)`);
-      updateRun({ status, target: { requestId: targetResult.requestId, logs: targetResult.logs, error: targetResult.error, elapsed: targetResult.elapsed } });
-      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'target', status, logs: targetResult.logs, elapsed: targetResult.elapsed });
+      updateRun({ status, target: { requestId: targetResult.requestId, logs: finalLogs, error: targetResult.error, elapsed: targetResult.elapsed } as any });
+      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status, logs: finalLogs, elapsed: targetResult.elapsed });
       return;
     }
 
     // --- No logs found — run diagnostic invoke ---
     console.log(`${tag} No target logs — running diagnostic invoke`);
-    this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'target', status: 'diagnosing', logs: ['No CloudWatch logs detected. Running diagnostic...'] });
+    this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "diagnosing", logs: ["No CloudWatch logs detected. Running diagnostic..."] });
+    updateRun({ status: "diagnosing", target: { requestId: "", logs: ["No CloudWatch logs detected. Running diagnostic..."], error: false } as any });
 
     try {
+      const { invokeFunction } = await import("../routes/deployments.js");
       const lambdaClient = await getLambdaClient();
-      const { InvokeCommand } = await import('@aws-sdk/client-lambda');
 
-      // Try to get captured event from S3 for diagnostic payload
-      let diagPayload: string | undefined;
+      // Kill warm container to force cold start with full init logs
+      try { const { execSync } = await import("child_process"); const dk = process.platform === "win32" ? "wsl docker" : "docker"; const ids = execSync(`${dk} ps --filter "name=lambda-${pipeline.targetFunctionName}" -q`, { encoding: "utf-8" }).trim(); if (ids) execSync(`${dk} rm -f ${ids.split("\n").join(" ")}`, { encoding: "utf-8" }); } catch {}
+
+      // Use the same invoke logic as the Deployments page
+      let diagPayload: any = {};
       if (pipeline.shadow?.folder) {
-        const { listFolderFiles, readS3Json } = await import('./shadow-infra.js');
-        const files = await listFolderFiles(pipeline.shadow.folder + '-processed');
-        // Get the most recent event file
-        const eventFiles = files.filter(f => f.includes('/event-') || f.includes('/sqs-event-') || f.includes('/dynamo-event-'));
-        if (eventFiles.length) {
-          const captured = await readS3Json(eventFiles[eventFiles.length - 1]);
-          if (captured) diagPayload = JSON.stringify(captured);
-        }
+        const { listFolderFiles, readS3Json } = await import("./shadow-infra.js");
+        const files = await listFolderFiles(pipeline.shadow.folder + "-processed");
+        const eventFiles = files.filter(f => f.includes("/event-") || f.includes("/sqs-event-") || f.includes("/dynamo-event-"));
+        if (eventFiles.length) { const captured = await readS3Json(eventFiles[eventFiles.length - 1]); if (captured) diagPayload = captured; }
       }
 
-      // Fallback stub payload
-      if (!diagPayload) {
-        const td = getPipelineType(pipeline.type || 'app-pipeline');
-        diagPayload = td?.triggerKind === 'dynamodb-insert'
-          ? JSON.stringify({ Records: [{ eventSource: 'aws:dynamodb', dynamodb: { NewImage: {} } }] })
-          : JSON.stringify({ Records: [{ body: '{}', eventSource: 'aws:sqs' }] });
-      }
+      const depInfo = await getDeploymentInfo(pipeline.targetFunctionName);
+      const result = await invokeFunction(lambdaClient, pipeline.targetFunctionName, diagPayload, depInfo?.buildId, depInfo?.handler);
+      const diagLogs = result.logs.length ? result.logs : ["Diagnostic invoke returned no logs"];
 
-      const invRes = await lambdaClient.send(new InvokeCommand({
-        FunctionName: pipeline.targetFunctionName,
-        Payload: Buffer.from(diagPayload),
-        LogType: 'Tail',
-      }));
-
-      const diagLogs: string[] = ['Diagnostic invoke result:'];
-      const payload = invRes.Payload ? JSON.parse(Buffer.from(invRes.Payload).toString()) : null;
-      const logResult = invRes.LogResult ? Buffer.from(invRes.LogResult, 'base64').toString() : '';
-      if (invRes.FunctionError) diagLogs.push('FunctionError: ' + invRes.FunctionError);
-      if (payload?.errorMessage) diagLogs.push('Error: ' + payload.errorMessage);
-      if (payload?.errorType) diagLogs.push('Type: ' + payload.errorType);
-      if (logResult) diagLogs.push('', ...logResult.split('\n').filter((l: string) => l.trim()));
-
-      console.log(`${tag} Diagnostic complete — ${invRes.FunctionError ? 'error' : 'success'}`);
-      updateRun({ status: 'error', target: { requestId: invRes.$metadata?.requestId || '', logs: diagLogs, error: true } });
-      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'target', status: 'error', logs: diagLogs });
+      const hasLogErrors = diagLogs.some(l => /ERROR|Exception|FunctionError/.test(l) || /"Level"\s*:\s*"ERROR"/.test(l));
+      const diagStatus = (result.functionError || hasLogErrors) ? "error" : "success";
+      console.log(`${tag} Diagnostic complete — ${diagStatus}`);
+      updateRun({ status: diagStatus, target: { requestId: "", logs: diagLogs, error: diagStatus === "error" } as any });
+      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: diagStatus, logs: diagLogs });
     } catch (e: any) {
-      const errLogs = ['Diagnostic invoke failed: ' + e.message];
-      updateRun({ status: 'error', target: { requestId: '', logs: errLogs, error: true } });
-      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'target', status: 'error', logs: errLogs });
+      const errLogs = ["Diagnostic invoke failed: " + e.message];
+      updateRun({ status: "error", target: { requestId: "", logs: errLogs, error: true } as any });
+      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "error", logs: errLogs });
     }
   }
 

@@ -212,7 +212,7 @@ router.post("/wire", async (req, res) => {
     }
 
     // SQS → Target Lambda (only for types without relay — Direct Stream has no SQS step so this is effectively dead code now)
-    if (steps.includes("sqs") && steps.includes("lambda") && pipelineType === "sns-fanout") { // disabled type — dead code
+    if (steps.includes("sqs") && steps.includes("lambda") && pipelineType !== "queue-consumer") { // Queue Consumer uses relay queue via shadow-deploy
       const sqsUuid = await findOrCreateMapping(queueArn!, targetFunctionName);
       results.push({ step: "SQS → Target Lambda", detail: `UUID: ${sqsUuid}` });
     }
@@ -569,12 +569,12 @@ router.post("/pipelines/:id/execute", async (req, res) => {
 
     // Trigger based on pipeline type
     if (triggerKind === "dynamodb-insert") {
-      send("dynamodb", "running", ["Inserting item into " + pipeline.tableName + "..."]);
+      const { _mk_ts: _a, ...displayItem } = item; send("dynamodb", "running", ["Inserting item into " + pipeline.tableName + "...", "", JSON.stringify(displayItem, null, 2)]);
       const dynamoClient = await getDynamoClient();
       const dynamoItem = Object.fromEntries(Object.entries(item).map(([k, v]) => [k, toDynamoValue(v)]));
       dynamoItem._mk_ts = { S: new Date().toISOString() };
       await dynamoClient.send(new PutItemCommand({ TableName: pipeline.tableName, Item: dynamoItem }));
-      send("dynamodb", "success", ["Item inserted into " + pipeline.tableName]);
+      send("dynamodb", "success", ["Item inserted into " + pipeline.tableName, "", JSON.stringify(displayItem, null, 2)]);
     } else if (triggerKind === "sqs-send") {
       send("sqs-trigger", "running", ["Sending message to " + pipeline.queueName + "..."]);
       const sqsClient = await getSqsClient();
@@ -770,6 +770,7 @@ router.get("/pipelines/:id/history/live", async (req, res) => {
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  res.on("error", () => {});
 
   const runSub = watcher.onNewRun.subscribe(event => {
     if (event.pipelineId !== pipeline.id) return;

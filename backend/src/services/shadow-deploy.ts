@@ -113,7 +113,7 @@ async function createRelayQueue(pipelineId: string): Promise<{ name: string; url
 function buildEnvVars(pipeline: Pipeline, folder: string, extra?: Record<string, string>): Record<string, string> {
   const { getS3Client: _, ...rest } = {} as any; // unused, just for clarity
   return {
-    SHADOW_BUCKET: `mk-shadow-bucket`,
+    SHADOW_BUCKET: `mouseketool-shadow`,
     PIPELINE_ID: pipeline.id,
     PIPELINE_NAME: pipeline.name,
     FOLDER_PREFIX: folder,
@@ -121,8 +121,8 @@ function buildEnvVars(pipeline: Pipeline, folder: string, extra?: Record<string,
   };
 }
 
-async function deployDirectStream(pipeline: Pipeline): Promise<ShadowMeta> {
-  const folder = `${sanitizeName(pipeline.name)}-${pipeline.id}-direct-stream-${Date.now()}`;
+async function deployDirectStream(pipeline: Pipeline, existingFolder?: string): Promise<ShadowMeta> {
+  const folder = existingFolder || `${sanitizeName(pipeline.name)}-${pipeline.id}-direct-stream-${Date.now()}`;
   const lambdaName = `mk-shadow-${pipeline.id.slice(0, 8)}`;
   const zipBytes = await zipTemplate("shadow-direct-stream.js");
   const envVars = buildEnvVars(pipeline, folder);
@@ -132,8 +132,8 @@ async function deployDirectStream(pipeline: Pipeline): Promise<ShadowMeta> {
   return { bucket: envVars.SHADOW_BUCKET, folder, lambdaA: lambdaName, lambdaAArn: lambdaArn, lambdaAEsmUuid: esmUuid };
 }
 
-async function deployQueueConsumer(pipeline: Pipeline): Promise<ShadowMeta> {
-  const folder = `${sanitizeName(pipeline.name)}-${pipeline.id}-queue-consumer-${Date.now()}`;
+async function deployQueueConsumer(pipeline: Pipeline, existingFolder?: string): Promise<ShadowMeta> {
+  const folder = existingFolder || `${sanitizeName(pipeline.name)}-${pipeline.id}-queue-consumer-${Date.now()}`;
   const relay = await createRelayQueue(pipeline.id);
   const lambdaName = `mk-shadow-${pipeline.id.slice(0, 8)}`;
   const zipBytes = await zipTemplate("shadow-queue-consumer.js");
@@ -148,9 +148,8 @@ async function deployQueueConsumer(pipeline: Pipeline): Promise<ShadowMeta> {
   };
 }
 
-async function deployAppPipeline(pipeline: Pipeline): Promise<ShadowMeta> {
-  const folder = `${sanitizeName(pipeline.name)}-${pipeline.id}-app-pipeline-${Date.now()}`;
-  const relay = await createRelayQueue(pipeline.id);
+async function deployAppPipeline(pipeline: Pipeline, existingFolder?: string): Promise<ShadowMeta> {
+  const folder = existingFolder || `${sanitizeName(pipeline.name)}-${pipeline.id}-app-pipeline-${Date.now()}`;
 
   // Lambda A — DynamoDB stream capture
   const lambdaAName = `mk-shadow-a-${pipeline.id.slice(0, 8)}`;
@@ -160,28 +159,50 @@ async function deployAppPipeline(pipeline: Pipeline): Promise<ShadowMeta> {
   const streamArn = await getDynamoStreamArn(pipeline.tableName);
   const esmAUuid = await createEsm(lambdaAName, streamArn, 10, "LATEST");
 
-  // Lambda B — SQS capture + relay
+  // Shadow SQS queue subscribed to SNS topic (with same filter policy)
+  const shadowQueueName = `mk-shadow-q-${pipeline.id.slice(0, 8)}`;
+  const sqsClient = await getSqsClient();
+  const { CreateQueueCommand, GetQueueAttributesCommand } = await import("@aws-sdk/client-sqs");
+  const { QueueAttributeName } = await import("@aws-sdk/client-sqs");
+  const createRes = await sqsClient.send(new CreateQueueCommand({ QueueName: shadowQueueName }));
+  const shadowQueueUrl = createRes.QueueUrl!;
+  const sqAttrs = await sqsClient.send(new GetQueueAttributesCommand({ QueueUrl: shadowQueueUrl, AttributeNames: [QueueAttributeName.QueueArn] }));
+  const shadowQueueArn = sqAttrs.Attributes?.QueueArn || "";
+  console.log(`${TAG} Created shadow SQS queue: ${shadowQueueName}`);
+
+  // Subscribe shadow queue to SNS topic with same filter policy
+  const { getSnsClient } = await import("../helpers/sns-client.js");
+  const { SubscribeCommand, SetSubscriptionAttributesCommand } = await import("@aws-sdk/client-sns");
+  const snsClient = await getSnsClient();
+  const subRes = await snsClient.send(new SubscribeCommand({ TopicArn: pipeline.topicArn, Protocol: "sqs", Endpoint: shadowQueueArn }));
+  console.log(`${TAG} Subscribed shadow queue to SNS: ${subRes.SubscriptionArn}`);
+  if (pipeline.filterPolicy && Object.keys(pipeline.filterPolicy).length && subRes.SubscriptionArn) {
+    await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn: subRes.SubscriptionArn, AttributeName: "FilterPolicy", AttributeValue: JSON.stringify(pipeline.filterPolicy) }));
+    if (pipeline.filterPolicyScope) await snsClient.send(new SetSubscriptionAttributesCommand({ SubscriptionArn: subRes.SubscriptionArn, AttributeName: "FilterPolicyScope", AttributeValue: pipeline.filterPolicyScope }));
+    console.log(`${TAG} Applied filter policy to shadow subscription`);
+  }
+
+  // Lambda B — shadow SQS capture (observational, no relay needed)
   const lambdaBName = `mk-shadow-b-${pipeline.id.slice(0, 8)}`;
   const zipB = await zipTemplate("shadow-app-pipeline-b.js");
-  const envB = buildEnvVars(pipeline, folder, { RELAY_QUEUE_URL: relay.url });
+  const envB = buildEnvVars(pipeline, folder);
   const lambdaBArn = await createShadowLambda(lambdaBName, zipB, envB);
-  const queueArn = await getQueueArn(pipeline.queueUrl);
-  const esmBUuid = await createEsm(lambdaBName, queueArn, 10);
+  const esmBUuid = await createEsm(lambdaBName, shadowQueueArn, 10);
 
   return {
     bucket: envA.SHADOW_BUCKET, folder,
     lambdaA: lambdaAName, lambdaAArn, lambdaAEsmUuid: esmAUuid,
     lambdaB: lambdaBName, lambdaBArn, lambdaBEsmUuid: esmBUuid,
-    relayQueueName: relay.name, relayQueueUrl: relay.url, relayQueueArn: relay.arn,
+    relayQueueName: shadowQueueName, relayQueueUrl: shadowQueueUrl, relayQueueArn: shadowQueueArn,
   };
 }
 
-export async function deployShadowForPipeline(pipeline: Pipeline): Promise<ShadowMeta> {
+export async function deployShadowForPipeline(pipeline: Pipeline, existingFolder?: string): Promise<ShadowMeta> {
   console.log(`${TAG} Deploying shadow for pipeline "${pipeline.name}" (type: ${pipeline.type})`);
   switch (pipeline.type) {
-    case "direct-stream": return deployDirectStream(pipeline);
-    case "queue-consumer": return deployQueueConsumer(pipeline);
-    case "app-pipeline": return deployAppPipeline(pipeline);
+    case "direct-stream": return deployDirectStream(pipeline, existingFolder);
+    case "queue-consumer": return deployQueueConsumer(pipeline, existingFolder);
+    case "app-pipeline": return deployAppPipeline(pipeline, existingFolder);
     default: throw new Error(`Unsupported pipeline type: ${pipeline.type}`);
   }
 }
@@ -238,7 +259,7 @@ export async function reconcileShadow(pipeline: Pipeline): Promise<ShadowMeta | 
   if (!healthy) {
     console.log(`${TAG} Shadow resources missing — recreating`);
     await destroyShadow(pipeline);
-    return deployShadowForPipeline(pipeline);
+    return deployShadowForPipeline(pipeline, shadow.folder);
   }
 
   console.log(`${TAG} Shadow healthy for pipeline "${pipeline.name}"`);

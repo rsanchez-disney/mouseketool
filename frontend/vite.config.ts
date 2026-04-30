@@ -15,6 +15,10 @@ export default defineConfig({
       usePolling: true,
     },
     proxy: {
+      "/ws": {
+        target: "ws://localhost:3001",
+        ws: true,
+      },
       "/api": {
         target: "http://localhost:3001",
         changeOrigin: true,

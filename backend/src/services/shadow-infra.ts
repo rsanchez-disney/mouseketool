@@ -13,6 +13,21 @@ export async function getS3Client(): Promise<S3Client> {
   });
 }
 
+export async function ensureBucketExists(): Promise<void> {
+  try {
+    const s3 = await getS3Client();
+    const { HeadBucketCommand, CreateBucketCommand } = await import('@aws-sdk/client-s3');
+    await s3.send(new HeadBucketCommand({ Bucket: SHADOW_BUCKET }));
+  } catch {
+    try {
+      const s3 = await getS3Client();
+      const { CreateBucketCommand } = await import('@aws-sdk/client-s3');
+      await s3.send(new CreateBucketCommand({ Bucket: SHADOW_BUCKET }));
+      console.log('[shadow] Recreated missing bucket:', SHADOW_BUCKET);
+    } catch {}
+  }
+}
+
 export async function initShadowInfra(): Promise<void> {
   try {
     const s3 = await getS3Client();
@@ -24,8 +39,6 @@ export async function initShadowInfra(): Promise<void> {
     }
 
     // One-time cleanup of old mk-shadow-* resources from previous architecture
-    await cleanupLegacyResources();
-
     console.log(`[shadow] Shadow S3 bucket ready: ${SHADOW_BUCKET}`);
   } catch (e: any) {
     console.error('[shadow] Failed to initialize:', e.message);

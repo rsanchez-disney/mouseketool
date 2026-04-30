@@ -18,12 +18,14 @@
     "@aws-sdk/client-s3": "^3.1029.0",
     "@aws-sdk/client-sns": "^3.1030.0",
     "@aws-sdk/client-sqs": "^3.1030.0",
+    "@types/ws": "^8.18.1",
     "archiver": "^7.0.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
     "rxjs": "^7.8.2",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",

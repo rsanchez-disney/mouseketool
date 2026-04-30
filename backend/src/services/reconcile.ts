@@ -132,8 +132,10 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
   } catch (e: any) { r.warnings.push(`SNS topic: ${e.message}`); }
 
   // 3. SQS queue + DLQ
-  const dlqName = p.queueName + "-dlq";
   let queueArn = "";
+  if (!p.queueName) { /* No SQS for this pipeline type */ } else {
+  const dlqName = p.queueName + "-dlq";
+  queueArn = "";
   try {
     // Create DLQ first
     await sqs.send(new CreateQueueCommand({ QueueName: dlqName }));
@@ -158,6 +160,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     queueArn = mainAttrs.Attributes?.QueueArn || "";
   } catch (e: any) { r.warnings.push(`SQS queue: ${e.message}`); }
 
+  }
   // 4. Stream handler Lambda (template)
   try {
     await lambda.send(new GetFunctionCommand({ FunctionName: p.glueFunctionName }));
@@ -270,6 +273,8 @@ export async function redeployLambda(functionName: string): Promise<boolean> {
     if (!existsSync(metaPath)) return false;
 
     const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
+    const s2 = await loadSettings();
+    if (Date.now() - new Date(meta.createdAt).getTime() > s2.cleanup.ttlMinutes * 60 * 1000) return false;
     if (!existsSync(meta.jarPath)) return false;
 
     const jarBytes = readFileSync(meta.jarPath);

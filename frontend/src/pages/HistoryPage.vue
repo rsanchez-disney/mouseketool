@@ -31,13 +31,15 @@ const historySteps = ref<HistoryStepDef[]>([]);
 function getStepState(run: Run, step: HistoryStepDef): { status: string; logs: string[]; elapsed?: number } {
   if (step.dataField === "item") {
     // DynamoDB insert is always success if the run exists
-    return { status: "success", logs: run.items?.length ? [`Batched ${run.items.length} items`, ...run.items] : [run.item || "No item data"], elapsed: undefined };
+    const stripMk = (s: string) => { try { const d = JSON.parse(s); const clean = (Array.isArray(d) ? d : [d]).map((i: any) => { const { _mk_ts, ...r } = i; return r; }); return JSON.stringify(clean.length === 1 ? clean[0] : clean); } catch { return s; } };
+    return { status: "success", logs: run.items?.length ? [`Batched ${run.items.length} items`, ...run.items.map(stripMk)] : [stripMk(run.item || "") || "No item data"], elapsed: undefined };
   }
   if (step.dataField === "handler") {
     return { status: run.handler?.error ? "error" : "success", logs: run.handler?.logs || [], elapsed: (run.handler as any)?.elapsed };
   }
   if (step.dataField === "target") {
     if (!run.target) return { status: run.status === "pending" ? "pending" : "pending", logs: ["No invocation detected yet"] };
+    if (run.status === "diagnosing") return { status: "diagnosing", logs: run.target.logs || [], elapsed: (run.target as any)?.elapsed };
     return { status: run.target.error ? "error" : run.status === "filtered" ? "filtered" : "success", logs: run.target.logs || [], elapsed: (run.target as any)?.elapsed };
   }
   // sns or sqs
@@ -87,7 +89,8 @@ function expandLogs(key: string, logs: string[]) {
 const toastMsg = ref("");
 const showElapsed = ref(localStorage.getItem("mk:showElapsed") !== "false");
 const live = ref(false);
-let eventSource: EventSource | null = null;
+let ws: WebSocket | null = null;
+
 
 async function loadPipeline() {
   const all = await (await fetch("/api/triggers/pipelines")).json();
@@ -128,14 +131,15 @@ async function clearHistory() {
   toastMsg.value = "History cleared"; setTimeout(() => toastMsg.value = "", 2000);
 }
 
-let liveInterval: ReturnType<typeof setInterval> | null = null;
+
 
 function startLive() {
-  if (eventSource) eventSource.close();
+  if (ws) ws.close();
   live.value = true;
   loadHistory(true);
-  eventSource = new EventSource(`/api/triggers/pipelines/${pipelineId}/history/live`);
-  eventSource.onmessage = (e) => {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/ws/pipelines?id=${pipelineId}`);
+  ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === "batch-count") { batchCount.value = data.count; }
     else if (data.type === "new-run") { batchCount.value = 0; loadHistory(true); }
@@ -146,26 +150,21 @@ function startLive() {
         else if ((data.step === "sqs" || data.step === "sqs-trigger") && data.status !== "running") run.sqs = { status: data.status, logs: data.logs, elapsed: data.elapsed };
         else if (data.step === "target") {
           if (data.status === "running") return;
-          if (data.status === "diagnosing") {
-            run.target = { requestId: "", logs: data.logs, error: false, elapsed: data.elapsed };
-            run.status = "diagnosing";
-            return;
-          }
+          if (data.status === "diagnosing") { run.target = { requestId: "", logs: data.logs, error: false, elapsed: data.elapsed }; run.status = "diagnosing"; return; }
           run.target = { requestId: "", logs: data.logs, error: data.status === "error" || data.status === "timeout", elapsed: data.elapsed };
           run.status = data.status === "success" ? "success" : data.status === "filtered" ? "filtered" : "error";
-          // Compute total elapsed
-          run.totalElapsed = ((run.handler as any)?.elapsed || 0) + (run.sns?.elapsed || 0) + (run.sqs?.elapsed || 0) + (run.target?.elapsed || 0);
-          if (data.status === "error") loadHistory(true);
+        } else if (data.step === "dynamodb") {
+          run.item = data.logs.join("\n");
         }
       } else { loadHistory(true); }
     }
   };
-  eventSource.onerror = () => { stopLive(); setTimeout(() => startLive(), 3000); };
+  ws.onclose = () => { if (live.value) setTimeout(() => startLive(), 2000); };
 }
 
 function stopLive() {
   live.value = false;
-  eventSource?.close(); eventSource = null;
+  ws?.close(); ws = null;
 }
 
 function toggleRun(id: string) { expandedRun.value = expandedRun.value === id ? null : id; expandedStep.value = null; }
@@ -176,6 +175,7 @@ function statusColor(status: string) {
   if (status === "error") return "text-red-500";
   if (status === "filtered") return "text-blue-400";
   if (status === "pending") return "text-amber-500";
+  if (status === "diagnosing") return "text-purple-500";
   return "text-muted-foreground";
 }
 
@@ -204,10 +204,6 @@ onMounted(async () => {
 
 
     <template v-else>
-    <div v-if="pipeline?.heavyLoad && batchCount > 0" class="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/5 px-4 py-2.5 mb-3">
-      <div class="size-2 rounded-full bg-orange-500 animate-pulse" />
-      <span class="text-xs text-orange-400 font-mono">Batching {{ batchCount }} new item{{ batchCount !== 1 ? 's' : '' }}...</span>
-    </div>
 
     <div v-if="!runs.length" class="text-center py-16 text-muted-foreground">
       <Clock class="size-12 mx-auto mb-4 opacity-30" />
@@ -234,6 +230,10 @@ onMounted(async () => {
         </button>
       </div>
       <span class="ml-auto text-[11px] text-muted-foreground font-mono tabular-nums">{{ filteredRuns.length }}<span class="text-muted-foreground/40">/{{ runs.length }}</span></span>
+    </div>
+    <div v-if="pipeline?.heavyLoad && batchCount > 0" class="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/5 px-4 py-2.5 mt-3">
+      <div class="size-2 rounded-full bg-orange-500 animate-pulse" />
+      <span class="text-xs text-orange-400 font-mono">Batching {{ batchCount }} new item{{ batchCount !== 1 ? 's' : '' }}...</span>
     </div>
 
     <div class="space-y-2">

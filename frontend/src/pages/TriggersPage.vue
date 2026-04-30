@@ -24,7 +24,7 @@ const triggerRouter = useRouter();
 type SourceType = "dynamodb" | "s3";
 const sources = [
   { type: "dynamodb" as SourceType, label: "DynamoDB", icon: Database, enabled: true },
-  { type: "s3" as SourceType, label: "S3 Bucket", icon: HardDrive, enabled: false, tooltip: "Available in a future release" },
+  { type: "s3" as SourceType, label: "S3 Bucket", icon: HardDrive, enabled: false, tooltip: "Coming in a future release" },
 ];
 
 // Toast
@@ -607,7 +607,7 @@ onMounted(loadMappings);
                 <component :is="typeIcons[t.icon] || Workflow" class="size-7 text-primary" />
                 <p class="text-sm font-semibold">{{ t.name }}</p>
                 <p class="text-xs text-muted-foreground leading-relaxed">{{ t.description }}</p>
-                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge></div>
+                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge><Badge v-if="t.disabled" class="text-[10px] bg-amber-500/20 text-amber-500 border-amber-500/40">Coming soon</Badge></div>
               </button>
             </TooltipTrigger>
             <TooltipContent v-if="t.disabled">{{ t.disabledReason }}</TooltipContent>
@@ -617,9 +617,9 @@ onMounted(loadMappings);
               <HardDrive class="size-7 text-muted-foreground" />
               <p class="text-sm font-semibold text-muted-foreground">S3 Event Processor</p>
               <p class="text-xs text-muted-foreground leading-relaxed">Trigger a Lambda from S3 bucket events (object created, deleted).</p>
-              <Badge class="text-[10px] bg-amber-500/20 text-amber-500 border-amber-500/40">Coming soon</Badge>
+              <div class="flex flex-wrap gap-1 pt-1"><Badge variant="secondary" class="text-[10px]">s3</Badge><Badge variant="secondary" class="text-[10px]">lambda</Badge><Badge class="text-[10px] bg-amber-500/20 text-amber-500 border-amber-500/40">Coming soon</Badge></div>
             </div>
-          </TooltipTrigger><TooltipContent>S3 event sources will be available in a future version.</TooltipContent></Tooltip>
+          </TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
         </div>
       </div>
     </template>
@@ -683,6 +683,7 @@ onMounted(loadMappings);
             </div></CardContent></Card>
           </div>
 
+          <div class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Info class="size-3.5 shrink-0 text-blue-400" /><span>The filter policy will be applied to the SNS → SQS subscription selected in the next step.</span></div>
           <!-- Filter policy (optional) -->
           <div v-if="selectedTopic" class="space-y-3 pt-2">
             <div class="flex items-center gap-3">
@@ -871,7 +872,7 @@ onMounted(loadMappings);
 
           <!-- Info banner -->
           <!-- Heavy Load Card -->
-          <Card class="!py-3">
+          <Card class="!py-3" :class="{ 'opacity-50': !selectedPipelineType?.supportsHeavyLoad }">
             <CardContent class="py-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
@@ -883,7 +884,7 @@ onMounted(loadMappings);
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="text-xs text-muted-foreground">{{ heavyLoad ? 'Enabled' : 'Disabled' }}</span>
-                  <Toggle v-model="heavyLoad" />
+                  <Tooltip :disabled="selectedPipelineType?.supportsHeavyLoad !== false"><TooltipTrigger as-child><span><Toggle v-model="heavyLoad" :disabled="!selectedPipelineType?.supportsHeavyLoad" /></span></TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
                 </div>
               </div>
             </CardContent>
