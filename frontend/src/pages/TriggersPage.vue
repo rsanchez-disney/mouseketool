@@ -191,7 +191,7 @@ const loadingMappings = ref(false);
 const usedTables = computed(() => new Set(mappings.value.map(m => m.tableName)));
 const usedTopics = computed(() => new Set(mappings.value.map(m => m.topicName)));
 const usedQueues = computed(() => new Set(mappings.value.map(m => m.queueName)));
-const usedFunctions = computed(() => new Set(mappings.value.flatMap(m => [m.glueFunctionName, m.targetFunctionName])));
+const usedFunctions = computed(() => new Set(mappings.value.map(m => m.glueFunctionName).filter(Boolean)));
 const deletingMapping = ref(""); const expandedAddons = ref("");
 const selectedPipelines = ref<Set<string>>(new Set());
 const showActionsMenu = ref(false);

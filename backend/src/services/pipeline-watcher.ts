@@ -77,6 +77,8 @@ async function getCWClient() {
   });
 }
 
+function latestFile(files: string[]): string { return files.sort((a, b) => parseInt(a.match(/-(\d+)\.json/)?.[1] || "0") - parseInt(b.match(/-(\d+)\.json/)?.[1] || "0")).pop() || files[0]; }
+
 // --- PipelineWatcher ---
 
 class PipelineWatcher {
@@ -303,14 +305,14 @@ class PipelineWatcher {
         const files = await listFolderFiles(pipeline.shadow.folder);
         const dynamoItemsFiles = files.filter(f => f.includes('/dynamo-items-') && !f.includes('-processed/'));
         if (dynamoItemsFiles.length) {
-          const dynamoItems = await readS3Json(dynamoItemsFiles[0]);
+          const dynamoItems = await readS3Json(latestFile(dynamoItemsFiles));
           if (dynamoItems) {
             run.item = JSON.stringify(dynamoItems);
             updateRun({ item: run.item });
             this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'dynamodb', status: 'success', logs: ['Inserted:', '', JSON.stringify(Array.isArray(dynamoItems) ? dynamoItems.map((i: any) => { const { _mk_ts, ...rest } = i; return rest; }) : dynamoItems, null, 2)] });
           }
-          const dynamoEventFile = dynamoItemsFiles[0].replace('/dynamo-items-', '/dynamo-event-');
-          await moveToProcessed(pipeline.shadow.folder, [dynamoItemsFiles[0], dynamoEventFile]);
+          const dynamoEventFile = latestFile(dynamoItemsFiles).replace('/dynamo-items-', '/dynamo-event-');
+          await moveToProcessed(pipeline.shadow.folder, [latestFile(dynamoItemsFiles), dynamoEventFile]);
         }
       } catch (e: any) { console.log(`${tag} Failed to read DynamoDB captures:`, e.message); }
     }
@@ -325,9 +327,9 @@ class PipelineWatcher {
         const files = await listFolderFiles(pipeline.shadow!.folder);
         const sqsEventFiles = files.filter(f => f.includes('/sqs-event-') && !f.includes('-processed/'));
         if (!sqsEventFiles.length) return null;
-        const itemsFile = sqsEventFiles[0].replace('/sqs-event-', '/sqs-items-');
+        const itemsFile = latestFile(sqsEventFiles).replace('/sqs-event-', '/sqs-items-');
         const items = await readS3Json(itemsFile);
-        return { eventFile: sqsEventFiles[0], itemsFile, items };
+        return { eventFile: latestFile(sqsEventFiles), itemsFile, items };
       }, 2000, timeout);
 
       if (!sqsCapture) {
@@ -424,7 +426,7 @@ class PipelineWatcher {
         const { listFolderFiles, readS3Json } = await import("./shadow-infra.js");
         const files = await listFolderFiles(pipeline.shadow.folder + "-processed");
         const eventFiles = files.filter(f => f.includes("/event-") || f.includes("/sqs-event-") || f.includes("/dynamo-event-"));
-        if (eventFiles.length) { const captured = await readS3Json(eventFiles[eventFiles.length - 1]); if (captured) diagPayload = captured; }
+        if (eventFiles.length) { const captured = await readS3Json(latestFile(eventFiles)); if (captured) diagPayload = captured; }
       }
 
       const depInfo = await getDeploymentInfo(pipeline.targetFunctionName);

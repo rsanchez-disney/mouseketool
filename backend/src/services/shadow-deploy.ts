@@ -255,6 +255,13 @@ export async function reconcileShadow(pipeline: Pipeline): Promise<ShadowMeta | 
   if (shadow.lambdaA && !(await lambdaExists(shadow.lambdaA))) { console.log(`${TAG} Lambda A missing: ${shadow.lambdaA}`); healthy = false; }
   if (shadow.lambdaB && !(await lambdaExists(shadow.lambdaB))) { console.log(`${TAG} Lambda B missing: ${shadow.lambdaB}`); healthy = false; }
   if (shadow.relayQueueUrl && !(await queueExists(shadow.relayQueueUrl))) { console.log(`${TAG} Relay queue missing: ${shadow.relayQueueUrl}`); healthy = false; }
+  // Check ESMs exist
+  if (healthy) {
+    const lambdaClient = await getLambdaClient();
+    const { ListEventSourceMappingsCommand } = await import("@aws-sdk/client-lambda");
+    if (shadow.lambdaA) { const esms = await lambdaClient.send(new ListEventSourceMappingsCommand({ FunctionName: shadow.lambdaA })); if (!esms.EventSourceMappings?.length) { console.log(`${TAG} ESM missing for Lambda A: ${shadow.lambdaA}`); healthy = false; } }
+    if (shadow.lambdaB) { const esms = await lambdaClient.send(new ListEventSourceMappingsCommand({ FunctionName: shadow.lambdaB })); if (!esms.EventSourceMappings?.length) { console.log(`${TAG} ESM missing for Lambda B: ${shadow.lambdaB}`); healthy = false; } }
+  }
 
   if (!healthy) {
     console.log(`${TAG} Shadow resources missing — recreating`);

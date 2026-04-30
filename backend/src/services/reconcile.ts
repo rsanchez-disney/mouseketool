@@ -87,6 +87,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
 
   // 1. DynamoDB table
   let streamArn = "";
+  if (p.tableName) {
   try {
     const { Table } = await ddb.send(new DescribeTableCommand({ TableName: p.tableName }));
     streamArn = Table?.LatestStreamArn || "";
@@ -125,8 +126,9 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     }
   }
 
+  }
   // 2. SNS topic
-  try {
+  if (p.topicName) try {
     const { TopicArn } = await sns.send(new CreateTopicCommand({ Name: p.topicName }));
     if (TopicArn && TopicArn !== p.topicArn) { p.topicArn = TopicArn; r.actions.push(`Recreated SNS topic ${p.topicName}`); }
   } catch (e: any) { r.warnings.push(`SNS topic: ${e.message}`); }

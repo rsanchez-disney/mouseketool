@@ -44,6 +44,7 @@ async function saveSchema() {
 const saveError = ref("");
 const saveSuccess = ref(false);
 const activeStep = ref<"dynamodb" | "streamHandler" | "sns" | "sqs" | "target" | "addons" | "envvars">("dynamodb");
+watch(() => pipeline.value?.type, (t) => { if (t === "queue-consumer") activeStep.value = "sqs"; else if (t === "direct-stream") activeStep.value = "dynamodb"; }, { immediate: true });
 
 // Editable state
 const heavyLoad = ref(false);
@@ -55,11 +56,13 @@ const vaultToken = ref("");
 const envVars = ref<{ key: string; value: string; isNull?: boolean }[]>([]);
 const savingEnv = ref(false);
 const envLoaded = ref(false);
+const origEnvVars = ref("");
 async function loadEnvVars() {
   if (!pipeline.value || envLoaded.value || pipeline.value.targetMissing) return;
   try { envVars.value = await (await fetch(`/api/deployments/lambda-env/${pipeline.value.targetFunctionName}`)).json(); } catch { envVars.value = []; }
   if (!envVars.value.length) envVars.value.push({ key: "", value: "" });
   envLoaded.value = true;
+  origEnvVars.value = JSON.stringify(envVars.value);
 }
 
 // Target lambda selector for missing builds
@@ -229,6 +232,7 @@ const hasChanges = computed(() => {
   if (filterEnabled.value && filterScope.value !== (p.filterPolicyScope || "MessageAttributes")) return true;
   if (vaultUrl.value !== origVaultUrl.value || vaultToken.value !== origVaultToken.value) return true;
   if (JSON.stringify(vaultSecrets.value) !== origVaultSecrets.value) return true;
+  if (envLoaded.value && JSON.stringify(envVars.value) !== origEnvVars.value) return true;
   return false;
 });
 
@@ -297,12 +301,17 @@ async function save() {
     const res = await fetch(`/api/triggers/pipelines/${pipelineId}/edit`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) { const d = await res.json(); throw new Error(d.error || "Save failed"); }
     // Save inserts-only setting on glue Lambda
-    if (pipeline.value) {
+    if (pipeline.value && pipeline.value.glueFunctionName) {
       const name = pipeline.value.glueFunctionName;
       const envRes = await (await fetch(`/api/deployments/lambda-env/${name}`)).json();
       const vars = envRes.filter((e: any) => e.key !== "STREAM_INSERTS_ONLY");
       if (insertsOnly.value) vars.push({ key: "STREAM_INSERTS_ONLY", value: "true" });
       await fetch(`/api/deployments/lambda-env/${name}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ envVars: vars }) });
+    }
+    // Save env vars if changed
+    if (envLoaded.value && JSON.stringify(envVars.value) !== origEnvVars.value && pipeline.value) {
+      await fetch(`/api/deployments/lambda-env/${pipeline.value.targetFunctionName}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ envVars: envVars.value.filter(e => e.key) }) });
+      origEnvVars.value = JSON.stringify(envVars.value);
     }
     // Update local pipeline ref so hasChanges resets
     if (pipeline.value) {
@@ -720,13 +729,10 @@ async function save() {
               <CardTitle class="text-sm flex items-center gap-2"><Settings2 class="size-4" /> Environment Variables <Badge variant="outline" class="text-[10px]">{{ envVars.filter(e => e.key).length }}</Badge></CardTitle>
               <div class="flex items-center gap-2">
                 <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="addEnvVar"><Plus class="size-3.5" /> Add</Button>
-                <Button :disabled="savingEnv" size="sm" class="gap-1.5 cursor-pointer" @click="saveEnvVars">
-                  <Loader2 v-if="savingEnv" class="size-3.5 animate-spin" /><Check v-else class="size-3.5" />
-                  {{ savingEnv ? 'Saving...' : 'Save' }}
-                </Button>
+                
               </div>
             </div>
-            <CardDescription class="text-xs">These are applied directly to the Lambda configuration. Changes are saved independently from other pipeline edits.</CardDescription>
+            <CardDescription class="text-xs mt-2">These are applied directly to the target Lambda's configuration — they are NOT pipeline-specific. If other pipelines share the same target Lambda, changes here will affect them too.</CardDescription>
           </CardHeader>
           <CardContent class="space-y-2">
             <div v-for="(e, i) in envVars" :key="i" class="flex items-center gap-2">

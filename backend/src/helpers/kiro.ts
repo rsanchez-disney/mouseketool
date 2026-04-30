@@ -17,10 +17,10 @@ export async function detectKiro(): Promise<{ available: boolean; path?: string 
   });
 }
 
-export async function askKiro(prompt: string, timeoutMs = 60000): Promise<string> {
+export async function askKiro(prompt: string, timeoutMs = 60000, cwd?: string): Promise<string> {
   if (!detected || !kiroPath) throw new Error("Kiro CLI not available");
   return new Promise((resolve, reject) => {
-    const child = execFile(kiroPath!, ["chat", "--no-interactive", "--wrap", "never"], { timeout: timeoutMs }, (err, stdout) => {
+    const child = execFile(kiroPath!, ["chat", "--no-interactive", "--wrap", "never"], { timeout: timeoutMs, cwd: cwd || undefined }, (err, stdout) => {
       if (err) { reject(new Error(`Kiro failed: ${err.message}`)); return; }
       const clean = stripAnsi(stdout).replace(/^> /, "").trim();
       resolve(clean);

@@ -193,7 +193,7 @@ onMounted(async () => {
       <Button variant="ghost" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="router.push('/triggers')"><ArrowLeft class="size-4" /></Button>
       <div class="flex-1">
         <h1 class="text-xl font-bold tracking-tight">{{ pipeline?.name ?? 'Pipeline History' }}</h1>
-        <p class="text-xs text-muted-foreground">CloudWatch-based invocation history grouped by RequestId.</p>
+        <p class="text-xs text-muted-foreground">Pipeline invocation history with step-by-step execution tracking.</p>
       </div>
       <Button v-if="runs.length" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform text-muted-foreground hover:text-destructive" :disabled="clearing" @click="confirmClear = true"><Trash2 class="size-3.5" /> Clear</Button>
       <Button v-if="!live" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startLive"><Radio class="size-3.5" /> Watch Live</Button>

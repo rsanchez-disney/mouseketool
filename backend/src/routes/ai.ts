@@ -47,7 +47,8 @@ router.post("/explain", async (req, res) => {
     logs?.length ? `--- Recent logs (last ${Math.min(logs.length, 30)} lines) ---\n${logs.slice(-30).join("\n")}` : "",
   ].filter(Boolean).join("\n");
   try {
-    const explanation = await askKiro(prompt);
+    const { tmpdir } = await import("os");
+    const explanation = await askKiro(prompt, 60000, tmpdir());
     res.json({ explanation });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
