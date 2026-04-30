@@ -138,6 +138,8 @@ class PipelineWatcher {
     for (const pipeline of pipelines) {
       try {
         const typeDef = getPipelineType(pipeline.type || "app-pipeline");
+        // Skip CloudWatch polling for types that use S3 detection
+        if (pipeline.type === 'direct-stream' || pipeline.type === 'queue-consumer') continue;
         const detectFunction = typeDef?.steps.includes("stream-handler") ? pipeline.glueFunctionName : pipeline.targetFunctionName;
         if (!detectFunction) continue;
         const logGroup = `/aws/lambda/${detectFunction}`;
