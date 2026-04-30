@@ -293,12 +293,15 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
         History page updates automatically without manual refresh. The observer polling interval is configurable in Settings.</p>
 
         <p class="font-medium text-foreground">Shadow Infrastructure</p>
-        <p>Behind the scenes, Mouseketool creates a shadow SQS queue, a shadow Lambda, and an S3 bucket on startup.
-        The shadow queue subscribes to every pipeline's SNS topic with the same filter policy as the main subscription,
-        ensuring it only receives items that pass the filter. The shadow Lambda captures each message body to S3 for
-        two purposes: (1) showing which items passed the filter in the SQS step logs, and (2) providing the exact
-        payload for diagnostic replay if the target Lambda fails. Shadow resources are cleaned up and recreated on
-        every backend restart. Captured items are cleaned up after each observer run completes.</p>
+        <p>Each pipeline gets its own shadow infrastructure deployed at wire time. A shared persistent S3 bucket
+        (<code>mouseketool-shadow</code>) stores all captured events. Per-pipeline shadow Lambdas capture events
+        to S3 for observation and diagnostic replay:</p>
+        <ul class="list-disc list-inside space-y-1.5 ml-1">
+          <li><strong>Direct Stream</strong> — A shadow Lambda subscribes to the DynamoDB stream alongside the target Lambda, capturing stream events to S3.</li>
+          <li><strong>Queue Consumer</strong> — A shadow Lambda is the sole consumer of the user's SQS queue. It captures events to S3 and relays messages to a relay queue that triggers the target Lambda.</li>
+          <li><strong>APP Pipeline</strong> — Two shadow Lambdas: one on the DynamoDB stream (captures items) and one on a shadow SQS queue subscribed to the SNS topic with the same filter policy (detects filter pass/block).</li>
+        </ul>
+        <p>Shadow resources are reconciled on every LocalStack restart. If any shadow Lambda or ESM is missing, the entire shadow infrastructure for that pipeline is redeployed automatically.</p>
 
         <p class="font-medium text-foreground">Managing pipelines</p>
         <p>After creating a pipeline, it appears as a card on the Triggers page. You can select one or more pipelines

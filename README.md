@@ -102,26 +102,34 @@ to pipelines using the same Lambda. A deploy override modal
 lets you confirm or skip redeployment, with a preference to remember your choice.
 
 ### Triggers (Pipelines)
-Create end-to-end event-driven pipelines through a 6-step visual wizard. Wire up DynamoDB tables, SNS topics, SQS
-queues (with optional DLQ), and Lambda functions — all without touching the CLI. SNS subscriptions support filter
-policies configured through the visual wizard. A dedicated pipeline edit page lets you modify filter policies, toggle
-heavy load mode, configure vault add-ons, manage env vars, and inspect each resource's metadata. Table schemas can be
-saved and restored after LocalStack restarts.
+Create event-driven pipelines through a visual wizard. Three pipeline types are supported:
+- **APP Pipeline** (DynamoDB -> SNS -> SQS -> Lambda): Full event-driven chain with stream handler, SNS filter policies, and SQS delivery.
+- **Direct Stream Processor** (DynamoDB -> Lambda): DynamoDB stream triggers a Lambda directly.
+- **Queue Consumer** (SQS -> Lambda): SQS queue triggers a Lambda function.
+
+Each pipeline type has per-pipeline shadow infrastructure that captures events to a shared S3 bucket for
+observation, diagnostic replay, and filter detection. Shadow Lambdas are deployed automatically at wire time
+and reconciled on LocalStack restart. A dedicated pipeline edit page lets you modify filter policies, toggle
+heavy load mode, configure vault add-ons, manage env vars, and inspect each resource metadata. Table schemas
+can be saved and restored after LocalStack restarts.
 
 ### Execution
-Run a pipeline and watch each step execute in real-time via Server-Sent Events. See DynamoDB inserts, stream handler
-logs, SNS delivery evidence, SQS message arrival, and target Lambda output — all in one view.
+Run a pipeline and watch each step execute in real-time via Server-Sent Events. The execute page validates
+payloads (must be non-empty JSON), blocks execution when heavy load mode is active, and shows step-by-step
+progress. Diagnostic invoke runs automatically when the target Lambda fails to produce CloudWatch logs,
+providing the same detailed error output as the Deployments page.
 
 ### History
-Track every pipeline invocation with CloudWatch-based history. Runs are persisted, correlated by RequestId, and
-include DLQ detection with diagnostic invoke for failed runs. Live watch mode refreshes silently in the background.
-A background pipeline watcher monitors active pipelines for new events. Filter runs by source (manual/external). Shadow infrastructure creates parallel
-diagnostic resources to replay and inspect failed pipeline steps.
+Track every pipeline invocation with real-time WebSocket updates. Runs are detected via S3 shadow captures
+(for Direct Stream and Queue Consumer) or CloudWatch logs (for APP Pipeline stream handler). Each run shows
+step-by-step status with expandable logs. Filter runs by status (success/error/filtered/diagnosing), time
+range, or source (manual/external). History retention is configurable by age or amount in Settings.
+Diagnostic invoke with container kill provides full error details when Lambdas fail during initialization.
 
 ### Settings
-Configure the LocalStack connection (protocol, host, port, credentials), build cleanup TTL, observer polling
-interval (`observerPollingMs`), Lambda memory, and heavy load batch settings (batch size and window). Changes to
-heavy load settings are applied retroactively to all pipelines with heavy load enabled. A LocalStack health check
+Configure the LocalStack connection (protocol, host, port, credentials), build cleanup TTL,
+Lambda memory, heavy load batch settings (batch size and window), and history retention (by age or
+amount). Changes to heavy load settings are applied retroactively to all pipelines with heavy load
 runs on startup and is accessible from the Settings page. AI learned data storage (local or S3) is configurable.
 Pipeline self-healing automatically recreates resources after LocalStack restarts.
 
