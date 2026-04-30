@@ -247,10 +247,12 @@ class PipelineWatcher {
   private detected(pipeline: Pipeline, requestId: string, timestamp: number, logs: string[], error: boolean) {
     this.knownRequestIds.add(requestId);
     this.batchState.delete(pipeline.id);
-    // Dedup: skip if a run already exists within 10s for this pipeline
-    const pps = loadPipelines();
-    const existingPipeline = pps.find(pp => pp.id === pipeline.id);
-    if (existingPipeline?.runs.some(r => Math.abs(r.timestamp - timestamp) < 10000)) return;
+    // Dedup: for direct-stream/queue-consumer, skip if a run was created in the last 30s (S3 polling already handled it)
+    if (pipeline.type === 'direct-stream' || pipeline.type === 'queue-consumer') {
+      const pps = loadPipelines();
+      const pp = pps.find(x => x.id === pipeline.id);
+      if (pp?.runs.some(r => Date.now() - r.timestamp < 30000)) return;
+    }
     const itemLines = logs.filter(l => l.includes("Item:")).map(l => l.replace(/.*Item:\s*/, ""));
     const item = itemLines[0] ?? null;
     const items = itemLines.length > 1 ? itemLines : undefined;
