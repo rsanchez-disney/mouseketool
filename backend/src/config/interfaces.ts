@@ -7,6 +7,7 @@ export interface Settings {
   heavyLoad: { batchSize: number; batchWindowSeconds: number };
   ai: { learnedStorage: "local" | "s3" };
   workflow: { autoBumpHealthchecks: boolean };
+  historyRetention: { mode: "amount" | "age"; maxRuns: number; maxDays: number };
 }
 
 export const DEFAULTS: Settings = {
@@ -18,6 +19,7 @@ export const DEFAULTS: Settings = {
   heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
   ai: { learnedStorage: "local" },
   workflow: { autoBumpHealthchecks: false },
+  historyRetention: { mode: "age", maxRuns: 50, maxDays: 2 },
 };
 
 export interface BuildMeta {

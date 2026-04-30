@@ -12,7 +12,6 @@ const props = defineProps<{
   detail: string;
   status: string;
   logs: string[];
-  elapsed?: number;
   expanded: boolean;
   showConnector: boolean;
   showKiroHint?: boolean;
@@ -33,7 +32,6 @@ const statusColor: Record<string, string> = {
 };
 
 function color(status: string) { return statusColor[status] || "zinc-500"; }
-function formatMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`; }
 </script>
 
 <template>
@@ -57,7 +55,6 @@ function formatMs(ms: number) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).to
           <p class="text-xs font-semibold">{{ label }}</p>
           <p class="text-[10px] text-muted-foreground font-mono truncate">{{ detail }}</p>
         </div>
-        <span v-if="elapsed" class="text-[10px] text-muted-foreground font-mono shrink-0">{{ formatMs(elapsed) }}</span>
         <Badge :class="[
           status === 'pending' || status === 'skipped' ? 'bg-muted text-muted-foreground' :
           status === 'filtered' ? 'bg-blue-400/20 text-blue-400 border-blue-400/40' :

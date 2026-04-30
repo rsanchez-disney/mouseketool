@@ -32,20 +32,20 @@ function getStepState(run: Run, step: HistoryStepDef): { status: string; logs: s
   if (step.dataField === "item") {
     // DynamoDB insert is always success if the run exists
     const stripMk = (s: string) => { try { const d = JSON.parse(s); const clean = (Array.isArray(d) ? d : [d]).map((i: any) => { const { _mk_ts, ...r } = i; return r; }); return JSON.stringify(clean.length === 1 ? clean[0] : clean); } catch { return s; } };
-    return { status: "success", logs: run.items?.length ? [`Batched ${run.items.length} items`, ...run.items.map(stripMk)] : [stripMk(run.item || "") || "No item data"], elapsed: undefined };
+    return { status: "success", logs: run.items?.length ? [`Batched ${run.items.length} items`, ...run.items.map(stripMk)] : [stripMk(run.item || "") || "No item data"] };
   }
   if (step.dataField === "handler") {
-    return { status: run.handler?.error ? "error" : "success", logs: run.handler?.logs || [], elapsed: (run.handler as any)?.elapsed };
+    return { status: run.handler?.error ? "error" : "success", logs: run.handler?.logs || [] };
   }
   if (step.dataField === "target") {
     if (!run.target) return { status: run.status === "pending" ? "pending" : "pending", logs: ["No invocation detected yet"] };
-    if (run.status === "diagnosing") return { status: "diagnosing", logs: run.target.logs || [], elapsed: (run.target as any)?.elapsed };
-    return { status: run.target.error ? "error" : run.status === "filtered" ? "filtered" : "success", logs: run.target.logs || [], elapsed: (run.target as any)?.elapsed };
+    if (run.status === "diagnosing") return { status: "diagnosing", logs: run.target.logs || [] };
+    return { status: run.target.error ? "error" : run.status === "filtered" ? "filtered" : "success", logs: run.target.logs || [] };
   }
   // sns or sqs
   const data = (run as any)[step.dataField];
   if (!data) return { status: "pending", logs: [] };
-  return { status: data.status || "pending", logs: data.logs || [], elapsed: data.elapsed };
+  return { status: data.status || "pending", logs: data.logs || [] };
 }
 const runs = ref<Run[]>([]);
 const loading = ref(true);
@@ -146,12 +146,12 @@ function startLive() {
     else if (data.type === "step-update") {
       const run = runs.value.find(r => r.id === data.runId);
       if (run) {
-        if ((data.step === "sns" || data.step === "sns-trigger") && data.status !== "running") run.sns = { status: data.status, logs: data.logs, elapsed: data.elapsed };
-        else if ((data.step === "sqs" || data.step === "sqs-trigger") && data.status !== "running") run.sqs = { status: data.status, logs: data.logs, elapsed: data.elapsed };
+        if ((data.step === "sns" || data.step === "sns-trigger") && data.status !== "running") run.sns = { status: data.status, logs: data.logs };
+        else if ((data.step === "sqs" || data.step === "sqs-trigger") && data.status !== "running") run.sqs = { status: data.status, logs: data.logs };
         else if (data.step === "target") {
           if (data.status === "running") return;
-          if (data.status === "diagnosing") { run.target = { requestId: "", logs: data.logs, error: false, elapsed: data.elapsed }; run.status = "diagnosing"; return; }
-          run.target = { requestId: "", logs: data.logs, error: data.status === "error" || data.status === "timeout", elapsed: data.elapsed };
+          if (data.status === "diagnosing") { run.target = { requestId: "", logs: data.logs, error: false }; run.status = "diagnosing"; return; }
+          run.target = { requestId: "", logs: data.logs, error: data.status === "error" || data.status === "timeout" };
           run.status = data.status === "success" ? "success" : data.status === "filtered" ? "filtered" : "error";
         } else if (data.step === "dynamodb") {
           run.item = data.logs.join("\n");

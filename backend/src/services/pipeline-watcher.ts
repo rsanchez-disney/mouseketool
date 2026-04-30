@@ -218,6 +218,28 @@ class PipelineWatcher {
       } catch {}
     }
 
+
+    // History retention cleanup (every 60s)
+    if (this.pollCount % 30 === 0) {
+      try {
+        const settings = await loadSettings();
+        const { mode, maxRuns, maxDays } = settings.historyRetention || { mode: "age", maxRuns: 50, maxDays: 2 };
+        let changed = false;
+        for (const p of pipelines) {
+          if (!p.runs.length) continue;
+          const before = p.runs.length;
+          if (mode === "amount" && p.runs.length > maxRuns) {
+            p.runs.sort((a, b) => b.timestamp - a.timestamp);
+            p.runs.splice(maxRuns);
+          } else if (mode === "age") {
+            const cutoff = Date.now() - maxDays * 86400000;
+            p.runs = p.runs.filter(r => r.timestamp > cutoff);
+          }
+          if (p.runs.length !== before) changed = true;
+        }
+        if (changed) savePipelines(pipelines);
+      } catch {}
+    }
     } catch (e: any) { /* LocalStack unreachable — silently skip this poll cycle */ }
 
   }
@@ -386,7 +408,7 @@ class PipelineWatcher {
         }
       } catch {}
       return null;
-    }, Date.now() - pollStart < 5000 ? 500 : 1000, 10000);
+    }, Date.now() - pollStart < 5000 ? 500 : 1000, 30000);
 
     if (targetResult) {
       const status = targetResult.error ? "error" : "success";
@@ -410,8 +432,8 @@ class PipelineWatcher {
 
     // --- No logs found — run diagnostic invoke ---
     console.log(`${tag} No target logs — running diagnostic invoke`);
-    this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "diagnosing", logs: ["No CloudWatch logs detected. Running diagnostic..."] });
-    updateRun({ status: "diagnosing", target: { requestId: "", logs: ["No CloudWatch logs detected. Running diagnostic..."], error: false } as any });
+    // Don't emit diagnosing to UI to avoid flash — just log internally
+    console.log(`${tag} Running diagnostic invoke...`);
 
     try {
       const { invokeFunction } = await import("../routes/deployments.js");
