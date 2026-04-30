@@ -4,6 +4,7 @@ import { join } from "path";
 import { DEPLOYMENTS_FILE } from "../config/constants.js";
 import { findJavaFiles } from "../helpers/fs-utils.js";
 import { detectKiro, askKiro } from "../helpers/kiro.js";
+import { getPipelineType } from "../services/pipeline-types.js";
 
 const router = Router();
 
@@ -46,7 +47,8 @@ router.post("/explain", async (req, res) => {
     logs?.length ? `--- Recent logs (last ${Math.min(logs.length, 30)} lines) ---\n${logs.slice(-30).join("\n")}` : "",
   ].filter(Boolean).join("\n");
   try {
-    const explanation = await askKiro(prompt);
+    const { tmpdir } = await import("os");
+    const explanation = await askKiro(prompt, 60000, tmpdir());
     res.json({ explanation });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -147,16 +149,38 @@ router.post("/generate-item", async (req, res) => {
 
     // Collect context
     const learned = await getLearnedItems(pipelineId);
+    const typeDef = getPipelineType(pipeline.type || "app-pipeline");
+    const triggerKind = typeDef?.triggerKind || "dynamodb-insert";
 
-    // Get table key schema
+    // Get table key schema (only for dynamodb-insert)
     let keySchema = "";
-    try {
-      const { getDynamoClient } = await import("../helpers/dynamo-client.js");
-      const { DescribeTableCommand } = await import("@aws-sdk/client-dynamodb");
-      const ddb = await getDynamoClient();
-      const { Table } = await ddb.send(new DescribeTableCommand({ TableName: pipeline.tableName }));
-      keySchema = (Table?.KeySchema || []).map((k: any) => `${k.AttributeName} (${k.KeyType})`).join(", ");
-    } catch {}
+    if (triggerKind === "dynamodb-insert") {
+      try {
+        const { getDynamoClient } = await import("../helpers/dynamo-client.js");
+        const { DescribeTableCommand } = await import("@aws-sdk/client-dynamodb");
+        const ddb = await getDynamoClient();
+        const { Table } = await ddb.send(new DescribeTableCommand({ TableName: pipeline.tableName }));
+        keySchema = (Table?.KeySchema || []).map((k: any) => `${k.AttributeName} (${k.KeyType})`).join(", ");
+      } catch {}
+    }
+
+    // Get target Lambda handler source (for sqs-send context)
+    let handlerSource = "";
+    if (triggerKind === "sqs-send" && pipeline.targetFunctionName) {
+      try {
+        const deps = JSON.parse(await readFile(DEPLOYMENTS_FILE, "utf-8"));
+        const dep = deps.find((d: any) => d.functionName === pipeline.targetFunctionName);
+        if (dep?.projectPath && dep?.handler) {
+          const handlerClass = dep.handler.split("::")[0].split(".").pop();
+          const javaFiles = await findJavaFiles(dep.projectPath);
+          const match = javaFiles.find((f: string) => f.includes(handlerClass));
+          if (match) {
+            const src = await readFile(match, "utf-8");
+            handlerSource = src.length < 30000 ? src : src.slice(0, 30000);
+          }
+        }
+      } catch {}
+    }
 
     // Get favorites
     let favorites: string[] = [];
@@ -166,27 +190,72 @@ router.post("/generate-item", async (req, res) => {
       favorites = JSON.parse(await rf(join(FAVORITES_DIR, `pipeline-${pipelineId}.json`), "utf-8"));
     } catch {}
 
-    const intentLabel = customPrompt || (
-      intent === "success" ? "a DynamoDB item that should be processed successfully through the pipeline" :
-      intent === "filtered" ? "a DynamoDB item that intentionally does NOT match the SNS filter policy" :
-      intent === "edge" ? "an edge case DynamoDB item with boundary values or unusual but valid data" :
-      intent
-    );
+    const intentLabels: Record<string, Record<string, string>> = {
+      "dynamodb-insert": {
+        success: "a DynamoDB item that should be processed successfully through the pipeline",
+        filtered: "a DynamoDB item that intentionally does NOT match the SNS filter policy",
+        edge: "an edge case DynamoDB item with boundary values or unusual but valid data",
+      },
+      "sqs-send": {
+        "dynamodb-event": "a DynamoDB Streams event record (the JSON body that DynamoDB Streams produces when a table item changes — include eventName, dynamodb.Keys, dynamodb.NewImage, dynamodb.OldImage with AttributeValue format like {S:'value'}, {N:'123'})",
+        "s3-event": "an S3 event notification record (the JSON body that S3 produces for object events — include eventName like ObjectCreated:Put, s3.bucket.name, s3.object.key, s3.object.size)",
+        "sns-notification": "an SNS notification message (the JSON body that SNS wraps when forwarding — include Type, MessageId, TopicArn, Subject, Message with a nested JSON payload, Timestamp)",
+        "custom": "a generic JSON message body with realistic fields that the target Lambda can process",
+        "error": "a malformed or unexpected message body likely to cause the target Lambda to fail (missing required fields, wrong types, null values)",
+      },
+      "sns-publish": {
+        success: "an SNS message body that matches the filter policy and should be processed successfully",
+        filtered: "an SNS message body that intentionally does NOT match the SNS filter policy",
+        edge: "an edge case SNS message body with boundary values or unusual but valid data",
+      },
+    };
+    const intentLabel = customPrompt || (intentLabels[triggerKind]?.[intent] || intent);
 
-    const prompt = [
-      "You are a DynamoDB item generator for pipeline testing on LocalStack.",
-      "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
-      "The item should be a plain JSON object (NOT DynamoDB marshalled format). Use simple key-value pairs.",
-      "",
-      `Table: ${pipeline.tableName}`,
-      keySchema ? `Key schema: ${keySchema}` : "",
-      pipeline.filterPolicy ? `SNS filter policy (${pipeline.filterPolicyScope || "MessageAttributes"}): ${JSON.stringify(pipeline.filterPolicy)}` : "",
-      "",
-      `Generate ${intentLabel}.`,
-      learned.length ? `\n--- Learned items from previous runs (${learned.length}) ---\n${learned.slice(-10).join("\n")}` : "",
-      favorites.length ? `\n--- Saved favorites ---\n${favorites.slice(-5).join("\n")}` : "",
-      ...await loadFeedback("pipeline", pipelineId),
-    ].filter(Boolean).join("\n");
+    let promptParts: string[];
+    if (triggerKind === "sqs-send") {
+      promptParts = [
+        "You are generating the message body that will be SENT to an SQS queue. Generate ONLY the raw event content (e.g. the DynamoDB stream record, S3 notification, or SNS message itself). Do NOT wrap it in a Records array, do NOT add SQS envelope fields like messageId/receiptHandle/body. The user will send this directly as the SQS message body.",
+        "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
+        "",
+        `Queue: ${pipeline.queueUrl || "unknown"}`,
+        `Target Lambda: ${pipeline.targetFunctionName}`,
+        "",
+        `Generate ${intentLabel}.`,
+        handlerSource ? `\n--- Target Lambda handler source ---\n${handlerSource}` : "",
+        learned.length ? `\n--- Learned items from previous runs (${learned.length}) ---\n${learned.slice(-10).join("\n")}` : "",
+        favorites.length ? `\n--- Saved favorites ---\n${favorites.slice(-5).join("\n")}` : "",
+        ...await loadFeedback("pipeline", pipelineId),
+      ];
+    } else if (triggerKind === "sns-publish") {
+      promptParts = [
+        "You are an SNS message body generator for pipeline testing on LocalStack.",
+        "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
+        "",
+        `Topic: ${pipeline.topicArn || "unknown"}`,
+        pipeline.filterPolicy ? `SNS filter policy (${pipeline.filterPolicyScope || "MessageAttributes"}): ${JSON.stringify(pipeline.filterPolicy)}` : "",
+        "",
+        `Generate ${intentLabel}.`,
+        learned.length ? `\n--- Learned items from previous runs (${learned.length}) ---\n${learned.slice(-10).join("\n")}` : "",
+        favorites.length ? `\n--- Saved favorites ---\n${favorites.slice(-5).join("\n")}` : "",
+        ...await loadFeedback("pipeline", pipelineId),
+      ];
+    } else {
+      promptParts = [
+        "You are a DynamoDB item generator for pipeline testing on LocalStack.",
+        "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
+        "The item should be a plain JSON object (NOT DynamoDB marshalled format). Use simple key-value pairs.",
+        "",
+        `Table: ${pipeline.tableName}`,
+        keySchema ? `Key schema: ${keySchema}` : "",
+        pipeline.filterPolicy ? `SNS filter policy (${pipeline.filterPolicyScope || "MessageAttributes"}): ${JSON.stringify(pipeline.filterPolicy)}` : "",
+        "",
+        `Generate ${intentLabel}.`,
+        learned.length ? `\n--- Learned items from previous runs (${learned.length}) ---\n${learned.slice(-10).join("\n")}` : "",
+        favorites.length ? `\n--- Saved favorites ---\n${favorites.slice(-5).join("\n")}` : "",
+        ...await loadFeedback("pipeline", pipelineId),
+      ];
+    }
+    const prompt = promptParts.filter(Boolean).join("\n");
 
     const result = await askKiro(prompt, 90000);
     let payload = result;

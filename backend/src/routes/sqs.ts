@@ -14,7 +14,7 @@ router.get("/queues", async (_req, res) => {
     const { QueueUrls = [] } = await client.send(new ListQueuesCommand({}));
 
     const queues = await Promise.all(
-      QueueUrls.map(async (url) => {
+      QueueUrls.filter(url => { const n = url.split("/").pop()!; return !n.startsWith("mk-relay-") && !n.startsWith("-"); }).map(async (url) => {
         const name = url.split("/").pop()!;
         try {
           const { Attributes = {} } = await client.send(new GetQueueAttributesCommand({
@@ -38,7 +38,8 @@ router.get("/queues", async (_req, res) => {
 
 // POST /api/sqs/queues — create a new queue
 router.post("/queues", async (req, res) => {
-  const { queueName, createDlq, maxReceiveCount } = req.body;
+  const { queueName: rawName, createDlq, maxReceiveCount } = req.body;
+  const queueName = rawName?.trim();
   if (!queueName) return res.status(400).json({ error: "queueName is required" });
 
   try {

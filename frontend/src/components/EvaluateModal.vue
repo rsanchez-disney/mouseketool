@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ThumbsUp, ThumbsDown, Loader2, Check } from "lucide-vue-next";
 
 const open = defineModel<boolean>({ default: false });
-const props = defineProps<{ type: string; id: string; sample: string }>();
+const props = defineProps<{ type: string; id: string; sample: string; subtype?: string }>();
 const emit = defineEmits<{ good: []; bad: [reason: string] }>();
 
 const step = ref<"choose" | "feedback" | "done">("choose");
@@ -17,20 +17,20 @@ function onOpen(v: boolean) { if (v) reset(); }
 
 async function saveGood() {
   saving.value = true;
-  await fetch("/api/ai/save-generation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: props.type, id: props.id, content: props.sample }) });
+  await fetch("/api/ai/save-generation", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: props.type, id: props.subtype ? `${props.id}-${props.subtype}` : props.id, content: props.sample }) });
   saving.value = false; step.value = "done"; emit("good");
 }
 
 async function saveBad() {
   if (!reason.value.trim()) return;
   saving.value = true;
-  await fetch("/api/ai/save-feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: props.type, id: props.id, sample: props.sample, reason: reason.value }) });
+  await fetch("/api/ai/save-feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: props.type, id: props.subtype ? `${props.id}-${props.subtype}` : props.id, sample: props.sample, reason: reason.value }) });
   saving.value = false; step.value = "done"; emit("bad", reason.value);
 }
 </script>
 
 <template>
-  <Dialog v-model:open="open" @update:open="onOpen">
+  <Dialog v-model:open="open">
     <DialogContent class="sm:max-w-md">
       <DialogHeader>
         <DialogTitle>Evaluate AI Sample</DialogTitle>

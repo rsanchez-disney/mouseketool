@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import EvaluateModal from "@/components/EvaluateModal.vue";
 import LogViewer from "@/components/LogViewer.vue";
+import PipelineRunStep from "@/components/PipelineRunStep.vue";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 
@@ -21,7 +22,7 @@ const router = useRouter();
 const pipelineId = route.params.id as string;
 const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 
-interface Pipeline { id: string; name: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
+interface Pipeline { id: string; name: string; type?: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; heavyLoad?: boolean; }
 interface Step { id: string; label: string; detail: string; status: "pending" | "running" | "success" | "timeout" | "error" | "filtered" | "diagnosing" | "unknown"; logs: string[]; collapsed: boolean; elapsed?: number; }
 
 const pipeline = ref<Pipeline | null>(null);
@@ -32,13 +33,30 @@ const executing = ref(false);
 const steps = ref<Step[]>([]);
 
 function initSteps(p: Pipeline): Step[] {
-  return [
-    { id: "dynamodb", label: "DynamoDB Insert", detail: p.tableName, status: "pending", logs: [], collapsed: false },
-    { id: "glue", label: "Stream Handler", detail: p.glueFunctionName, status: "pending", logs: [], collapsed: false },
-    { id: "sns", label: "SNS Publish", detail: p.topicName, status: "pending", logs: [], collapsed: false },
-    { id: "sqs", label: "SQS Deliver", detail: p.queueName, status: "pending", logs: [], collapsed: false },
-    { id: "target", label: "Target Lambda", detail: p.targetFunctionName, status: "pending", logs: [], collapsed: false },
-  ];
+  const type = p.type || "app-pipeline";
+  const stepDefs: Record<string, { id: string; label: string; detail: string }[]> = {
+    "app-pipeline": [
+      { id: "dynamodb", label: "DynamoDB Insert", detail: p.tableName },
+      { id: "glue", label: "Stream Handler", detail: p.glueFunctionName },
+      { id: "sns", label: "SNS Publish", detail: p.topicName },
+      { id: "sqs", label: "SQS Deliver", detail: p.queueName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+    "direct-stream": [
+      { id: "dynamodb", label: "DynamoDB Insert", detail: p.tableName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+    "queue-consumer": [
+      { id: "sqs-trigger", label: "SQS Send", detail: p.queueName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+    "sns-fanout": [
+      { id: "sns-trigger", label: "SNS Publish", detail: p.topicName },
+      { id: "sqs", label: "SQS Deliver", detail: p.queueName },
+      { id: "target", label: "Target Lambda", detail: p.targetFunctionName },
+    ],
+  };
+  return (stepDefs[type] || stepDefs["app-pipeline"]).map(s => ({ ...s, status: "pending" as const, logs: [], collapsed: false }));
 }
 
 const allDone = computed(() => steps.value.every(s => s.status !== "pending" && s.status !== "running"));
@@ -54,14 +72,23 @@ const expandedRootCause = computed(() => extractErrors(expandedLogContent.value)
 // Heavy load batch counter
 const batchCount = ref(0);
 const batchBaseline = ref(0);
+const isHeavyLoad = computed(() => !!pipeline.value?.heavyLoad);
+const isPayloadInvalid = computed(() => { try { const o = JSON.parse(itemJson.value); return typeof o !== "object" || o === null || !Object.keys(o).length; } catch { return true; } });
+const executeDisabledReason = computed(() => { if (isHeavyLoad.value) return "Manual execution is disabled while heavy load mode is active"; if (isPayloadInvalid.value) return "Payload must be a non-empty valid JSON object"; return ""; });
 const generating = ref(false);
 const generateOpen = ref(false);
+const lastIntent = ref("");
+const generateIntents = ref<{ id: string; label: string; description: string }[]>([]);
 const lastGenerated = ref("");
 const showEvaluate = ref(false);
 const evaluated = ref(false);
 const aiExplaining = ref(false);
 const aiExplanation = ref("");
 const aiExpandedKey = ref("");
+function explainStepError(s: Step) {
+  const errors = s.logs.filter(l => l.includes("Error") || l.includes("Exception") || l.includes("Caused by"));
+  explainError(errors, s.logs);
+}
 async function explainError(errors: string[], logs: string[]) {
   aiExplaining.value = true; aiExplanation.value = ""; aiExpandedKey.value = "expanded";
   try {
@@ -117,8 +144,9 @@ async function loadPipeline() {
     pipeline.value = all.find((p: Pipeline) => p.id === pipelineId) ?? null;
     if (pipeline.value) {
       steps.value = initSteps(pipeline.value);
+      try { const types = await (await fetch("/api/triggers/types")).json(); const td = types.find((t: any) => t.id === (pipeline.value?.type || "app-pipeline")); if (td?.generateIntents) generateIntents.value = td.generateIntents; } catch {}
       // Load key schema for template
-      try {
+      if (pipeline.value.tableName) try {
         const { keys } = await (await fetch(`/api/dynamodb/tables/${pipeline.value.tableName}/describe`)).json();
         const t: Record<string, any> = {}; for (const k of keys) t[k.name] = k.attributeType === "N" ? 0 : "value";
         itemJson.value = JSON.stringify(t, null, 2);
@@ -258,7 +286,7 @@ onMounted(loadPipeline);
       <div class="flex gap-4 items-start">
         <div class="flex-1 space-y-1.5">
           <div class="flex items-center justify-between">
-            <Label class="text-xs">Test Item for <span class="font-mono font-semibold">{{ pipeline.tableName }}</span></Label>
+            <Label class="text-xs">Test {{ pipeline.type === "queue-consumer" ? "Message" : pipeline.type === "sns-fanout" ? "Message" : "Item" }} for <span class="font-mono font-semibold">{{ pipeline.tableName || pipeline.queueName || pipeline.topicName }}</span></Label>
             <div class="flex items-center gap-1">
               <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click="prettifyItem">{ } Prettify</Button>
               <Button v-if="kiroAvailable && lastGenerated && !evaluated" variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-muted-foreground hover:text-foreground" @click="showEvaluate = true">
@@ -271,7 +299,7 @@ onMounted(loadPipeline);
                   <Sparkles v-if="!generating" class="size-3" /><Loader2 v-else class="size-3 animate-spin" /> {{ generating ? 'Generating...' : 'Generate' }}
                 </Button>
                 <div v-if="generateOpen" class="absolute right-0 top-7 z-50 w-48 rounded-lg border bg-popover p-1 shadow-lg">
-                  <button v-for="opt in [{v:'success',l:'Successful item'},{v:'filtered',l:'Filtered item'},{v:'edge',l:'Failure item'}]" :key="opt.v" class="w-full text-left px-3 py-1.5 text-xs rounded-md hover:bg-muted cursor-pointer" @click="generateItem(opt.v)">{{ opt.l }}</button>
+                  <button v-for="opt in generateIntents" :key="opt.id" class="w-full text-left px-3 py-1.5 text-xs rounded-md hover:bg-muted cursor-pointer" @click="generateItem(opt.id)"><span class="font-medium">{{ opt.label }}</span><span class="block text-muted-foreground text-[10px]">{{ opt.description }}</span></button>
                 </div>
                 </div>
                 </TooltipTrigger>
@@ -283,10 +311,10 @@ onMounted(loadPipeline);
         </div>
         <div class="flex flex-col gap-2 mt-6 shrink-0">
           <div class="flex items-center gap-2">
-            <Button :disabled="executing" class="gap-2 cursor-pointer active:scale-95 transition-transform min-w-[120px]" @click="execute">
+            <Tooltip :disabled="!executeDisabledReason"><TooltipTrigger as-child><Button :disabled="executing || isHeavyLoad || isPayloadInvalid" class="gap-2 cursor-pointer active:scale-95 transition-transform min-w-[120px]" @click="execute">
               <Loader2 v-if="executing" class="size-4 animate-spin" /><Play v-else class="size-4" />
               {{ executing ? 'Running...' : allDone && steps[0].status !== 'pending' ? 'Re-run' : 'Execute' }}
-            </Button>
+            </Button></TooltipTrigger><TooltipContent>{{ executeDisabledReason }}</TooltipContent></Tooltip>
             <Button variant="destructive" :disabled="!executing" class="gap-2 cursor-pointer" @click="stopExecution"><Square class="size-3.5" /> Stop</Button>
           </div>
         </div>
@@ -295,68 +323,26 @@ onMounted(loadPipeline);
       <!-- Pipeline nodes -->
       <div class="space-y-0">
         <template v-for="(s, i) in steps" :key="s.id">
-          <!-- Connector line (between nodes) -->
-          <div v-if="i > 0" class="flex items-center pl-[19px]">
-            <div class="w-0.5 h-6 transition-colors duration-500" :class="connectorColor(s.status === 'pending' ? steps[i-1].status : s.status)" />
-          </div>
-
-          <!-- Heavy load batch indicator -->
-          <div v-if="i === 1 && pipeline?.heavyLoad && steps[0].status === 'success' && s.status === 'pending' && batchCount > 0" class="flex items-center gap-2 pl-10 py-1.5">
-            <div class="size-2 rounded-full bg-orange-500 animate-pulse" />
-            <span class="text-xs text-orange-400 font-mono">Batching {{ batchCount }} new item{{ batchCount !== 1 ? 's' : '' }}...</span>
-          </div>
-
-          <!-- Node -->
-          <div class="border rounded-lg overflow-hidden transition-all duration-300" :class="[s.status==='running'?'border-primary shadow-md shadow-primary/10':s.status==='success'?'border-green-500/40':s.status==='filtered'?'border-blue-400/40':s.status==='diagnosing'?'border-purple-500/40':s.status==='timeout'?'border-amber-500/40':s.status==='error'?'border-red-500/40':'border-border']">
-            <!-- Node header -->
-            <button class="w-full flex items-center gap-3 px-4 py-3 text-left cursor-pointer hover:bg-muted/30 transition-colors" @click="toggleStep(s)">
-              <!-- Status dot -->
-              <div class="flex items-center justify-center size-8 rounded-full shrink-0 transition-colors" :class="[s.status==='success'?'bg-green-500/20':s.status==='running'?'bg-primary/20':s.status==='filtered'?'bg-blue-400/20':s.status==='diagnosing'?'bg-purple-500/20':s.status==='timeout'?'bg-amber-500/20':s.status==='error'?'bg-red-500/20':'bg-muted']">
-                <Loader2 v-if="s.status==='running'" class="size-4 animate-spin" :class="statusColor(s.status)" />
-                <Check v-else-if="s.status==='success'" class="size-4" :class="statusColor(s.status)" />
-                <AlertTriangle v-else-if="s.status==='error'||s.status==='timeout'||s.status==='filtered'" class="size-4" :class="statusColor(s.status)" />
-                <Search v-else-if="s.status==='diagnosing'" class="size-4 text-purple-500 animate-pulse" />
-                <Database v-else-if="s.id==='dynamodb'" class="size-4 text-muted-foreground" />
-                <Zap v-else-if="s.id==='glue'||s.id==='target'" class="size-4 text-muted-foreground" />
-                <Bell v-else-if="s.id==='sns'" class="size-4 text-muted-foreground" />
-                <Inbox v-else class="size-4 text-muted-foreground" />
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold">{{ s.label }}</p>
-                <p class="text-xs text-muted-foreground font-mono truncate">{{ s.detail }}</p>
-              </div>
-              <span v-if="showElapsed && s.elapsed" class="text-[10px] text-muted-foreground font-mono shrink-0">{{ formatMs(s.elapsed) }}</span>
-              <Badge v-if="s.status!=='pending'" :class="[s.status==='success'?'bg-green-500/20 text-green-500 border-green-500/40':s.status==='running'?'bg-primary/20 text-primary border-primary/40':s.status==='filtered'?'bg-blue-400/20 text-blue-400 border-blue-400/40':s.status==='diagnosing'?'bg-purple-500/20 text-purple-500 border-purple-500/40':s.status==='timeout'?'bg-amber-500/20 text-amber-500 border-amber-500/40':'bg-red-500/20 text-red-500 border-red-500/40']" class="text-[10px] shrink-0">{{ s.status === 'timeout' ? 'timed out' : s.status === 'diagnosing' ? 'diagnosing...' : s.status }}</Badge>
-              <ChevronDown v-if="!s.collapsed && s.logs.length" class="size-4 text-muted-foreground shrink-0" />
-              <ChevronRight v-else-if="s.logs.length" class="size-4 text-muted-foreground shrink-0" />
-            </button>
-
-            <!-- Logs panel -->
-            <div v-if="!s.collapsed && s.logs.length" class="border-t bg-zinc-950 transition-all">
-              <div class="flex items-center justify-end gap-1 px-2 pt-1">
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyStepLogs(s.logs)">
-                  <Copy class="size-3" />
-                </Button>
-                <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expandStep(s)">
-                  <Maximize2 class="size-3" />
-                </Button>
-              </div>
-              <div class="px-4 pb-3 max-h-56 overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 w-0 min-w-full">
-                <div v-if="(s.status==='error'||s.status==='timeout') && extractErrors(s.logs).length" class="mb-3 rounded-md border border-red-500/20 bg-red-500/5 p-3 overflow-x-auto scrollbar-thin scrollbar-thumb-zinc-700">
-                  <div class="text-red-400 font-semibold mb-1.5 text-[11px] uppercase tracking-wide">Root Cause</div>
-                  <div v-for="(line, i) in extractErrors(s.logs)" :key="'rc'+i" class="text-xs font-mono text-red-300 whitespace-pre-wrap leading-relaxed">{{ line.trim() }}</div>
-                </div>
-                <div v-for="(line, i) in s.logs" :key="i" :class="[line.includes('ERROR') || line.includes('Exception') || line.includes('Caused by') || line.includes('FunctionError') ? 'text-red-400' : line.startsWith('⚠') ? 'text-yellow-400' : line.includes('──') ? 'text-blue-400 font-semibold mt-2' : 'text-zinc-400']" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
-              </div>
-            </div>
-          </div>
+          <PipelineRunStep
+            :icon="s.id === 'dynamodb' ? 'Database' : s.id === 'sns' || s.id === 'sns-trigger' ? 'Bell' : s.id === 'sqs' || s.id === 'sqs-trigger' ? 'Inbox' : 'Zap'"
+            :label="s.label"
+            :detail="s.detail"
+            :status="s.status"
+            :logs="s.logs"
+            :elapsed="s.elapsed"
+            :expanded="!s.collapsed && s.logs.length > 0"
+            :show-connector="i < steps.length - 1"
+            :show-kiro-hint="kiroAvailable && i === steps.length - 1 && (s.status === 'error' || s.status === 'timeout')"
+            @toggle="toggleStep(s)"
+            @explain="explainStepError(s)"
+          />
         </template>
       </div>
     </template>
 
     <div v-else class="text-center py-16 text-muted-foreground"><p>Pipeline not found.</p></div>
 
-    <EvaluateModal v-if="kiroAvailable" v-model="showEvaluate" type="pipeline" :id="pipelineId" :sample="lastGenerated" @good="evaluated = true" @bad="evaluated = true" />
+    <EvaluateModal v-if="kiroAvailable" v-model="showEvaluate" type="pipeline" :id="pipelineId" :sample="lastGenerated" :subtype="lastIntent" @good="evaluated = true" @bad="evaluated = true" />
 
     <!-- Expanded log modal -->
     <LogViewer

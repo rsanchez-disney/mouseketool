@@ -18,11 +18,10 @@ const settings = ref({
   heavyLoad: { batchSize: 1000, batchWindowSeconds: 300 },
   ai: { learnedStorage: "local" as "local" | "s3" },
   workflow: { autoBumpHealthchecks: false },
+  historyRetention: { mode: "age" as "amount" | "age", maxRuns: 50, maxDays: 2 },
 });
 const saving = ref(false);
 const saved = ref(false);
-const showElapsed = ref(localStorage.getItem("mk:showElapsed") !== "false");
-watch(showElapsed, v => localStorage.setItem("mk:showElapsed", String(v)));
 
 onMounted(async () => {
   const data = await (await fetch("/api/settings")).json();
@@ -137,18 +136,32 @@ async function save() {
         <div class="flex items-center gap-2">
           <Clock class="size-5 text-muted-foreground" />
           <div>
-            <CardTitle>Observer Polling Interval</CardTitle>
-            <CardDescription>How frequently pipeline observers poll LocalStack for SQS and CloudWatch updates.</CardDescription>
+            <CardTitle>History Retention</CardTitle>
+            <CardDescription>Control how long pipeline invocation history is kept.</CardDescription>
           </div>
         </div>
       </CardHeader>
-      <CardContent class="space-y-2">
-        <Label for="observerPolling">Interval (milliseconds)</Label>
-        <Input id="observerPolling" v-model.number="settings.pipeline.observerPollingMs" type="number" min="100" max="5000" step="100" class="max-w-48" />
-        <p class="text-xs text-muted-foreground">Default: 500ms. Controls how often observers check SQS queues and CloudWatch logs during pipeline execution.</p>
-        <p class="text-xs text-amber-500">Lower values detect changes faster but increase load on LocalStack. Higher values reduce load but may miss fast-moving messages in SQS.</p>
+      <CardContent class="space-y-4">
+        <div class="flex items-center gap-4">
+          <Label class="text-sm shrink-0">Mode:</Label>
+          <select v-model="settings.historyRetention.mode" class="bg-background border rounded-md px-3 py-1.5 text-sm">
+            <option value="age">By age</option>
+            <option value="amount">By amount</option>
+          </select>
+        </div>
+        <div v-if="settings.historyRetention.mode === 'age'" class="space-y-1">
+          <Label>Max age (days)</Label>
+          <Input v-model.number="settings.historyRetention.maxDays" type="number" min="1" max="10" class="max-w-48" />
+          <p class="text-xs text-muted-foreground">Runs older than this will be automatically removed. Min: 1, Max: 10, Default: 2.</p>
+        </div>
+        <div v-if="settings.historyRetention.mode === 'amount'" class="space-y-1">
+          <Label>Max runs per pipeline</Label>
+          <Input v-model.number="settings.historyRetention.maxRuns" type="number" min="5" max="500" class="max-w-48" />
+          <p class="text-xs text-muted-foreground">Oldest runs will be removed to keep at most this many per pipeline. Default: 50.</p>
+        </div>
       </CardContent>
     </Card>
+
 
     <Card>
       <CardHeader>
@@ -241,23 +254,6 @@ async function save() {
       </CardContent>
     </Card>
 
-    <Card>
-      <CardHeader>
-        <div class="flex items-center gap-2">
-          <Eye class="size-5 text-muted-foreground" />
-          <div>
-            <CardTitle>UI Preferences</CardTitle>
-            <CardDescription>Customize how information is displayed in the app.</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div class="flex items-center gap-3">
-          <Toggle v-model="showElapsed" />
-          <div><Label class="text-sm">Show elapsed time on history cards</Label><p class="text-xs text-muted-foreground">Display how long each pipeline step took to complete.</p></div>
-        </div>
-      </CardContent>
-    </Card>
 
     <Button @click="save" :disabled="saving" class="gap-2 cursor-pointer active:scale-95 transition-transform">
       <Loader2 v-if="saving" class="size-4 animate-spin" />

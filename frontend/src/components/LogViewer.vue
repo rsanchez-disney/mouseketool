@@ -16,11 +16,13 @@ const props = withDefaults(defineProps<{
   kiroAvailable?: boolean;
   aiExplaining?: boolean;
   aiExplanation?: string;
+  wrap?: boolean;
 }>(), {
   loadingText: "Running...",
   emptyText: "No output yet",
   height: "h-72",
   rootCauseLines: () => [],
+  wrap: true,
 });
 
 const emit = defineEmits<{ explain: []; copy: [text: string] }>();
@@ -122,8 +124,8 @@ onMounted(() => {
 
 <template>
   <!-- Minimized -->
-  <div :class="['bg-zinc-950 text-zinc-300 rounded-lg p-4 font-mono text-xs leading-relaxed overflow-hidden relative border border-zinc-800', height]">
-    <div ref="miniInner" class="h-full overflow-auto scrollbar-thin scrollbar-thumb-zinc-700 min-w-0 break-all" @scroll="onScroll(miniInner)">
+  <div :class="['bg-zinc-950 text-zinc-300 rounded-lg p-4 font-mono text-xs leading-relaxed overflow-hidden relative border border-zinc-800 w-0 min-w-full', height]">
+    <div ref="miniInner" :class="['h-full overflow-auto scrollbar-thin scrollbar-thumb-zinc-700', wrap ? 'break-all min-w-0' : 'max-w-full']" @scroll="onScroll(miniInner)">
       <div v-if="loading && !logs.length" class="h-full flex items-center justify-center gap-2 text-zinc-500">
         <svg class="size-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" /><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
         {{ loadingText }}
@@ -139,21 +141,23 @@ onMounted(() => {
           <slot name="after-root-cause-mini" />
         </div>
         <slot name="before-logs" />
-        <div v-for="(line, i) in lines" :key="i" :class="lineClass(line, i, '')" class="text-xs font-mono whitespace-pre-wrap leading-relaxed">{{ line }}</div>
+        <div v-for="(line, i) in lines" :key="i" :class="lineClass(line, i, '')" :style="!wrap ? { whiteSpace: 'pre' } : {}" class="text-xs font-mono whitespace-pre-wrap leading-relaxed">{{ line }}</div>
       </template>
     </div>
     <!-- Minimized toolbar -->
     <template v-if="logs.length">
-      <slot name="toolbar-extra" />
-      <Button variant="ghost" size="icon" class="absolute top-2 right-[4.5rem] size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="clickFollow">
-        <ArrowDown :class="follow ? 'size-3.5 text-emerald-400' : 'size-3.5'" />
-      </Button>
-      <Button variant="ghost" size="icon" class="absolute top-2 right-10 size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs">
-        <Check v-if="copied" class="size-3.5 text-green-500" /><Copy v-else class="size-3.5" />
-      </Button>
-      <Button variant="ghost" size="icon" class="absolute top-2 right-2 size-7 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expanded = true">
-        <Maximize2 class="size-3.5" />
-      </Button>
+      <div class="absolute top-0 right-0 flex items-center gap-0 px-1.5 py-1 rounded-bl-lg bg-zinc-800/40 backdrop-blur-md border-b border-l border-zinc-700/30 z-10">
+        <slot name="toolbar-extra" />
+        <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="clickFollow">
+          <ArrowDown :class="follow ? 'size-3.5 text-emerald-400' : 'size-3.5'" />
+        </Button>
+        <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="copyLogs">
+          <Check v-if="copied" class="size-3.5 text-green-500" /><Copy v-else class="size-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" class="size-6 cursor-pointer text-zinc-500 hover:text-zinc-300" @click="expanded = true">
+          <Maximize2 class="size-3.5" />
+        </Button>
+      </div>
     </template>
   </div>
 

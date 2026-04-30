@@ -11,17 +11,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import Toggle from "@/components/ui/Toggle.vue";
+import TargetLambdaSelector from "@/components/TargetLambdaSelector.vue";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
-  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save,
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone,
 } from "lucide-vue-next";
+
+interface PipelineTypeDef { id: string; name: string; description: string; icon: string; steps: string[]; triggerKind: string; requiresStreamHandler: boolean; requiresFilterPolicy: boolean; supportsHeavyLoad: boolean; heavyLoadLabel?: string; aiLearningSource: string; templateLambda?: string; disabled?: boolean; disabledReason?: string; }
 
 const triggerRouter = useRouter();
 type SourceType = "dynamodb" | "s3";
 const sources = [
   { type: "dynamodb" as SourceType, label: "DynamoDB", icon: Database, enabled: true },
-  { type: "s3" as SourceType, label: "S3 Bucket", icon: HardDrive, enabled: false, tooltip: "Available in a future release" },
+  { type: "s3" as SourceType, label: "S3 Bucket", icon: HardDrive, enabled: false, tooltip: "Coming in a future release" },
 ];
 
 // Toast
@@ -33,7 +36,10 @@ function showToast(msg: string, isError = false) {
 }
 
 // View + wizard state
-const view = ref<"list" | "wizard">("list");
+const view = ref<"list" | "type-select" | "wizard">("list");
+const pipelineTypes = ref<PipelineTypeDef[]>([]);
+const selectedPipelineType = ref<PipelineTypeDef | null>(null);
+const typeIcons: Record<string, any> = { Workflow, Zap, Inbox, Megaphone, HardDrive };
 const stepIndex = ref(0);
 watch(stepIndex, () => window.scrollTo({ top: 0, behavior: "smooth" }));
 const selectedSource = ref<SourceType | null>(null);
@@ -177,7 +183,7 @@ watch([selectedGlueFunction, selectedTargetFunction], ([g, t]) => {
 });
 
 // Mappings
-interface Pipeline { id: string; name: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; heavyLoad?: boolean; targetMissing?: boolean; vaultIncomplete?: boolean; }
+interface Pipeline { id: string; name: string; type?: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; heavyLoad?: boolean; targetMissing?: boolean; vaultIncomplete?: boolean; }
 const mappings = ref<Pipeline[]>([]);
 const loadingMappings = ref(false);
 
@@ -185,7 +191,7 @@ const loadingMappings = ref(false);
 const usedTables = computed(() => new Set(mappings.value.map(m => m.tableName)));
 const usedTopics = computed(() => new Set(mappings.value.map(m => m.topicName)));
 const usedQueues = computed(() => new Set(mappings.value.map(m => m.queueName)));
-const usedFunctions = computed(() => new Set(mappings.value.flatMap(m => [m.glueFunctionName, m.targetFunctionName])));
+const usedFunctions = computed(() => new Set(mappings.value.map(m => m.glueFunctionName).filter(Boolean)));
 const deletingMapping = ref(""); const expandedAddons = ref("");
 const selectedPipelines = ref<Set<string>>(new Set());
 const showActionsMenu = ref(false);
@@ -349,10 +355,24 @@ function openExecution(pipelineId: string, pipelineName: string, tableName: stri
 // Navigation
 function selectSource(s: typeof sources[0]) { if (s.enabled) selectedSource.value = s.type; }
 function goToStep(n: number) { stepIndex.value = n; }
-function goToStep2() { if (!selectedSource.value) return; stepIndex.value = 1; if (!tables.value.length) loadTables(); }
-function goToStep3() { if (!selectedTable.value) return; stepIndex.value = 2; if (!topics.value.length) loadTopics(); }
-function goToStep4() { if (!selectedTopic.value) return; stepIndex.value = 3; if (!queues.value.length) loadQueues(); }
-function goToStep5() { if (!selectedQueue.value) return; stepIndex.value = 4; loadFunctions(); loadTemplates(); }
+function goToNextStep() {
+  const activeKinds = selectedPipelineType.value ? [...selectedPipelineType.value.steps.filter(s => s !== "stream-handler"), "addons"] : [];
+  const nextIdx = stepIndex.value + 1;
+  if (nextIdx >= activeKinds.length) return;
+  const nextKind = activeKinds[nextIdx];
+  // Load data for the next step
+  if (nextKind === "dynamodb" && !tables.value.length) loadTables();
+  if (nextKind === "sns" && !topics.value.length) loadTopics();
+  if (nextKind === "sqs" && !queues.value.length) loadQueues();
+  if (nextKind === "lambda") { loadFunctions(); loadTemplates(); }
+  stepIndex.value = nextIdx;
+}
+function goToPrevStep() { if (stepIndex.value > 0) stepIndex.value--; }
+// Legacy navigation (used by Next buttons in panels)
+function goToStep2() { goToNextStep(); }
+function goToStep3() { if (!selectedTable.value) return; goToNextStep(); }
+function goToStep4() { if (!selectedTopic.value) return; goToNextStep(); }
+function goToStep5() { if (!selectedQueue.value) return; goToNextStep(); }
 
 // Data loaders
 async function loadTables() { loading.value = true; try { tables.value = await (await fetch("/api/dynamodb/tables")).json(); } catch { tables.value = []; } loading.value = false; }
@@ -401,11 +421,17 @@ async function deployTemplate(t: Template) {
 
 // Wire pipeline
 async function wirePipeline() {
-  if (!selectedTable.value?.streamArn || !selectedGlueFunction.value || !selectedTopic.value || !selectedQueue.value || !selectedTargetFunction.value) return;
+  if (!selectedTargetFunction.value) return;
+  const typeId = selectedPipelineType.value?.id || "app-pipeline";
+  const typeSteps = selectedPipelineType.value?.steps || ["dynamodb", "stream-handler", "sns", "sqs", "lambda"];
+  if (typeSteps.includes("dynamodb") && !selectedTable.value?.streamArn) return;
+  if (typeSteps.includes("stream-handler") && !selectedGlueFunction.value) return;
+  if (typeSteps.includes("sns") && !selectedTopic.value) return;
+  if (typeSteps.includes("sqs") && !selectedQueue.value) return;
   wiring.value = true; wireError.value = ""; wireResult.value = null;
   try {
     const res = await fetch("/api/triggers/wire", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ streamArn: selectedTable.value.streamArn, glueFunctionName: selectedGlueFunction.value.name, topicArn: selectedTopic.value.arn, queueUrl: selectedQueue.value.url, targetFunctionName: selectedTargetFunction.value.name, pipelineName: pipelineName.value, addons: vaultEnabled.value ? ["vault"] : [], filterPolicy: buildFilterPolicy(), filterPolicyScope: filterEnabled.value ? filterScope.value : undefined, topicCreatedByUs: topicCreatedByUs.value, queueCreatedByUs: queueCreatedByUs.value, heavyLoad: heavyLoad.value, vaultConfig: vaultEnabled.value && vaultSecrets.value.some(s => s.path) ? { url: vaultUrl.value, token: vaultToken.value, paths: vaultSecrets.value.filter(s => s.path).map(s => s.path) } : undefined }) });
+      body: JSON.stringify({ type: typeId, streamArn: selectedTable.value?.streamArn, glueFunctionName: selectedGlueFunction.value?.name, topicArn: selectedTopic.value?.arn, queueUrl: selectedQueue.value?.url, targetFunctionName: selectedTargetFunction.value.name, pipelineName: pipelineName.value, addons: vaultEnabled.value ? ["vault"] : [], filterPolicy: buildFilterPolicy(), filterPolicyScope: filterEnabled.value ? filterScope.value : undefined, topicCreatedByUs: topicCreatedByUs.value, queueCreatedByUs: queueCreatedByUs.value, heavyLoad: heavyLoad.value, vaultConfig: vaultEnabled.value && vaultSecrets.value.some(s => s.path) ? { url: vaultUrl.value, token: vaultToken.value, paths: vaultSecrets.value.filter(s => s.path).map(s => s.path) } : undefined }) });
     const data = await res.json();
     if (res.ok) {
       wireResult.value = data;
@@ -449,18 +475,68 @@ async function runQuickTest() {
 
 function selectTable(t: DynamoTable) { if (t.streamEnabled) selectedTable.value = t; }
 import { formatBytes } from "@/lib/format";
-const pipelineSteps = [
-  { label: "Source", description: "Choose event source" },
-  { label: "DynamoDB", description: "Select table" },
-  { label: "SNS", description: "Select topic" },
-  { label: "SQS", description: "Select queue" },
-  { label: "Lambdas", description: "Wire pipeline" },
-  { label: "Add-ons", description: "Configure add-ons" },
-];
+const stepKindMeta: Record<string, { label: string; description: string }> = {
+  "dynamodb": { label: "DynamoDB", description: "Select table" },
+  "stream-handler": { label: "Stream Handler", description: "Select handler" },
+  "sns": { label: "SNS", description: "Select topic" },
+  "sqs": { label: "SQS", description: "Select queue" },
+  "lambda": { label: "Lambda", description: "Select target" },
+  "addons": { label: "Add-ons", description: "Configure add-ons" },
+};
+const pipelineSteps = computed(() => {
+  if (!selectedPipelineType.value) return [{ label: "Source", description: "Choose event source" }];
+  const steps = selectedPipelineType.value.steps
+    .filter(s => s !== "stream-handler") // stream-handler is part of the Lambda step
+    .map(s => stepKindMeta[s] || { label: s, description: "" });
+  steps.push(stepKindMeta["addons"]);
+  return steps;
+});
+const currentStepKind = computed(() => {
+  if (!selectedPipelineType.value) return "dynamodb";
+  const activeKinds = [...selectedPipelineType.value.steps.filter(s => s !== "stream-handler"), "addons"];
+  return activeKinds[stepIndex.value] || "dynamodb";
+});
 
 function startWizard() { view.value = "wizard"; stepIndex.value = 0; selectedSource.value = null; selectedTable.value = null; selectedTopic.value = null; selectedQueue.value = null; selectedGlueFunction.value = null; selectedTargetFunction.value = null; wireResult.value = null; wireError.value = ""; pipelineName.value = ""; heavyLoad.value = false; vaultEnabled.value = false; vaultUrl.value = ""; vaultToken.value = ""; vaultSecrets.value = []; vaultTestResult.value = null; filterEnabled.value = false; filterScope.value = "MessageBody"; filterRules.value = []; topics.value = []; queues.value = []; tables.value = []; topicCreatedByUs.value = false; queueCreatedByUs.value = false; }
 function isTemplateDeployed(t: Template) { return functions.value.some(f => f.templateId === t.id); }
+function stepsForPipeline(p: Pipeline) {
+  const t = p.type || "app-pipeline";
+  const all: Record<string, { label: string; detail: string; icon: any }[]> = {
+    "app-pipeline": [
+      { label: "DynamoDB", detail: p.tableName, icon: Database },
+      { label: "Stream Handler", detail: p.glueFunctionName, icon: Zap },
+      { label: "SNS Topic", detail: p.topicName, icon: Bell },
+      { label: "SQS Queue", detail: p.queueName, icon: Inbox },
+      { label: "Target Lambda", detail: p.targetFunctionName, icon: Zap },
+    ],
+    "direct-stream": [
+      { label: "DynamoDB", detail: p.tableName, icon: Database },
+      { label: "Target Lambda", detail: p.targetFunctionName, icon: Zap },
+    ],
+    "queue-consumer": [
+      { label: "SQS Queue", detail: p.queueName, icon: Inbox },
+      { label: "Target Lambda", detail: p.targetFunctionName, icon: Zap },
+    ],
+    "sns-fanout": [
+      { label: "SNS Topic", detail: p.topicName, icon: Bell },
+      { label: "SQS Queue", detail: p.queueName, icon: Inbox },
+      { label: "Target Lambda", detail: p.targetFunctionName, icon: Zap },
+    ],
+  };
+  return all[t] || all["app-pipeline"];
+}
 function startOver() { loadMappings(); view.value = "list"; }
+async function showTypeSelect() { view.value = "type-select"; if (!pipelineTypes.value.length) { try { pipelineTypes.value = await (await fetch("/api/triggers/types")).json(); } catch {} } }
+function selectPipelineType(t: PipelineTypeDef) {
+  selectedPipelineType.value = t;
+  startWizard();
+  // Load data for the first step
+  const firstKind = t.steps.filter(s => s !== "stream-handler")[0];
+  if (firstKind === "dynamodb" && !tables.value.length) loadTables();
+  if (firstKind === "sns" && !topics.value.length) loadTopics();
+  if (firstKind === "sqs" && !queues.value.length) loadQueues();
+  if (firstKind === "lambda") { loadFunctions(); loadTemplates(); }
+}
 
 onMounted(loadMappings);
 </script>
@@ -469,7 +545,7 @@ onMounted(loadMappings);
   <div class="space-y-3 overflow-hidden">
     <div class="flex items-center justify-between">
       <div><h1 class="text-2xl font-bold tracking-tight">Triggers</h1><p class="text-muted-foreground">Configure event source triggers for your Lambda functions.</p></div>
-      <Button v-if="view === 'list'" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startWizard"><Plus class="size-4" /> New Pipeline</Button>
+      <Button v-if="view === 'list'" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button>
       <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
     </div>
     <template v-if="view === 'list'">
@@ -503,7 +579,7 @@ onMounted(loadMappings);
             </div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
-            <Tooltip v-if="m.sourceType==='dynamodb'"><TooltipTrigger as-child><span class="inline-flex"><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="m.heavyLoad" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></span></TooltipTrigger><TooltipContent>{{ m.heavyLoad ? 'Manual execution is disabled in heavy load mode — insert items directly into DynamoDB' : 'Run pipeline with a test item' }}</TooltipContent></Tooltip>
+            <Tooltip v-if="m.sourceType"><TooltipTrigger as-child><span class="inline-flex"><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="m.heavyLoad" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></span></TooltipTrigger><TooltipContent>{{ m.heavyLoad ? 'Manual execution is disabled in heavy load mode — insert items directly into DynamoDB' : 'Run pipeline with a test item' }}</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/history`)"><Clock class="size-3.5" /> History</Button></TooltipTrigger><TooltipContent>View invocation history from CloudWatch logs</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/edit`)"><Pencil class="size-3.5" /> Edit</Button></TooltipTrigger><TooltipContent>Edit pipeline settings</TooltipContent></Tooltip>
           </div>
@@ -521,6 +597,32 @@ onMounted(loadMappings);
         </CardContent></Card>
       </div>
     </template>
+    <template v-if="view === 'type-select'">
+      <div class="space-y-4">
+        <div><h2 class="text-lg font-semibold">Choose a pipeline type</h2><p class="text-sm text-muted-foreground">Select the architecture pattern for your new pipeline.</p></div>
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          <Tooltip v-for="t in pipelineTypes" :key="t.id" :disabled="!t.disabled">
+            <TooltipTrigger as-child>
+              <button class="rounded-xl border p-5 text-left transition-all space-y-2" :class="t.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-primary/50 hover:bg-muted/50 active:scale-[0.98]'" @click="!t.disabled && selectPipelineType(t)">
+                <component :is="typeIcons[t.icon] || Workflow" class="size-7 text-primary" />
+                <p class="text-sm font-semibold">{{ t.name }}</p>
+                <p class="text-xs text-muted-foreground leading-relaxed">{{ t.description }}</p>
+                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge><Badge v-if="t.disabled" class="text-[10px] bg-amber-500/20 text-amber-500 border-amber-500/40">Coming soon</Badge></div>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent v-if="t.disabled">{{ t.disabledReason }}</TooltipContent>
+          </Tooltip>
+          <Tooltip><TooltipTrigger as-child>
+            <div class="rounded-xl border border-dashed p-5 text-left opacity-50 cursor-not-allowed space-y-2">
+              <HardDrive class="size-7 text-muted-foreground" />
+              <p class="text-sm font-semibold text-muted-foreground">S3 Event Processor</p>
+              <p class="text-xs text-muted-foreground leading-relaxed">Trigger a Lambda from S3 bucket events (object created, deleted).</p>
+              <div class="flex flex-wrap gap-1 pt-1"><Badge variant="secondary" class="text-[10px]">s3</Badge><Badge variant="secondary" class="text-[10px]">lambda</Badge><Badge class="text-[10px] bg-amber-500/20 text-amber-500 border-amber-500/40">Coming soon</Badge></div>
+            </div>
+          </TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
+        </div>
+      </div>
+    </template>
     <template v-if="view === 'wizard'">
     <!-- Breadcrumb Stepper -->
     <div class="flex items-center gap-2 mb-2">
@@ -536,20 +638,12 @@ onMounted(loadMappings);
         </button>
       </template>
     </div>
-    <div class="overflow-x-hidden"><div class="flex transition-transform duration-300 ease-in-out" :style="{ transform: `translateX(-${stepIndex * 100}%)` }">
-        <!-- Step 1: Source -->
-        <div class="min-w-full space-y-4 px-px shrink-0" style="width: 0">
-          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 1</Badge><span>Choose an event source</span></div>
-          <div class="flex items-center gap-4 pt-4">
-            <Tooltip v-for="s in sources" :key="s.type"><TooltipTrigger as-child><button class="flex flex-col items-center justify-center gap-3 w-36 h-36 rounded-xl transition-all" :class="[s.enabled?selectedSource===s.type?'border-2 border-primary bg-primary/5 ring-2 ring-primary/20 cursor-pointer active:scale-95':'border border-border hover:border-primary/50 bg-card cursor-pointer active:scale-95':'border-2 border-dashed border-muted-foreground/30 bg-muted/20 opacity-50 cursor-not-allowed']" @click="selectSource(s)"><component :is="s.icon" class="size-10" :class="s.enabled?'text-foreground':'text-muted-foreground'" /><span class="text-sm font-medium" :class="s.enabled?'':'text-muted-foreground'">{{ s.label }}</span></button></TooltipTrigger><TooltipContent v-if="!s.enabled">{{ s.tooltip }}</TooltipContent></Tooltip>
-          </div>
-          <div v-if="selectedSource" class="pt-2"><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep2">Next <ArrowRight class="size-4" /></Button></div>
-        </div>
-        <!-- Step 2: DynamoDB -->
-        <div class="min-w-full space-y-3 px-px" style="width: 0">
-          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 2</Badge><span>Select a DynamoDB table</span></div>
+    <div>
+        <!-- Step: DynamoDB -->
+        <div v-if="currentStepKind === 'dynamodb'" class="space-y-3">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select a DynamoDB table</span></div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(0);selectedTable=null"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToPrevStep();selectedTable=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTables"><RefreshCw class="size-3.5" /> Refresh</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreate=true"><Plus class="size-3.5" /> Create Table</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadSchemas(); showRestore=true"><HardDrive class="size-3.5" /> Restore Table</Button>
@@ -572,9 +666,10 @@ onMounted(loadMappings);
             </CardContent></Card>
           </div>
         </div>
-        <!-- Step 3: SNS Topic -->
-        <div class="min-w-full space-y-3 px-px" style="width: 0">
-          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 3</Badge><span>Select an SNS topic</span></div>
+        <!-- Step: SNS Topic -->
+        <div v-if="currentStepKind === 'sns'" class="space-y-3">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select an SNS topic</span></div>
+          <div v-if="selectedPipelineType?.id === 'sns-fanout'" class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Info class="size-3.5 shrink-0 text-blue-400" /><span>Multi-subscriber fan-out (multiple SQS queues per topic) will be available in a future release.</span></div>
           <div class="flex items-center gap-2">
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(1);selectedTopic=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTopics"><RefreshCw class="size-3.5" /> Refresh</Button>
@@ -588,6 +683,7 @@ onMounted(loadMappings);
             </div></CardContent></Card>
           </div>
 
+          <div class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Info class="size-3.5 shrink-0 text-blue-400" /><span>The filter policy will be applied to the SNS → SQS subscription selected in the next step.</span></div>
           <!-- Filter policy (optional) -->
           <div v-if="selectedTopic" class="space-y-3 pt-2">
             <div class="flex items-center gap-3">
@@ -654,9 +750,9 @@ onMounted(loadMappings);
             </template>
           </div>
         </div>
-        <!-- Step 4: SQS Queue -->
-        <div class="min-w-full space-y-3 px-px" style="width: 0">
-          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 4</Badge><span>Select an SQS queue</span></div>
+        <!-- Step: SQS Queue -->
+        <div v-if="currentStepKind === 'sqs'" class="space-y-3">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select an SQS queue</span></div>
           <div class="flex items-center gap-2">
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(2);selectedQueue=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadQueues"><RefreshCw class="size-3.5" /> Refresh</Button>
@@ -675,8 +771,8 @@ onMounted(loadMappings);
           </div>
         </div>
         <!-- Step 5: Lambda selection + wire -->
-        <div class="min-w-full space-y-3 px-px" style="width: 0">
-          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 5</Badge><span>Select Lambdas &amp; wire pipeline</span></div>
+        <div v-if="currentStepKind === 'lambda' && selectedPipelineType?.requiresStreamHandler" class="space-y-3">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select Lambdas &amp; wire pipeline</span></div>
           <div class="flex items-center gap-2">
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(3);selectedGlueFunction=null;selectedTargetFunction=null;wireResult=null;wireError=''"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadFunctions"><RefreshCw class="size-3.5" /> Refresh</Button>
@@ -727,14 +823,30 @@ onMounted(loadMappings);
               <Label class="text-xs">Pipeline Name <span class="text-muted-foreground font-normal">(optional)</span></Label>
               <Input v-model="pipelineName" :placeholder="`${selectedTable?.name ?? 'table'} → ${selectedTargetFunction?.name ?? 'lambda'}`" class="font-mono text-xs" />
             </div>
-            <Button class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="stepIndex = 5">Next: Add-ons <ArrowRight class="size-3.5" /></Button>
+            <Button class="gap-2 cursor-pointer active:scale-95 transition-transform" @click="goToNextStep()">Next: Add-ons <ArrowRight class="size-3.5" /></Button>
           </div>
         </div>
-        <!-- Step 6: Add-ons -->
-        <div class="min-w-full space-y-3 px-px" style="width: 0">
-          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step 6</Badge><span>Configure add-ons (optional)</span></div>
+        <!-- Step: Target Lambda (simple - for non-APP types) -->
+        <div v-if="currentStepKind === 'lambda' && !selectedPipelineType?.requiresStreamHandler" class="space-y-3">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select a target Lambda</span></div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="stepIndex = 4"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToPrevStep()"><ArrowLeft class="size-3.5" /> Back</Button>
+          </div>
+          <TargetLambdaSelector :used-functions="usedTargets" @select="fn => { selectedTargetFunction = fn; }" />
+          <div v-if="selectedTargetFunction" class="space-y-3 pt-2">
+            <div class="flex items-center gap-2">
+              <Label class="text-xs">Pipeline name (optional)</Label>
+              <Input v-model="pipelineName" placeholder="Auto-generated if empty" class="h-8 text-xs max-w-xs" />
+            </div>
+            <Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToNextStep">Next <ArrowRight class="size-3.5" /></Button>
+          </div>
+        </div>
+
+        <!-- Step: Add-ons -->
+        <div v-if="currentStepKind === 'addons'" class="space-y-3">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Configure add-ons (optional)</span></div>
+          <div class="flex items-center gap-2">
+            <Button v-if="!wireResult" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="stepIndex = 4"><ArrowLeft class="size-3.5" /> Back</Button>
           </div>
 
           <!-- Vault Add-on Card -->
@@ -760,7 +872,7 @@ onMounted(loadMappings);
 
           <!-- Info banner -->
           <!-- Heavy Load Card -->
-          <Card class="!py-3">
+          <Card class="!py-3" :class="{ 'opacity-50': !selectedPipelineType?.supportsHeavyLoad }">
             <CardContent class="py-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
@@ -772,7 +884,7 @@ onMounted(loadMappings);
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="text-xs text-muted-foreground">{{ heavyLoad ? 'Enabled' : 'Disabled' }}</span>
-                  <Toggle v-model="heavyLoad" />
+                  <Tooltip :disabled="selectedPipelineType?.supportsHeavyLoad !== false"><TooltipTrigger as-child><span><Toggle v-model="heavyLoad" :disabled="!selectedPipelineType?.supportsHeavyLoad" /></span></TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
                 </div>
               </div>
             </CardContent>
@@ -794,7 +906,7 @@ onMounted(loadMappings);
             <Button variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform mt-2" @click="startOver"><RotateCcw class="size-4" /> Start Over</Button>
           </div>
         </div>
-    </div></div>
+    </div>
     </template>
     <!-- Create Table Dialog -->
     <Dialog v-model:open="showCreate"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Create DynamoDB Table</DialogTitle><DialogDescription>Streams enabled by default (NEW_AND_OLD_IMAGES).</DialogDescription></DialogHeader>
@@ -865,15 +977,10 @@ onMounted(loadMappings);
     <!-- See Steps Modal -->
     <Dialog v-model:open="showStepsModal"><DialogContent class="sm:max-w-md"><DialogHeader><DialogTitle>Pipeline Steps</DialogTitle><DialogDescription>{{ stepsPipeline?.name }}</DialogDescription></DialogHeader>
       <div v-if="stepsPipeline" class="space-y-0 py-2">
-        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Database class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">DynamoDB</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.tableName }}</p></div></div>
-        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
-        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Zap class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">Stream Handler</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.glueFunctionName }}</p></div></div>
-        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
-        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Bell class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">SNS Topic</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.topicName }}</p></div></div>
-        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
-        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Inbox class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">SQS Queue</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.queueName }}</p></div></div>
-        <div class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
-        <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><Zap class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">Target Lambda</p><p class="font-mono text-[10px] text-muted-foreground">{{ stepsPipeline.targetFunctionName }}</p></div></div>
+        <template v-for="(step, i) in stepsForPipeline(stepsPipeline)" :key="step.label">
+          <div class="flex items-center gap-3 py-2"><div class="size-7 rounded-full bg-muted flex items-center justify-center"><component :is="step.icon" class="size-3.5 text-muted-foreground" /></div><div><p class="text-xs font-semibold">{{ step.label }}</p><p class="font-mono text-[10px] text-muted-foreground">{{ step.detail }}</p></div></div>
+          <div v-if="i < stepsForPipeline(stepsPipeline).length - 1" class="pl-[13px]"><div class="w-0.5 h-4 bg-border" /></div>
+        </template>
       </div>
     </DialogContent></Dialog>
 

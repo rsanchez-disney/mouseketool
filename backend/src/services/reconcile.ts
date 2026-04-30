@@ -47,6 +47,7 @@ export async function reconcilePipelines(): Promise<ReconcileResult[]> {
   const results: ReconcileResult[] = [];
 
   for (const p of pipelines) {
+    // Reconcile all pipeline types
     const r: ReconcileResult = { pipelineId: p.id, pipelineName: p.name, actions: [], warnings: [], targetMissing: false };
     try {
       await reconcileOne(p, r);
@@ -54,6 +55,22 @@ export async function reconcilePipelines(): Promise<ReconcileResult[]> {
       r.warnings.push(`Fatal: ${e.message}`);
     }
     if (r.actions.length || r.warnings.length) results.push(r);
+  }
+
+  // Shadow infrastructure reconciliation for ALL pipeline types
+  const allPipelines = loadPipelines();
+  for (const p of allPipelines) {
+    if (!p.type || !p.shadow) continue;
+    try {
+      const { reconcileShadow } = await import("./shadow-deploy.js");
+      const updated = await reconcileShadow(p);
+      if (updated) {
+        const pps = loadPipelines();
+        const pp = pps.find(x => x.id === p.id);
+        if (pp) { pp.shadow = updated; savePipelines(pps); }
+        console.log(`[reconcile] Shadow infra restored for "${p.name}"`);
+      }
+    } catch (e: any) { console.error(`[reconcile] Shadow reconcile failed for "${p.name}":`, e.message); }
   }
 
   savePipelines(pipelines);
@@ -70,6 +87,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
 
   // 1. DynamoDB table
   let streamArn = "";
+  if (p.tableName) {
   try {
     const { Table } = await ddb.send(new DescribeTableCommand({ TableName: p.tableName }));
     streamArn = Table?.LatestStreamArn || "";
@@ -108,15 +126,18 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     }
   }
 
+  }
   // 2. SNS topic
-  try {
+  if (p.topicName) try {
     const { TopicArn } = await sns.send(new CreateTopicCommand({ Name: p.topicName }));
     if (TopicArn && TopicArn !== p.topicArn) { p.topicArn = TopicArn; r.actions.push(`Recreated SNS topic ${p.topicName}`); }
   } catch (e: any) { r.warnings.push(`SNS topic: ${e.message}`); }
 
   // 3. SQS queue + DLQ
-  const dlqName = p.queueName + "-dlq";
   let queueArn = "";
+  if (!p.queueName) { /* No SQS for this pipeline type */ } else {
+  const dlqName = p.queueName + "-dlq";
+  queueArn = "";
   try {
     // Create DLQ first
     await sqs.send(new CreateQueueCommand({ QueueName: dlqName }));
@@ -141,6 +162,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     queueArn = mainAttrs.Attributes?.QueueArn || "";
   } catch (e: any) { r.warnings.push(`SQS queue: ${e.message}`); }
 
+  }
   // 4. Stream handler Lambda (template)
   try {
     await lambda.send(new GetFunctionCommand({ FunctionName: p.glueFunctionName }));
@@ -198,8 +220,8 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     } catch (e: any) { r.warnings.push(`Stream ESM: ${e.message}`); }
   }
 
-  // SQS → Target Lambda
-  if (queueArn && !r.targetMissing) {
+  // SQS → Target Lambda (skip for queue-consumer — target uses relay queue)
+  if (queueArn && !r.targetMissing && p.type !== "queue-consumer") {
     try {
       const { EventSourceMappings = [] } = await lambda.send(new ListEventSourceMappingsCommand({ EventSourceArn: queueArn, FunctionName: p.targetFunctionName }));
       if (!EventSourceMappings.length) {
@@ -231,11 +253,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
   }
 
   // 8. Shadow infrastructure subscription
-  try {
-    const { subscribeShadowQueue } = await import("./shadow-infra.js");
-    const shadowSubArn = await subscribeShadowQueue(p.topicArn, p.filterPolicy, p.filterPolicyScope);
-    if (shadowSubArn) p.shadowSubscriptionArn = shadowSubArn;
-  } catch {}
+  // Shadow infra reconciliation handled by reconcileShadow() in shadow-deploy.ts
 
   // Mark target missing on pipeline for UI
   (p as any).targetMissing = r.targetMissing;
@@ -257,6 +275,8 @@ export async function redeployLambda(functionName: string): Promise<boolean> {
     if (!existsSync(metaPath)) return false;
 
     const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
+    const s2 = await loadSettings();
+    if (Date.now() - new Date(meta.createdAt).getTime() > s2.cleanup.ttlMinutes * 60 * 1000) return false;
     if (!existsSync(meta.jarPath)) return false;
 
     const jarBytes = readFileSync(meta.jarPath);

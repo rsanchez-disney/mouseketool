@@ -275,7 +275,10 @@ router.get("/", async (_req, res) => {
     try { builds.push(JSON.parse(await readFile(join(BUILDS_DIR, e.name, "meta.json"), "utf-8"))); } catch { /* skip */ }
   }
   builds.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  res.json(builds);
+  const settings = await loadSettings();
+  const ttlMs = settings.cleanup.ttlMinutes * 60 * 1000;
+  const active = builds.filter((b: any) => Date.now() - new Date(b.createdAt).getTime() <= ttlMs);
+  res.json(active);
 });
 
 router.delete("/:id", async (req, res) => {
