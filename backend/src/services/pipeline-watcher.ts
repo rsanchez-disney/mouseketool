@@ -343,11 +343,11 @@ class PipelineWatcher {
     if (pipeline.type === 'app-pipeline' && pipeline.shadow?.folder) {
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sns', status: 'running', logs: ['Checking SNS delivery...'] });
       // Poll S3 for sqs-event files (shadow Lambda B captures)
-      const timeout = pipeline.heavyLoad ? 120000 : pipeline.filterPolicy ? 30000 : 45000;
+      const timeout = pipeline.heavyLoad ? 120000 : pipeline.filterPolicy ? 15000 : 30000;
       const sqsCapture = await this.pollFor(async () => {
         const { listFolderFiles, readS3Json } = await import('./shadow-infra.js');
         const files = await listFolderFiles(pipeline.shadow!.folder);
-        const sqsEventFiles = files.filter(f => f.includes('/sqs-event-') && !f.includes('-processed/'));
+        const sqsEventFiles = files.filter(f => f.includes('/sqs-event-') && !f.includes('-processed/')).filter(f => { const ts = parseInt(f.match(/-(\d+)\.json/)?.[1] || '0'); return ts > run.timestamp - 5000; });
         if (!sqsEventFiles.length) return null;
         const itemsFile = latestFile(sqsEventFiles).replace('/sqs-event-', '/sqs-items-');
         const items = await readS3Json(itemsFile);
