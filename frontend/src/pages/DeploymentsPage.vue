@@ -22,7 +22,7 @@ import Toggle from "@/components/ui/Toggle.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import {
   Rocket, Play, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, ArrowLeft, ArrowRight,
-  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Upload, Square, RefreshCw, Search, Sparkles, FolderOpen, FileJson, MessageSquare,
+  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Upload, Square, RefreshCw, Search, ChevronDown, Sparkles, FolderOpen, FileJson, MessageSquare,
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
@@ -46,10 +46,22 @@ interface InvokeResult {
 // --- State ---
 const deployments = ref<Deployment[]>([]);
 const searchQuery = ref("");
+const runtimeFilter = ref("all");
+const showRuntimeDropdown = ref(false);
+function closeRuntimeDropdown(e: MouseEvent) { if (showRuntimeDropdown.value && !(e.target as HTMLElement)?.closest?.(".runtime-dropdown")) showRuntimeDropdown.value = false; }
+onMounted(() => document.addEventListener("click", closeRuntimeDropdown));
+onUnmounted(() => document.removeEventListener("click", closeRuntimeDropdown));
 const filteredDeployments = computed(() => {
-  if (!searchQuery.value) return deployments.value;
-  const q = searchQuery.value.toLowerCase();
-  return deployments.value.filter(d => d.functionName.toLowerCase().includes(q) || d.handler.toLowerCase().includes(q));
+  return deployments.value.filter(d => {
+    if (runtimeFilter.value !== "all" && !(d.runtime || "").startsWith(runtimeFilter.value)) return false;
+    if (!searchQuery.value) return true;
+    const q = searchQuery.value.toLowerCase();
+    return d.functionName.toLowerCase().includes(q) || d.handler.toLowerCase().includes(q);
+  });
+});
+const availableRuntimes = computed(() => {
+  const runtimes = new Set(deployments.value.map(d => (d.runtime || "").replace(/[\d.]+/g, "")).filter(Boolean));
+  return [...runtimes].sort();
 });
 const loading = ref(true);
 const selected = ref<Deployment | null>(null);
@@ -417,6 +429,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
     <div v-else-if="!deployments.length" class="text-center py-16 text-muted-foreground">
       <Rocket class="size-12 mx-auto mb-4 opacity-30" />
       <p>No deployments yet. Build and deploy a Lambda from the Builder page.</p>
+      <p class="text-xs mt-2 opacity-60">Only Lambdas built and deployed through Mouseketool will appear here.</p>
     </div>
 
     <div v-else class="relative overflow-hidden">
@@ -424,9 +437,22 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
 
         <!-- Step 1: List -->
         <div class="min-w-full space-y-3" style="width: 0">
-          <div class="relative">
-            <Search class="size-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-            <Input v-model="searchQuery" placeholder="Filter by function name or handler…" class="pl-9 h-8 text-xs focus-visible:ring-0 shadow-none" />
+          <div class="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2">
+            <div class="relative">
+              <Search class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <input v-model="searchQuery" placeholder="Search..." class="h-7 w-36 rounded-md bg-background border pl-8 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+            </div>
+            <div class="h-4 w-px bg-border" />
+            <div class="relative runtime-dropdown">
+              <button @click="showRuntimeDropdown = !showRuntimeDropdown" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer flex items-center gap-1" :class="runtimeFilter !== 'all' ? 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+                {{ runtimeFilter === "all" ? "Runtime" : runtimeFilter }}
+                <ChevronDown class="size-3" />
+              </button>
+              <div v-if="showRuntimeDropdown" class="absolute top-full left-0 mt-1 z-20 w-40 rounded-lg border bg-background shadow-lg py-1">
+                <button class="w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted cursor-pointer transition-colors" :class="runtimeFilter === 'all' ? 'text-foreground font-medium' : 'text-muted-foreground'" @click="runtimeFilter = 'all'; showRuntimeDropdown = false">All runtimes</button>
+                <button v-for="r in availableRuntimes" :key="r" class="w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted cursor-pointer transition-colors" :class="runtimeFilter === r ? 'text-foreground font-medium' : 'text-muted-foreground'" @click="runtimeFilter = r; showRuntimeDropdown = false">{{ r }}</button>
+              </div>
+            </div>
           </div>
           <Card v-for="d in filteredDeployments" :key="d.functionName" class="!py-3 transition-all hover:border-primary/50">
             <CardContent class="py-3 space-y-2">
