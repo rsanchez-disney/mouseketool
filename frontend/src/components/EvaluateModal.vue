@@ -13,7 +13,7 @@ const reason = ref("");
 const saving = ref(false);
 
 function reset() { step.value = "choose"; reason.value = ""; saving.value = false; }
-function onOpen(v: boolean) { if (v) reset(); }
+watch(open, (v) => { if (v) reset(); });
 
 async function saveGood() {
   saving.value = true;

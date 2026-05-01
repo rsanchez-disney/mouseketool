@@ -8,6 +8,8 @@ router.get("/", async (_req, res) => {
   res.json(await loadSettings());
 });
 
+router.get("/defaults", async (_req, res) => { const { readFile } = await import("fs/promises"); const { join } = await import("path"); try { res.json(JSON.parse(await readFile(join(process.cwd(), ".data", "defaults.json"), "utf-8"))); } catch { res.json({}); } });
+
 router.put("/", async (req, res) => {
   const settings = await saveSettings({ ...DEFAULTS, ...req.body });
 

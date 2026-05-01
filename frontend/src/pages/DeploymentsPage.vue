@@ -82,8 +82,11 @@ const generating = ref(false);
 const generateOpen = ref(false);
 const sampleDropdownOpen = ref(false);
 const showSampleBrowser = ref(false);
+const lastGenerated = ref("");
+const showEvaluate = ref(false);
+const evaluated = ref(false);
 async function generatePayload(intent: string) {
-  generating.value = true; generateOpen.value = false;
+  generating.value = true; generateOpen.value = false; lastGenerated.value = "";
   try {
     const r = await fetch("/api/ai/generate-payload", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent, functionName: selected.value?.functionName, samplePath: samplePath.value || undefined }) });
     const data = await r.json();
@@ -94,9 +97,6 @@ async function generatePayload(intent: string) {
 }
 const samplePath = ref("");
 async function loadSamplePath() {
-const lastGenerated = ref("");
-const showEvaluate = ref(false);
-const evaluated = ref(false);
 
   if (!selected.value) return;
   try { const r = await (await fetch(`/api/deployments/${selected.value.functionName}/sample-path`)).json(); samplePath.value = r.samplePath || ""; } catch {}
@@ -175,6 +175,7 @@ async function openAddons(d: Deployment) {
 
 async function goToInvoke() {
   step.value = "invoke";
+  payload.value = "{}";
   await loadEnvVars();
   await loadSamplePath();
   await loadSampleFiles();
@@ -627,10 +628,6 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                     <!-- samplePath configured: dropdown + generate -->
                     <template v-else-if="kiroAvailable">
                       <div class="relative">
-                      <Button v-if="lastGenerated && !evaluated" variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-muted-foreground hover:text-foreground" @click="showEvaluate = true">
-                        <MessageSquare class="size-3" /> Evaluate
-                      </Button>
-
                         <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click.stop="sampleDropdownOpen = !sampleDropdownOpen; generateOpen = false">
                           <FileJson class="size-3" /> Samples <Badge v-if="sampleFiles.length" variant="secondary" class="text-[9px] ml-0.5">{{ sampleFiles.length }}</Badge>
                         </Button>
@@ -639,6 +636,9 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                           <button v-for="f in sampleFiles" :key="f" class="w-full text-left px-3 py-1.5 text-xs font-mono rounded-md hover:bg-muted cursor-pointer truncate" @click="loadSampleFile(f); sampleDropdownOpen = false">{{ f }}</button>
                         </div>
                       </div>
+                      <Button v-if="lastGenerated && !evaluated" variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-muted-foreground hover:text-foreground" @click="showEvaluate = true">
+                        <MessageSquare class="size-3" /> Evaluate
+                      </Button>
                       <div class="relative">
                         <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-violet-400 hover:text-violet-300" :disabled="generating || invoking" @click.stop="generateOpen = !generateOpen; sampleDropdownOpen = false">
                           <Sparkles v-if="!generating" class="size-3" /><Loader2 v-else class="size-3 animate-spin" /> {{ generating ? 'Generating...' : 'Generate' }}

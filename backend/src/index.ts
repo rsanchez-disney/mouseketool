@@ -16,6 +16,8 @@ import aiRoutes from "./routes/ai.js";
 import batchBuildsRoutes from "./routes/batch-builds.js";
 import batchWorkflowsRoutes from "./routes/batch-workflows.js";
 import batchRunsRoutes from "./routes/batch-runs.js";
+import statsRoutes from "./routes/stats.js";
+import localstackRoutes from "./routes/localstack.js";
 import { watcher } from "./services/pipeline-watcher.js";
 import { initPipelineWs } from "./services/pipeline-ws.js";
 import { initShadowInfra, ensureBucketExists } from "./services/shadow-infra.js";
@@ -41,6 +43,8 @@ app.get("/api/health", async (_req, res) => {
     res.json({ status: "ok", localstack: false, reconciling });
   } catch { res.json({ status: "ok", localstack: false, reconciling }); }
 });
+app.use("/api/stats", statsRoutes);
+app.use("/api/localstack", localstackRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/fs", filesystemRoutes);
 app.use("/api/analyze", analyzeRoutes);
@@ -109,5 +113,5 @@ function startHealthMonitor() {
 
 process.on("uncaughtException", (err) => { console.error("[FATAL] Uncaught exception (kept alive):", err.message); });
 process.on("unhandledRejection", (err: any) => { console.error("[FATAL] Unhandled rejection (kept alive):", err?.message || err); });
-process.on("SIGINT", () => { watcher.stop(); process.exit(0); });
-process.on("SIGTERM", () => { watcher.stop(); process.exit(0); });
+process.on("SIGINT", async () => { watcher.stop(); try { const { execSync } = await import("child_process"); const cmd = process.platform === "win32" ? "wsl docker stop mouseketool-localstack" : "docker stop mouseketool-localstack"; execSync(cmd, { stdio: "ignore", timeout: 10000 }); } catch {} process.exit(0); });
+process.on("SIGTERM", async () => { watcher.stop(); try { const { execSync } = await import("child_process"); const cmd = process.platform === "win32" ? "wsl docker stop mouseketool-localstack" : "docker stop mouseketool-localstack"; execSync(cmd, { stdio: "ignore", timeout: 10000 }); } catch {} process.exit(0); });

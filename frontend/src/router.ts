@@ -3,7 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 export default createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/", redirect: "/builder" },
+    { path: "/", component: () => import("./pages/HomePage.vue") },
     { path: "/builder", component: () => import("./pages/BuilderPage.vue") },
     { path: "/deployments", component: () => import("./pages/DeploymentsPage.vue") },
     { path: "/triggers", component: () => import("./pages/TriggersPage.vue") },

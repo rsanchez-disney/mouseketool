@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watchEffect, onMounted, onUnmounted, provide } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton,
@@ -9,9 +9,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play } from "lucide-vue-next";
+import { Home, Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play } from "lucide-vue-next";
 
 const route = useRoute();
+const router = useRouter();
+function navTo(path: string) { if (route.path === path || route.path.startsWith(path + "/")) { router.replace({ path, query: { _t: Date.now().toString() } }); } else { router.push(path); } }
 const dark = ref(localStorage.getItem("mk:theme") === "dark");
 
 watchEffect(() => {
@@ -50,7 +52,7 @@ const batchNav = [
 const otherNav = [
   { label: "Settings", path: "/settings", icon: Settings },
 ];
-const allNav = [...serverlessNav, ...batchNav, ...otherNav];
+const allNav = [{ label: "Home", path: "/", icon: Home }, ...serverlessNav, ...batchNav, ...otherNav];
 </script>
 
 <template>
@@ -82,10 +84,10 @@ const allNav = [...serverlessNav, ...batchNav, ...otherNav];
               <SidebarMenu>
                 <SidebarMenuItem v-for="item in serverlessNav" :key="item.path">
                   <SidebarMenuButton as-child :is-active="route.path === item.path || route.path.startsWith(item.path + '/')">
-                    <router-link :to="item.path" class="flex items-center gap-2">
+                    <a class="flex items-center gap-2 cursor-pointer" @click="navTo(item.path)">
                       <component :is="item.icon" class="size-4" />
                       <span>{{ item.label }}</span>
-                    </router-link>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -98,10 +100,10 @@ const allNav = [...serverlessNav, ...batchNav, ...otherNav];
               <SidebarMenu>
                 <SidebarMenuItem v-for="item in batchNav" :key="item.path">
                   <SidebarMenuButton as-child :is-active="route.path === item.path || route.path.startsWith(item.path + '/')">
-                    <router-link :to="item.path" class="flex items-center gap-2">
+                    <a class="flex items-center gap-2 cursor-pointer" @click="navTo(item.path)">
                       <component :is="item.icon" class="size-4" />
                       <span>{{ item.label }}</span>
-                    </router-link>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -113,10 +115,10 @@ const allNav = [...serverlessNav, ...batchNav, ...otherNav];
               <SidebarMenu>
                 <SidebarMenuItem v-for="item in otherNav" :key="item.path">
                   <SidebarMenuButton as-child :is-active="route.path === item.path">
-                    <router-link :to="item.path" class="flex items-center gap-2">
+                    <a class="flex items-center gap-2 cursor-pointer" @click="navTo(item.path)">
                       <component :is="item.icon" class="size-4" />
                       <span>{{ item.label }}</span>
-                    </router-link>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -170,7 +172,7 @@ const allNav = [...serverlessNav, ...batchNav, ...otherNav];
             <Tooltip>
               <TooltipTrigger as-child>
                 <Button variant="ghost" size="icon" class="size-8" as-child>
-                  <router-link to="/help"><CircleHelp class="size-4" /></router-link>
+                  <a class="cursor-pointer" @click="navTo('/help')"><CircleHelp class="size-4" /></a>
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Help & Guides</TooltipContent>
@@ -196,7 +198,7 @@ const allNav = [...serverlessNav, ...batchNav, ...otherNav];
 
           <router-view v-slot="{ Component }">
             <transition name="fade" mode="out-in">
-              <component :is="Component" />
+              <component :is="Component" :key="route.fullPath" />
             </transition>
           </router-view>
         </main>
