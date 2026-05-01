@@ -678,6 +678,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
       }
     }, 60000);
     let esmDetected = false;
+    if (pipeline.type === "queue-consumer") { esmDetected = true; clearTimeout(esmTimeout); }
 
     const runSub = watcher.onNewRun.subscribe(event => {
       if (event.pipelineId !== pipeline.id || done) return;

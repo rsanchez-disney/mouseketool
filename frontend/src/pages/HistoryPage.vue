@@ -38,6 +38,7 @@ function getStepState(run: Run, step: HistoryStepDef): { status: string; logs: s
     return { status: run.handler?.error ? "error" : "success", logs: run.handler?.logs || [] };
   }
   if (step.dataField === "target") {
+    if ((run as any)._targetRunning) return { status: "running", logs: (run as any)._targetRunningLogs || ["Waiting..."] };
     if (!run.target) return { status: run.status === "pending" ? "pending" : "pending", logs: ["No invocation detected yet"] };
     if (run.status === "diagnosing") return { status: "diagnosing", logs: run.target.logs || [] };
     return { status: run.target.error ? "error" : run.status === "filtered" ? "filtered" : "success", logs: run.target.logs || [] };
@@ -149,14 +150,15 @@ function startLive() {
         if ((data.step === "sns" || data.step === "sns-trigger") && data.status !== "running") run.sns = { status: data.status, logs: data.logs };
         else if ((data.step === "sqs" || data.step === "sqs-trigger") && data.status !== "running") run.sqs = { status: data.status, logs: data.logs };
         else if (data.step === "target") {
-          if (data.status === "running") return;
+          if (data.status === "running") { (run as any)._targetRunning = true; (run as any)._targetRunningLogs = data.logs; return; }
+          delete (run as any)._targetRunning; delete (run as any)._targetRunningLogs;
           if (data.status === "diagnosing") { run.target = { requestId: "", logs: data.logs, error: false }; run.status = "diagnosing"; return; }
           run.target = { requestId: "", logs: data.logs, error: data.status === "error" || data.status === "timeout" };
           run.status = data.status === "success" ? "success" : data.status === "filtered" ? "filtered" : "error";
         } else if (data.step === "dynamodb") {
           run.item = data.logs.join("\n");
         }
-      } else { loadHistory(true); }
+      } else if (data.status !== "running") { loadHistory(true); }
     }
   };
   ws.onclose = () => { if (live.value) setTimeout(() => startLive(), 2000); };
@@ -173,9 +175,9 @@ function toggleStep(runId: string, step: string) { const key = `${runId}:${step}
 function statusColor(status: string) {
   if (status === "success") return "text-green-500";
   if (status === "error") return "text-red-500";
-  if (status === "filtered") return "text-blue-400";
+  if (status === "filtered") return "text-indigo-400";
   if (status === "pending") return "text-amber-500";
-  if (status === "diagnosing") return "text-purple-500";
+  if (status === "diagnosing") return "text-cyan-500";
   return "text-muted-foreground";
 }
 
@@ -213,7 +215,7 @@ onMounted(async () => {
     <!-- Filters toolbar -->
     <div v-if="runs.length" class="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2">
       <div class="flex items-center gap-1.5">
-        <button v-for="s in [{v:'all',l:'All'},{v:'success',l:'Success'},{v:'error',l:'Error'},{v:'filtered',l:'Filtered'},{v:'diagnosing',l:'Diagnosing'}]" :key="s.v" @click="stateFilter = s.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="stateFilter === s.v ? s.v === 'success' ? 'bg-green-500/20 text-green-400 ring-1 ring-green-500/40' : s.v === 'error' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/40' : s.v === 'filtered' ? 'bg-blue-400/20 text-blue-400 ring-1 ring-blue-400/40' : s.v === 'diagnosing' ? 'bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/40' : 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+        <button v-for="s in [{v:'all',l:'All'},{v:'success',l:'Success'},{v:'error',l:'Error'},{v:'filtered',l:'Filtered'},{v:'diagnosing',l:'Verifying'}]" :key="s.v" @click="stateFilter = s.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="stateFilter === s.v ? s.v === 'success' ? 'bg-green-500/20 text-green-400 ring-1 ring-green-500/40' : s.v === 'error' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/40' : s.v === 'filtered' ? 'bg-indigo-400/20 text-indigo-400 ring-1 ring-indigo-400/40' : s.v === 'diagnosing' ? 'bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/40' : 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
           {{ s.l }}
         </button>
       </div>
@@ -240,18 +242,18 @@ onMounted(async () => {
       <Card v-for="run in filteredRuns" :key="run.id" class="!py-0 !gap-0 overflow-hidden transition-all" :class="expandedRun === run.id ? 'border-primary/40' : ''">
         <!-- Run header -->
         <button class="w-full flex items-center gap-3 px-4 py-3 text-left cursor-pointer hover:bg-muted/30 transition-colors" @click="toggleRun(run.id)">
-          <div class="flex items-center justify-center size-8 rounded-full shrink-0" :class="[run.status==='success'?'bg-green-500/20':run.status==='error'?'bg-red-500/20':run.status==='filtered'?'bg-blue-400/20':run.status==='diagnosing'?'bg-purple-500/20':'bg-amber-500/20']">
+          <div class="flex items-center justify-center size-8 rounded-full shrink-0" :class="[run.status==='success'?'bg-green-500/20':run.status==='error'?'bg-red-500/20':run.status==='filtered'?'bg-indigo-400/20':run.status==='diagnosing'?'bg-cyan-500/20':'bg-amber-500/20']">
             <Check v-if="run.status==='success'" class="size-4 text-green-500" />
             <AlertTriangle v-else-if="run.status==='error'" class="size-4 text-red-500" />
-            <Bell v-else-if="run.status==='filtered'" class="size-4 text-blue-400" />
-            <Search v-else-if="run.status==='diagnosing'" class="size-4 text-purple-500 animate-pulse" />
+            <Bell v-else-if="run.status==='filtered'" class="size-4 text-indigo-400" />
+            <Search v-else-if="run.status==='diagnosing'" class="size-4 text-cyan-500 animate-pulse" />
             <Loader2 v-else class="size-4 text-amber-500 animate-spin" />
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-sm font-semibold font-mono truncate">{{ run.id.slice(0, 8) }}</p>
             <p class="text-xs text-muted-foreground">{{ formatDate(run.timestamp) }} {{ formatTime(run.timestamp) }} <Badge v-if="run.source" variant="outline" class="text-[9px] ml-1">{{ run.source === 'manual' ? 'manual' : 'external' }}</Badge> <span v-if="showElapsed && run.totalElapsed" class="text-[10px] ml-1 font-mono">{{ formatMs(run.totalElapsed) }}</span></p>
           </div>
-          <Badge :class="[run.status==='success'?'bg-green-500/20 text-green-500 border-green-500/40':run.status==='error'?'bg-red-500/20 text-red-500 border-red-500/40':run.status==='filtered'?'bg-blue-400/20 text-blue-400 border-blue-400/40':run.status==='diagnosing'?'bg-purple-500/20 text-purple-500 border-purple-500/40':'bg-amber-500/20 text-amber-500 border-amber-500/40']" class="text-[10px]">{{ run.status === 'diagnosing' ? 'diagnosing' : run.status }}</Badge>
+          <Badge :class="[run.status==='success'?'bg-green-500/20 text-green-500 border-green-500/40':run.status==='error'?'bg-red-500/20 text-red-500 border-red-500/40':run.status==='filtered'?'bg-indigo-400/20 text-indigo-400 border-indigo-400/40':run.status==='diagnosing'?'bg-cyan-500/20 text-cyan-500 border-cyan-500/40':'bg-amber-500/20 text-amber-500 border-amber-500/40']" class="text-[10px]">{{ run.status === 'diagnosing' ? 'verifying' : run.status }}</Badge>
           <ChevronDown v-if="expandedRun === run.id" class="size-4 text-muted-foreground shrink-0" />
           <ChevronRight v-else class="size-4 text-muted-foreground shrink-0" />
         </button>
@@ -269,6 +271,7 @@ onMounted(async () => {
             :elapsed="getStepState(run, step).elapsed"
             :expanded="expandedStep === run.id + ':' + step.id"
             :show-connector="i < historySteps.length - 1"
+            :info-tooltip="i === historySteps.length - 1 ? 'Lambda response is not available in observed runs. Only CloudWatch logs are captured. Use the Deployments page to see the full response.' : undefined"
             :show-kiro-hint="kiroAvailable && i === historySteps.length - 1 && (getStepState(run, step).status === 'error' || getStepState(run, step).status === 'timeout')"
             :ai-explaining="aiExplaining && aiRunId === run.id"
             :ai-explanation="aiRunId === run.id ? aiExplanation : ''"

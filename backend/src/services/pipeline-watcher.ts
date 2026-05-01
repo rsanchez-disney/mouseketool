@@ -37,6 +37,7 @@ export interface PipelineRun {
   target: { requestId: string; logs: string[]; error: boolean; elapsed?: number } | null;
   status: string;
   diagAvailable?: boolean;
+  eventFile?: string;
 }
 
 export interface StepUpdate {
@@ -177,7 +178,7 @@ class PipelineWatcher {
           const items = await readS3Json(itemsFile);
           const source = checkManualRun(pipeline.id, Date.now()) ? 'manual' as const : 'external' as const;
           const run: PipelineRun = {
-            id: randomUUID(), timestamp: Date.now(), item: items ? JSON.stringify(items) : null, source,
+            id: randomUUID(), timestamp: Date.now(), item: items ? JSON.stringify(items) : null, source, eventFile,
             handler: { requestId: '', logs: [], error: false },
             ...(pipeline.type === 'queue-consumer' ? { sqs: { status: 'success', logs: items ? [`Received ${Array.isArray(items) ? items.length : 1} item(s)`, '', JSON.stringify(items)] : ['Message received'] } } : {}),
             target: null, status: 'pending',
@@ -194,6 +195,9 @@ class PipelineWatcher {
           this.newRun$.next({ pipelineId: pipeline.id, run });
           // Move files to processed
           await moveToProcessed(pipeline.shadow.folder, [eventFile, itemsFile]);
+          // Update eventFile to processed path so diagnostic invoke can find it
+          run.eventFile = eventFile.replace(pipeline.shadow!.folder + "/", pipeline.shadow!.folder + "-processed/");
+          const pps2 = loadPipelines(); const p2 = pps2.find(pp => pp.id === pipeline.id); const r2 = p2?.runs.find(rr => rr.id === run.id); if (r2) { r2.eventFile = run.eventFile; savePipelines(pps2); }
           // Spawn observer for target Lambda
           this.spawnObserver(pipeline, run);
         }
@@ -357,9 +361,10 @@ class PipelineWatcher {
         const files = await listFolderFiles(pipeline.shadow!.folder);
         const sqsEventFiles = files.filter(f => f.includes('/sqs-event-') && !f.includes('-processed/')).filter(f => { const ts = parseInt(f.match(/-(\d+)\.json/)?.[1] || '0'); return ts > run.timestamp - 5000; });
         if (!sqsEventFiles.length) return null;
-        const itemsFile = latestFile(sqsEventFiles).replace('/sqs-event-', '/sqs-items-');
+        const latestEvent = latestFile(sqsEventFiles);
+        const itemsFile = latestEvent.replace('/sqs-event-', '/sqs-items-');
         const items = await readS3Json(itemsFile);
-        return { eventFile: latestFile(sqsEventFiles), itemsFile, items };
+        return { eventFile: latestEvent, itemsFile, items };
       }, 2000, timeout);
 
       if (!sqsCapture) {
@@ -372,15 +377,23 @@ class PipelineWatcher {
         return;
       }
 
+      console.log(`${tag} sqsCapture keys:`, Object.keys(sqsCapture), 'eventFile:', sqsCapture.eventFile?.split('/').pop());
       // SNS delivered to SQS
       const sqsLogs = sqsCapture.items ? ['Received:', '', JSON.stringify(sqsCapture.items), ...(pipeline.heavyLoad ? ['', '⚠ Under heavy load, some captures may be missed due to LocalStack ESM polling limitations.'] : [])] : ['Message delivered to queue'];
       updateRun({ sns: { status: 'success', logs: ['Items passed to SQS queue'] }, sqs: { status: 'success', logs: sqsLogs } });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sns', status: 'success', logs: ['Items passed to SQS queue'] });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sqs', status: 'success', logs: sqsLogs });
+      // Store eventFile for diagnostic invoke
       // Move processed files
       try {
         const { moveToProcessed } = await import('./shadow-infra.js');
         await moveToProcessed(pipeline.shadow.folder, [sqsCapture.eventFile, sqsCapture.itemsFile]);
+        run.eventFile = sqsCapture.eventFile.replace(pipeline.shadow!.folder + "/", pipeline.shadow!.folder + "-processed/");
+        updateRun({ eventFile: run.eventFile } as any);
+        console.log(`${tag} Stored eventFile (processed): ${run.eventFile.split("/").pop()}`);
+
+
+
       } catch {}
     }
 
@@ -391,33 +404,93 @@ class PipelineWatcher {
     const cw = await getCWClient();
     const logGroup = `/aws/lambda/${pipeline.targetFunctionName}`;
     const pollStart = Date.now();
+    const usedReqIds = new Set(loadPipelines().find(pp => pp.id === pipeline.id)?.runs.filter(r => r.target?.requestId).map(r => r.target!.requestId));
+    const commonMsgs = [
+      "Waiting for LocalStack to respond...",
+      "Waiting for target Lambda to execute...",
+      "Gathering CloudWatch logs...",
+      "Convincing LocalStack to cooperate...",
+      "Asking nicely for a response...",
+      "Making coffee while we wait...",
+      "LocalStack is thinking really hard...",
+      "Any moment now...",
+      "Patience is a virtue...",
+      "Reticulating splines...",
+      "Counting to infinity...",
+      "Waiting for the cloud to cloud...",
+      "Negotiating with AWS SDK...",
+      "Herding microservices...",
+      "Untangling event loops...",
+      "Consulting the oracle...",
+      "Feeding the hamsters that power LocalStack...",
+      "Politely knocking on the container door...",
+      "Sending good vibes to the Lambda runtime...",
+    ];
+    const typeMsgs = pipeline.type === "queue-consumer" ? [
+      "Polling relay queue...",
+      "Poking the SQS ESM poller with a stick...",
+      "Bribing the event source mapping...",
+      "Waiting for the relay queue to relay...",
+      "Messages are queuing up their courage...",
+      "SQS is playing hard to get...",
+      "The queue consumer is consuming... patience...",
+    ] : pipeline.type === "direct-stream" ? [
+      "Polling DynamoDB stream...",
+      "Poking the DynamoDB stream poller with a stick...",
+      "Waiting for the stream to flow...",
+      "DynamoDB is streaming its thoughts...",
+      "The stream is buffering...",
+      "Shards are aligning...",
+      "Convincing DynamoDB to share its changes...",
+    ] : [
+      "Checking SQS delivery...",
+      "Poking the ESM poller with a stick...",
+      "Bribing the event source mapping...",
+      "SNS is whispering to SQS...",
+      "The pipeline is pipelining...",
+      "Warming up cold starts...",
+      "Performing ancient JVM rituals...",
+      "Waiting for garbage collection...",
+    ];
+    const allMsgs = [...commonMsgs, ...typeMsgs];
+    for (let i = allMsgs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [allMsgs[i], allMsgs[j]] = [allMsgs[j], allMsgs[i]]; }
+    let progressIdx = 0;
+    const progressInterval = setInterval(() => {
+      this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "running", logs: [allMsgs[progressIdx % allMsgs.length]] });
+      progressIdx++;
+    }, 3000);
 
     const targetResult = await this.pollFor(async () => {
       try {
-        const streams = await cw.send(new DescribeLogStreamsCommand({ logGroupName: logGroup, orderBy: 'LastEventTime', descending: true, limit: 2 }));
+        const streams = await cw.send(new DescribeLogStreamsCommand({ logGroupName: logGroup, orderBy: "LastEventTime", descending: true, limit: 2 }));
         for (const stream of streams.logStreams ?? []) {
-          const events = await cw.send(new GetLogEventsCommand({ logGroupName: logGroup, logStreamName: stream.logStreamName!, startTime: run.timestamp - 5000, startFromHead: true, limit: 100 }));
-          const logs: string[] = [];
-          let foundStart = false;
-          for (const e of events.events ?? []) {
-            const msg = e.message?.trimEnd() ?? '';
-            if (msg.includes('START RequestId:')) foundStart = true;
-            if (foundStart) logs.push(msg);
+          const events = await cw.send(new GetLogEventsCommand({ logGroupName: logGroup, logStreamName: stream.logStreamName!, startFromHead: false, limit: 80 }));
+          const allMsgs = (events.events ?? []).map(e => e.message?.trimEnd() ?? "").reverse();
+          // Find the last unknown START RequestId in the stream
+          let lastNewStart = -1; let lastReqId = "";
+          for (let mi = allMsgs.length - 1; mi >= 0; mi--) {
+            if (allMsgs[mi].includes("START RequestId:")) {
+              const m = allMsgs[mi].match(/START RequestId: ([\w-]+)/);
+              if (m?.[1] && !usedReqIds.has(m[1])) { lastNewStart = mi; lastReqId = m[1]; break; }
+            }
           }
-          if (foundStart && logs.length > 1) {
-            console.log(`${tag} CW logs found: ${logs.length} lines, hasERROR: ${logs.some(l => /ERROR/.test(l))}, sample: ${logs[1]?.slice(0, 80)}`);
-            const hasError = logs.some(l => /ERROR|Exception|FunctionError/.test(l));
-            const reportLine = logs.find(l => l.includes('REPORT RequestId'));
-            const durationMatch = reportLine?.match(/Duration:\s*([\d.]+)\s*ms/);
-            const elapsed = durationMatch ? Math.round(parseFloat(durationMatch[1])) : undefined;
-            const reqMatch = logs[0]?.match(/START RequestId: ([\w-]+)/);
-            return { logs, error: hasError, elapsed, requestId: reqMatch?.[1] || '' };
-          }
+          if (lastNewStart < 0) continue;
+          const logs = allMsgs.slice(lastNewStart > 0 ? lastNewStart - 10 : 0); // include some INIT logs before START
+          if (!logs.some(l => l.includes("REPORT RequestId"))) continue; // wait for complete invocation
+          console.log(`${tag} CW logs found: ${logs.length} lines, reqId: ${lastReqId.slice(0,8)}`);
+          const hasError = logs.some(l => /ERROR|Exception|FunctionError/.test(l));
+          const reportLine = logs.find(l => l.includes("REPORT RequestId"));
+          const durationMatch = reportLine?.match(/Duration:\s*([\d.]+)\s*ms/);
+          const elapsed = durationMatch ? Math.round(parseFloat(durationMatch[1])) : undefined;
+          return { logs, error: hasError, elapsed, requestId: lastReqId };
         }
       } catch {}
       return null;
-    }, Date.now() - pollStart < 5000 ? 500 : 1000, 30000);
-
+    // 2.5s timeout: LocalStack ESM polling is unreliable (30s-2min+), so we fall back to diagnostic invoke quickly.
+    // The diagnostic invoke uses the full captured event from S3 (with all SQS/DynamoDB attributes), so the Lambda
+    // receives the exact same payload it would from the ESM. To revert to real CW polling, increase this timeout.
+    }, 500, 0); // Skip CW polling — always use diagnostic invoke with captured event
+    clearInterval(progressInterval);
     if (targetResult) {
       const status = targetResult.error ? "error" : "success";
       let finalLogs = targetResult.logs;
@@ -438,37 +511,65 @@ class PipelineWatcher {
       return;
     }
 
-    // --- No logs found — run diagnostic invoke ---
-    console.log(`${tag} No target logs — running diagnostic invoke`);
-    // Don't emit diagnosing to UI to avoid flash — just log internally
-    console.log(`${tag} Running diagnostic invoke...`);
+    clearInterval(progressInterval);
+    // --- No CW logs found — poll S3 for shadow event file, then diagnostic invoke ---
+    console.log(`${tag} No target logs — waiting for shadow event file, then diagnostic invoke`);
+    updateRun({ status: "diagnosing" });
+    this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "diagnosing", logs: ["Verifying invocation..."] });
+
+    const verifyMsgs = pipeline.type === "queue-consumer"
+      ? ["Verifying SQS invocation...", "Waiting for shadow capture...", "Replaying queue message...", "Waiting for Lambda response...", "Processing results...", "Almost there..."]
+      : pipeline.type === "direct-stream"
+      ? ["Verifying stream invocation...", "Waiting for shadow capture...", "Replaying DynamoDB event...", "Waiting for Lambda response...", "Processing results...", "Almost there..."]
+      : ["Verifying pipeline invocation...", "Waiting for shadow capture...", "Replaying SQS delivery...", "Waiting for Lambda response...", "Processing results...", "Almost there..."];
+    let verifyIdx = 0;
+    const verifyInterval = setInterval(() => { this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "diagnosing", logs: [verifyMsgs[verifyIdx % verifyMsgs.length]] }); verifyIdx++; }, 2000);
 
     try {
+      const { readS3Json } = await import("./shadow-infra.js");
       const { invokeFunction } = await import("../routes/deployments.js");
       const lambdaClient = await getLambdaClient();
 
-      // Kill warm container to force cold start with full init logs
-      try { const { execSync } = await import("child_process"); const dk = process.platform === "win32" ? "wsl docker" : "docker"; const ids = execSync(`${dk} ps --filter "name=lambda-${pipeline.targetFunctionName}" -q`, { encoding: "utf-8" }).trim(); if (ids) execSync(`${dk} rm -f ${ids.split("\n").join(" ")}`, { encoding: "utf-8" }); } catch {}
-
-      // Use the same invoke logic as the Deployments page
+      // Use the event file stored on the run (captured by shadow Lambda)
       let diagPayload: any = {};
-      if (pipeline.shadow?.folder) {
-        const { listFolderFiles, readS3Json } = await import("./shadow-infra.js");
-        const files = await listFolderFiles(pipeline.shadow.folder + "-processed");
-        const eventFiles = files.filter(f => f.includes("/event-") || f.includes("/sqs-event-") || f.includes("/dynamo-event-"));
-        if (eventFiles.length) { const captured = await readS3Json(latestFile(eventFiles)); if (captured) diagPayload = captured; }
+      if (run.eventFile) {
+        const captured = await readS3Json(run.eventFile);
+        if (captured) diagPayload = captured;
+        console.log(`${tag} Using stored event file: ${run.eventFile.split("/").pop()}`);
+      } else {
+        console.log(`${tag} No event file on run — invoking with empty payload`);
       }
 
+      // Note: no container kill for speed — warm container may be reused
       const depInfo = await getDeploymentInfo(pipeline.targetFunctionName);
       const result = await invokeFunction(lambdaClient, pipeline.targetFunctionName, diagPayload, depInfo?.buildId, depInfo?.handler);
-      const diagLogs = result.logs.length ? result.logs : ["Diagnostic invoke returned no logs"];
+      clearInterval(verifyInterval);
 
+      // Move used files to processed
+
+      // Filter logs to only the last invocation (warm container may have logs from previous runs)
+      let filteredLogs = result.logs;
+      if (filteredLogs.length > 1) {
+        const lastStart = filteredLogs.reduce((idx, l, i) => l.includes("START RequestId:") ? i : idx, -1);
+        if (lastStart > 0) {
+          // Keep response/header lines (before first START) + last invocation logs
+          const firstStart = filteredLogs.findIndex(l => l.includes("START RequestId:"));
+          const headerLines = filteredLogs.slice(0, firstStart);
+          filteredLogs = [...headerLines, ...filteredLogs.slice(lastStart)];
+        }
+      }
+      const responseLine = result.payload ? JSON.stringify(result.payload, null, 2) : null;
+      const startIdx = filteredLogs.findIndex(l => l.includes("START RequestId:"));
+      const isWarm = startIdx === 0;
+      const warmWarning = isWarm ? ["⚠ Warm container was reused — INIT logs will not appear"] : [];
+      const diagLogs = filteredLogs.length ? [...(responseLine ? [responseLine, "", "Lambda Logs:"] : []), ...warmWarning, ...filteredLogs] : ["Diagnostic invoke returned no logs"];
       const hasLogErrors = diagLogs.some(l => /ERROR|Exception|FunctionError/.test(l) || /"Level"\s*:\s*"ERROR"/.test(l));
       const diagStatus = (result.functionError || hasLogErrors) ? "error" : "success";
       console.log(`${tag} Diagnostic complete — ${diagStatus}`);
       updateRun({ status: diagStatus, target: { requestId: "", logs: diagLogs, error: diagStatus === "error" } as any });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: diagStatus, logs: diagLogs });
     } catch (e: any) {
+      clearInterval(verifyInterval);
       const errLogs = ["Diagnostic invoke failed: " + e.message];
       updateRun({ status: "error", target: { requestId: "", logs: errLogs, error: true } as any });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "error", logs: errLogs });

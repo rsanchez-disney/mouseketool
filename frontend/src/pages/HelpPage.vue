@@ -607,7 +607,7 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
         <p class="font-medium text-foreground">How it works</p>
         <p>A health monitor polls LocalStack every 5 seconds. When it detects that LocalStack has recovered from being
         unreachable, it runs a full reconciliation for every saved pipeline. During reconciliation, a blocking overlay
-        appears on the UI with "Restoring Pipeline Resources" to prevent interaction until the process completes.</p>
+        appears on the UI with "Restoring AWS Resources" to prevent interaction until the process completes.</p>
 
         <p class="font-medium text-foreground">What gets recreated</p>
         <ul class="list-disc list-inside space-y-1.5 ml-1">

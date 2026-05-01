@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import LogViewer from "@/components/LogViewer.vue";
-import { Database, Zap, Bell, Inbox, AlertTriangle, ChevronDown, ChevronRight, Loader2 } from "lucide-vue-next";
+import { Database, Zap, Bell, Inbox, AlertTriangle, ChevronDown, ChevronRight, Loader2, Info } from "lucide-vue-next";
 
 const iconMap: Record<string, any> = { Database, Zap, Bell, Inbox };
 
@@ -17,6 +18,7 @@ const props = defineProps<{
   showKiroHint?: boolean;
   aiExplaining?: boolean;
   aiExplanation?: string;
+  infoTooltip?: string;
 }>();
 
 const emit = defineEmits<{ toggle: []; explain: []; expand: [logs: string[]] }>();
@@ -25,9 +27,13 @@ const rootCauseLines = computed(() =>
   props.logs.filter(l => l.includes("Caused by") || l.includes("FunctionError") || l.includes("errorMessage") || l.includes("Error:") || l.includes("errorType") || l.includes("Type:") || l.includes('"Level":"ERROR"') || l.includes('"Level": "ERROR"'))
 );
 
+const lambdaLogsIdx = computed(() => props.logs.findIndex(l => l === "Lambda Logs:"));
+const responsePayload = computed(() => lambdaLogsIdx.value > 0 ? props.logs.slice(0, lambdaLogsIdx.value).filter(l => l.trim()).join("\n") : undefined);
+const displayLogs = computed(() => lambdaLogsIdx.value > 0 ? props.logs.slice(lambdaLogsIdx.value + 1) : props.logs);
+
 const statusColor: Record<string, string> = {
   success: "green-500", error: "red-500", filtered: "blue-400",
-  timeout: "amber-500", pending: "zinc-500", diagnosing: "purple-500",
+  timeout: "amber-500", pending: "zinc-500", diagnosing: "cyan-500",
   skipped: "zinc-500", running: "amber-500",
 };
 
@@ -55,20 +61,21 @@ function color(status: string) { return statusColor[status] || "zinc-500"; }
           <p class="text-xs font-semibold">{{ label }}</p>
           <p class="text-[10px] text-muted-foreground font-mono truncate">{{ detail }}</p>
         </div>
+        <Tooltip v-if="infoTooltip && status === 'success'"><TooltipTrigger as-child><Info class="size-3.5 text-muted-foreground" /></TooltipTrigger><TooltipContent class="max-w-64 text-center">{{ infoTooltip }}</TooltipContent></Tooltip>
         <Badge :class="[
           status === 'pending' || status === 'skipped' ? 'bg-muted text-muted-foreground' :
-          status === 'filtered' ? 'bg-blue-400/20 text-blue-400 border-blue-400/40' :
+          status === 'filtered' ? 'bg-indigo-400/20 text-indigo-400 border-indigo-400/40' :
           status === 'success' ? 'bg-green-500/20 text-green-500 border-green-500/40' :
           status === 'error' || status === 'timeout' ? 'bg-red-500/20 text-red-500 border-red-500/40' :
-          status === 'diagnosing' ? 'bg-purple-500/20 text-purple-500 border-purple-500/40' :
+          status === 'diagnosing' ? 'bg-cyan-500/20 text-cyan-500 border-cyan-500/40' :
           'bg-amber-500/20 text-amber-500 border-amber-500/40'
-        ]" class="text-[10px]">{{ status }}</Badge>
+        ]" class="text-[10px]">{{ status === "diagnosing" ? "verifying" : status }}</Badge>
         <ChevronDown v-if="expanded" class="size-3.5 text-muted-foreground" />
         <ChevronRight v-else class="size-3.5 text-muted-foreground" />
       </button>
       <LogViewer
         v-if="expanded && logs.length"
-        :logs="logs"
+        :logs="displayLogs" :response-payload="responsePayload"
         :wrap="false"
         :root-cause-lines="rootCauseLines"
         :kiro-available="showKiroHint"

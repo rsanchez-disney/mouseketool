@@ -20,6 +20,7 @@ import { watcher } from "./services/pipeline-watcher.js";
 import { initPipelineWs } from "./services/pipeline-ws.js";
 import { initShadowInfra, ensureBucketExists } from "./services/shadow-infra.js";
 import { reconcilePipelines } from "./services/reconcile.js";
+import { reconcileDeployments } from "./routes/deployments.js";
 import { readdirSync, existsSync } from "fs";
 
 
@@ -87,7 +88,8 @@ function startHealthMonitor() {
       console.log("[health] LocalStack recovered — running reconciliation");
       lsWasDown = false;
       reconciling = true;
-      try { await reconcilePipelines(); } catch (e: any) { console.error("[health] Reconciliation failed:", e.message); }
+      try { await reconcileDeployments(); } catch (e: any) { console.error("[health] Lambda reconciliation failed:", e.message); }
+      try { await reconcilePipelines(); } catch (e: any) { console.error("[health] Pipeline reconciliation failed:", e.message); }
       await new Promise(r => setTimeout(r, 3000));
       try { await initShadowInfra(); } catch {}
       reconciling = false;

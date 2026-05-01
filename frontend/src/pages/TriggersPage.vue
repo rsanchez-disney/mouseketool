@@ -184,6 +184,13 @@ watch([selectedGlueFunction, selectedTargetFunction], ([g, t]) => {
 
 // Mappings
 interface Pipeline { id: string; name: string; type?: string; sourceType: string; tableName: string; topicName: string; queueName: string; glueFunctionName: string; targetFunctionName: string; addons?: string[]; createdAt: string; topicCreatedByUs?: boolean; queueCreatedByUs?: boolean; vaultConfig?: { url: string; token: string; paths: string[] }; heavyLoad?: boolean; targetMissing?: boolean; vaultIncomplete?: boolean; }
+
+function getWarnings(p: Pipeline): { message: string }[] {
+  const w: { message: string }[] = [];
+  if (p.targetMissing) w.push({ message: "Target Lambda build not found — select a deployment on the edit page" });
+  if (p.vaultIncomplete) w.push({ message: "Vault secrets need to be recreated after LocalStack restart" });
+  return w;
+}
 const mappings = ref<Pipeline[]>([]);
 const loadingMappings = ref(false);
 
@@ -572,7 +579,7 @@ onMounted(loadMappings);
           <div class="flex items-center gap-3 min-w-0 flex-1">
             <input type="checkbox" :checked="selectedPipelines.has(m.id)" @change="toggleSelect(m.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
             <div class="min-w-0 flex-1 space-y-1">
-              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="m.targetMissing"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>Target Lambda build not found — select a deployment on the edit page</TooltipContent></Tooltip></p>
+              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="getWarnings(m).length"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>{{ getWarnings(m)[0].message }}</TooltipContent></Tooltip></p>
               <div class="flex items-center gap-1.5 text-muted-foreground">
                 <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span>
               </div>
@@ -683,7 +690,7 @@ onMounted(loadMappings);
             </div></CardContent></Card>
           </div>
 
-          <div class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Info class="size-3.5 shrink-0 text-blue-400" /><span>The filter policy will be applied to the SNS → SQS subscription selected in the next step.</span></div>
+          <div v-if="selectedTopic" class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Info class="size-3.5 shrink-0 text-blue-400" /><span>The filter policy will be applied to the SNS → SQS subscription selected in the next step.</span></div>
           <!-- Filter policy (optional) -->
           <div v-if="selectedTopic" class="space-y-3 pt-2">
             <div class="flex items-center gap-3">

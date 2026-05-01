@@ -189,8 +189,8 @@ const allNav = [...serverlessNav, ...batchNav, ...otherNav];
           <div v-else-if="isReconciling && route.path !== '/settings' && route.path !== '/help'" class="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
             <div class="text-center space-y-3 max-w-sm">
               <Loader2 class="size-12 mx-auto text-primary animate-spin" />
-              <h2 class="text-lg font-semibold">Restoring Pipeline Resources</h2>
-              <p class="text-sm text-muted-foreground">Mouseketool detected a LocalStack restart and is recreating pipeline resources. This may take a moment.</p>
+              <h2 class="text-lg font-semibold">Restoring AWS Resources</h2>
+              <p class="text-sm text-muted-foreground">Mouseketool detected a LocalStack restart and is recreating Lambda functions and pipeline resources. This may take a moment.</p>
             </div>
           </div>
 

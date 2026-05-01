@@ -17,6 +17,7 @@ const props = withDefaults(defineProps<{
   aiExplaining?: boolean;
   aiExplanation?: string;
   wrap?: boolean;
+  responsePayload?: string;
 }>(), {
   loadingText: "Running...",
   emptyText: "No output yet",
@@ -140,6 +141,7 @@ onMounted(() => {
           </div>
           <slot name="after-root-cause-mini" />
         </div>
+        <template v-if="responsePayload"><div class="rounded-md bg-white/5 border border-zinc-700/50 px-3 py-2 mb-3"><p class="text-[10px] text-muted-foreground mb-1">Lambda Response</p><pre class="whitespace-pre-wrap text-xs text-zinc-300">{{ responsePayload }}</pre></div><div v-if="logs.length" class="text-zinc-400 text-[11px] font-semibold uppercase tracking-wide mb-1 pb-1 border-b border-zinc-700/50">Lambda Logs</div></template>
         <slot name="before-logs" />
         <div v-for="(line, i) in lines" :key="i" :class="lineClass(line, i, '')" :style="!wrap ? { whiteSpace: 'pre' } : {}" class="text-xs font-mono whitespace-pre-wrap leading-relaxed">{{ line }}</div>
       </template>
@@ -207,6 +209,7 @@ onMounted(() => {
             {{ aiExplanation }}
           </div>
         </div>
+        <template v-if="responsePayload"><div class="rounded-md bg-white/5 border border-zinc-700/50 px-3 py-2 mb-3"><p class="text-[10px] text-muted-foreground mb-1">Lambda Response</p><pre class="whitespace-pre-wrap text-xs text-zinc-300">{{ responsePayload }}</pre></div><div v-if="logs.length" class="text-zinc-400 text-[11px] font-semibold uppercase tracking-wide mb-1 pb-1 border-b border-zinc-700/50">Lambda Logs</div></template>
         <slot name="before-logs-expanded" />
         <div v-for="(line, i) in lines" :key="i" :class="lineClass(line, i, logSearch)" class="text-xs font-mono whitespace-pre leading-relaxed">{{ line }}</div>
       </div>
