@@ -171,8 +171,8 @@ const allNav = [{ label: "Home", path: "/", icon: Home }, ...serverlessNav, ...b
 
             <Tooltip>
               <TooltipTrigger as-child>
-                <Button variant="ghost" size="icon" class="size-8" as-child>
-                  <a class="cursor-pointer" @click="navTo('/help')"><CircleHelp class="size-4" /></a>
+                <Button variant="ghost" size="icon" class="size-8 cursor-pointer" @click="navTo('/help')">
+                  <CircleHelp class="size-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Help & Guides</TooltipContent>

@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import {
   Rocket, Hammer, CloudCog, Zap, AlertTriangle, Terminal, Shield,
   Database, Bell, Inbox, Clock, Keyboard, Sparkles, RefreshCw,
-  Container, Play, MonitorPlay, Layers,
-} from "lucide-vue-next";
+  Container, Play, MonitorPlay, Layers, Home, Settings } from "lucide-vue-next";
 
 const tabs = [
   { id: "building", label: "Building", icon: Hammer },
   { id: "deploying", label: "Deploying", icon: Rocket },
+  { id: "home", label: "Home", icon: Home },
+  { id: "settings", label: "Settings", icon: Settings },
   { id: "status", label: "Status", icon: CloudCog },
   { id: "invoking", label: "Invoking", icon: Zap },
   { id: "triggers", label: "Triggers", icon: Database },
@@ -60,6 +61,65 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
       <div class="flex-1 min-w-0">
 
     <!-- BUILDING -->
+    <Card v-if="active === 'home'">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2 text-base"><Home class="size-4" /> Home Dashboard</CardTitle>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground space-y-3">
+        <p>The Home page is the first thing you see when opening Mouseketool. It provides a high-level overview of your
+        development environment at a glance.</p>
+
+        <p class="font-medium text-foreground">Quick Stats</p>
+        <p>Five stat cards show the number of deployed Lambdas, cached builds, pipelines, batch projects, and workflows.
+        Click any card to navigate directly to that section.</p>
+
+        <p class="font-medium text-foreground">Pipeline Activity</p>
+        <p>Each pipeline is listed with its name, type, and status count badges showing how many runs succeeded, failed,
+        were filtered, or are being verified. Pipelines with recent activity (last 5 minutes) display a live pulse indicator.</p>
+
+        <p class="font-medium text-foreground">Recent Activity</p>
+        <p>A feed of the most recent pipeline invocations showing the target Lambda name, status, and time since execution.</p>
+
+        <p class="font-medium text-foreground">Quick Actions</p>
+        <p>Shortcuts to common tasks: Build & Deploy Lambda, Create Pipeline, and Launch Workflow.</p>
+      </CardContent>
+    </Card>
+
+    <Card v-if="active === 'settings'">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2 text-base"><Settings class="size-4" /> Settings</CardTitle>
+      </CardHeader>
+      <CardContent class="text-sm text-muted-foreground space-y-3">
+        <p>Settings are organized into six tabbed categories for easy navigation. Changes are tracked automatically —
+        an indicator appears next to the Save button when you have unsaved modifications.</p>
+
+        <p class="font-medium text-foreground">Connection</p>
+        <p>Configure the LocalStack endpoint (protocol, host, port) and AWS credentials. The <strong>Managed LocalStack
+        Instance</strong> feature lets Mouseketool start and stop a LocalStack container via Docker. When enabled,
+        connection fields are auto-managed. Requires Docker installed on the system.</p>
+
+        <p class="font-medium text-foreground">Lambda</p>
+        <p>Set the default memory allocation applied to every Lambda deployed from the Builder page.</p>
+
+        <p class="font-medium text-foreground">Builds</p>
+        <p>Configure auto-cleanup TTL for cached builds and optionally delete all builds on backend startup.</p>
+
+        <p class="font-medium text-foreground">Pipelines</p>
+        <p>Control history retention (by age or amount) and heavy load batch settings (batch size and window).
+        Heavy load changes apply immediately to all pipelines with heavy load enabled.</p>
+
+        <p class="font-medium text-foreground">AI</p>
+        <p>Choose where Kiro stores learned data from evaluations — locally in
+        <code class="text-xs bg-muted px-1 rounded">.data/learned/</code> or in LocalStack S3.</p>
+
+        <p class="font-medium text-foreground">Workflows</p>
+        <p>Toggle auto-bump healthchecks for imported docker-compose files.</p>
+
+        <p class="font-medium text-foreground">Restore Defaults</p>
+        <p>A Restore Defaults button resets all settings to their original values and saves immediately.</p>
+      </CardContent>
+    </Card>
+
     <Card v-if="active === 'building'">
       <CardHeader class="pb-3">
         <CardTitle class="flex items-center gap-2 text-base"><Hammer class="size-4" /> Building a Lambda</CardTitle>

@@ -89,20 +89,26 @@ instance. The default credentials (`test/test`) work fine — LocalStack accepts
 
 Mouseketool is organized into several pages, each focused on a specific part of the development workflow:
 
+### Home
+The default landing page. Shows quick stats (deployed Lambdas, cached builds, pipelines, batch projects,
+workflows), pipeline activity with status count badges, a recent invocation feed, quick action shortcuts,
+and feature highlights. Click any stat card to navigate directly to that section.
+
 ### [Builder](docs/builder.md)
 Build Java Lambda projects with a live streaming console. Supports Maven and Gradle with auto-detection. Manage
 cached builds, rebuild, or deploy directly to LocalStack. Each cached build shows a TTL indicator based on the
 cleanup interval configured in Settings.
 
 ### [Deployments](docs/deployments.md)
-Deploy artifacts to LocalStack, manage environment variables, configure Vault secrets, invoke functions with a
+Deploy artifacts to LocalStack. Search and filter deployed functions by name or runtime. Manage environment variables, configure Vault secrets, invoke functions with a
 payload editor, and inspect results with root cause extraction and local class diagnostics. AI-powered payload
 generation creates test payloads from sample files and handler source code. Vault configuration syncs automatically
 to pipelines using the same Lambda. A deploy override modal
 lets you confirm or skip redeployment, with a preference to remember your choice.
 
 ### Triggers (Pipelines)
-Create event-driven pipelines through a visual wizard. Three pipeline types are supported:
+Create event-driven pipelines through a visual wizard. Search pipelines by name and filter by type
+(App Pipeline, Direct Stream, Queue Consumer). Three pipeline types are supported:
 - **APP Pipeline** (DynamoDB -> SNS -> SQS -> Lambda): Full event-driven chain with stream handler, SNS filter policies, and SQS delivery.
 - **Direct Stream Processor** (DynamoDB -> Lambda): DynamoDB stream triggers a Lambda directly.
 - **Queue Consumer** (SQS -> Lambda): SQS queue triggers a Lambda function.
