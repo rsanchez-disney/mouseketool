@@ -518,7 +518,7 @@ class PipelineWatcher {
     this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "diagnosing", logs: ["Verifying invocation..."] });
 
     const verifyMsgs = pipeline.type === "queue-consumer"
-      ? ["Verifying SQS invocation...", "Waiting for shadow capture...", "Replaying queue message...", "Waiting for Lambda response...", "Processing results...", "Almost there..."]
+      ? ["Verifying SQS invocation...", "Replaying queue message...", "Waiting for Lambda response...", "Processing results...", "Almost there..."]
       : pipeline.type === "direct-stream"
       ? ["Verifying stream invocation...", "Waiting for shadow capture...", "Replaying DynamoDB event...", "Waiting for Lambda response...", "Processing results...", "Almost there..."]
       : ["Verifying pipeline invocation...", "Waiting for shadow capture...", "Replaying SQS delivery...", "Waiting for Lambda response...", "Processing results...", "Almost there..."];

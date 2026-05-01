@@ -174,6 +174,9 @@ These are LocalStack-specific behaviors that don't affect real AWS deployments:
   may arrive individually instead of batched.
 - **Event source mapping polling delays** — ESM pollers can be slow (30s–2min+) or stop polling after the initial
   invocation. Restarting LocalStack resets them.
+- **Diagnostic invoke for target Lambda** — The observer uses a diagnostic invoke (direct Lambda invocation with
+  the captured SQS/DynamoDB event) instead of waiting for LocalStack ESM polling. This provides faster and more
+  reliable results. A warm container warning appears when INIT logs are not available.
 - **Warm container stale logs** — LocalStack reuses Lambda containers. Mouseketool mitigates this by killing warm
   containers before invoke and skipping stale log sources on errors.
 - **Java cold start timeouts** — Under CPU contention, Java Lambdas may timeout during initialization. The 2048 MB

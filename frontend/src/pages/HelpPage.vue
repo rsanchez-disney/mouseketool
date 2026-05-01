@@ -301,7 +301,7 @@ const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello
           <li><strong>Queue Consumer</strong> — A shadow Lambda is the sole consumer of the user's SQS queue. It captures events to S3 and relays messages to a relay queue that triggers the target Lambda.</li>
           <li><strong>APP Pipeline</strong> — Two shadow Lambdas: one on the DynamoDB stream (captures items) and one on a shadow SQS queue subscribed to the SNS topic with the same filter policy (detects filter pass/block).</li>
         </ul>
-        <p>Shadow resources are reconciled on every LocalStack restart. If any shadow Lambda or ESM is missing, the entire shadow infrastructure for that pipeline is redeployed automatically.</p>
+        <p>Shadow resources are reconciled on every LocalStack restart. After LocalStack recovery, Lambda functions are also automatically redeployed from cached builds. If any shadow Lambda or ESM is missing, the entire shadow infrastructure for that pipeline is redeployed automatically.</p>
 
         <p class="font-medium text-foreground">Managing pipelines</p>
         <p>After creating a pipeline, it appears as a card on the Triggers page. You can select one or more pipelines
