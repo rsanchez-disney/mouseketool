@@ -631,7 +631,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                         <MessageSquare class="size-3" /> Evaluate
                       </Button>
 
-                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click.stop="sampleDropdownOpen = !sampleDropdownOpen">
+                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer" @click.stop="sampleDropdownOpen = !sampleDropdownOpen; generateOpen = false">
                           <FileJson class="size-3" /> Samples <Badge v-if="sampleFiles.length" variant="secondary" class="text-[9px] ml-0.5">{{ sampleFiles.length }}</Badge>
                         </Button>
                         <div v-if="sampleDropdownOpen" class="absolute right-0 top-7 z-50 w-56 max-h-48 overflow-auto rounded-lg border bg-popover p-1 shadow-lg">
@@ -640,7 +640,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                         </div>
                       </div>
                       <div class="relative">
-                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-violet-400 hover:text-violet-300" :disabled="generating || invoking" @click.stop="generateOpen = !generateOpen">
+                        <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer text-violet-400 hover:text-violet-300" :disabled="generating || invoking" @click.stop="generateOpen = !generateOpen; sampleDropdownOpen = false">
                           <Sparkles v-if="!generating" class="size-3" /><Loader2 v-else class="size-3 animate-spin" /> {{ generating ? 'Generating...' : 'Generate' }}
                         </Button>
                         <div v-if="generateOpen" class="absolute right-0 top-7 z-50 w-48 rounded-lg border bg-popover p-1 shadow-lg">
@@ -679,7 +679,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                   </div>
                 </div>
                 <LogViewer
-                  :logs="result?.logs || []"
+                  :logs="result?.logs || []" :response-payload="result?.payload ? JSON.stringify(result.payload, null, 2) : undefined"
                   :loading="invoking"
                   loading-text="Running..."
                   empty-text="Invoke a function to see results here"
@@ -696,15 +696,11 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                     <template v-if="invokeError"><div class="text-red-400">{{ invokeError }}</div></template>
                     <template v-if="result">
                       <div v-if="result.functionError" class="text-red-400 mb-2">Function error: {{ result.functionError }}</div>
-                      <pre class="whitespace-pre">{{ JSON.stringify(result.payload, null, 2) }}</pre>
-                      <div v-if="result.logs?.length" class="text-zinc-500 mb-1">Lambda Logs:</div>
                     </template>
                   </template>
                   <template #before-logs-expanded>
                     <template v-if="result">
                       <div v-if="result.functionError" class="text-red-400 mb-2">Function error: {{ result.functionError }}</div>
-                      <pre class="whitespace-pre">{{ JSON.stringify(result.payload, null, 2) }}</pre>
-                      <div v-if="result.logs?.length" class="text-zinc-500 mb-1">Lambda Logs:</div>
                     </template>
                   </template>
                 </LogViewer>

@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { readFile, writeFile, mkdir } from "fs/promises";
+import { existsSync } from "fs";
 import { execFile } from "child_process";
 import { join } from "path";
-import { GetFunctionCommand, InvokeCommand, UpdateFunctionConfigurationCommand } from "@aws-sdk/client-lambda";
+import { GetFunctionCommand, InvokeCommand, UpdateFunctionConfigurationCommand, CreateFunctionCommand, UpdateFunctionCodeCommand } from "@aws-sdk/client-lambda";
 import { CloudWatchLogsClient, DescribeLogStreamsCommand, GetLogEventsCommand } from "@aws-sdk/client-cloudwatch-logs";
 import { DEPLOYMENTS_FILE, SETTINGS_DIR, BUILDS_DIR } from "../config/constants.js";
 import { getLambdaClient } from "../helpers/lambda-client.js";
@@ -285,7 +286,7 @@ router.post("/invoke", async (req, res) => {
 router.get("/:name/sample-path", async (req, res) => {
   const deps = await loadDeployments();
   const dep = deps.find(d => d.functionName === req.params.name);
-  res.json({ samplePath: dep?.samplePath || "" });
+  res.json({ samplePath: dep?.samplePath || dep?.projectPath || "" });
 });
 
 // PUT /api/deployments/:name/sample-path
@@ -324,6 +325,60 @@ router.get("/:name/sample-files/:filename", async (req, res) => {
     res.json({ content });
   } catch { res.status(404).json({ error: "File not found" }); }
 });
+
+
+export async function reconcileDeployments(): Promise<number> {
+  const deployments = await loadDeployments();
+  if (!deployments.length) return 0;
+  const client = await getLambdaClient();
+  const settings = await loadSettings();
+  const memorySize = settings.lambda?.memoryMB ?? 2048;
+  let redeployed = 0;
+  const kept: any[] = [];
+
+  for (const dep of deployments) {
+    const metaPath = join(BUILDS_DIR, dep.buildId, "meta.json");
+    if (!existsSync(metaPath)) { continue; } // build gone, drop deployment
+    try {
+      const meta = JSON.parse(await readFile(metaPath, "utf-8"));
+      if (!existsSync(meta.jarPath)) { continue; }
+      const jarBytes = await readFile(meta.jarPath);
+
+      let envConfig: { Variables: Record<string, string> } | undefined;
+      try {
+        const saved: { key: string; value: string }[] = JSON.parse(await readFile(join(BUILDS_DIR, dep.buildId, "envvars.json"), "utf-8"));
+        const vars = Object.fromEntries(saved.filter((e: any) => e.key).map((e: any) => [e.key, e.value]));
+        if (Object.keys(vars).length) envConfig = { Variables: vars };
+      } catch {}
+
+      try {
+        await client.send(new GetFunctionCommand({ FunctionName: dep.functionName }));
+        // Already exists (maybe partially), update it
+        await client.send(new UpdateFunctionCodeCommand({ FunctionName: dep.functionName, ZipFile: jarBytes }));
+        await client.send(new UpdateFunctionConfigurationCommand({
+          FunctionName: dep.functionName, Runtime: dep.runtime || "java21", Handler: dep.handler,
+          Timeout: 60, MemorySize: memorySize, ...(envConfig ? { Environment: envConfig } : {}),
+        }));
+      } catch {
+        // Doesn't exist, create it
+        await client.send(new CreateFunctionCommand({
+          FunctionName: dep.functionName, Runtime: dep.runtime || "java21", Handler: dep.handler,
+          Role: "arn:aws:iam::000000000000:role/lambda-role",
+          Code: { ZipFile: jarBytes }, Timeout: 60, MemorySize: memorySize, Environment: envConfig,
+        }));
+      }
+      kept.push(dep);
+      redeployed++;
+      console.log("[reconcile] Redeployed Lambda:", dep.functionName);
+    } catch (e: any) {
+      console.error("[reconcile] Failed to redeploy", dep.functionName, e.message);
+      kept.push(dep); // keep it, might work next time
+    }
+  }
+
+  if (kept.length !== deployments.length) await saveDeployments(kept);
+  return redeployed;
+}
 
 export default router;
 

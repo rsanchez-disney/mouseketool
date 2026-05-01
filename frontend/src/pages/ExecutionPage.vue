@@ -332,6 +332,7 @@ onMounted(loadPipeline);
             :elapsed="s.elapsed"
             :expanded="!s.collapsed && s.logs.length > 0"
             :show-connector="i < steps.length - 1"
+            :info-tooltip="i === steps.length - 1 ? 'Lambda response is not available in observed runs. Only CloudWatch logs are captured. Use the Deployments page to see the full response.' : undefined"
             :show-kiro-hint="kiroAvailable && i === steps.length - 1 && (s.status === 'error' || s.status === 'timeout')"
             @toggle="toggleStep(s)"
             @explain="explainStepError(s)"
