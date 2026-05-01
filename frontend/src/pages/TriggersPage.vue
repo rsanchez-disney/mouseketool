@@ -15,8 +15,7 @@ import TargetLambdaSelector from "@/components/TargetLambdaSelector.vue";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
-  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone,
-} from "lucide-vue-next";
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone, Search } from "lucide-vue-next";
 
 interface PipelineTypeDef { id: string; name: string; description: string; icon: string; steps: string[]; triggerKind: string; requiresStreamHandler: boolean; requiresFilterPolicy: boolean; supportsHeavyLoad: boolean; heavyLoadLabel?: string; aiLearningSource: string; templateLambda?: string; disabled?: boolean; disabledReason?: string; }
 
@@ -206,6 +205,14 @@ const showDeleteConfirm = ref(false);
 const deleteExternalResources = ref(false);
 const deleteVaultSecrets = ref(false);
 const selectedHasExternal = computed(() => [...selectedPipelines.value].some(id => { const p = mappings.value.find(m => m.id === id); return p && (p.topicCreatedByUs === false || p.queueCreatedByUs === false); }));
+const pipelineSearch = ref("");
+const pipelineTypeFilter = ref("all");
+const filteredMappings = computed(() => mappings.value.filter(m => {
+  if (pipelineTypeFilter.value !== "all" && m.type !== pipelineTypeFilter.value) return false;
+  if (pipelineSearch.value) { const q = pipelineSearch.value.toLowerCase(); return m.name.toLowerCase().includes(q) || m.targetFunctionName.toLowerCase().includes(q); }
+  return true;
+}));
+
 const selectedHasVault = computed(() => [...selectedPipelines.value].some(id => { const p = mappings.value.find(m => m.id === id); return p?.vaultConfig?.paths?.length; }));
 const showStepsModal = ref(false);
 const stepsPipeline = ref<Pipeline | null>(null);
@@ -552,7 +559,7 @@ onMounted(loadMappings);
   <div class="space-y-3 overflow-hidden">
     <div class="flex items-center justify-between">
       <div><h1 class="text-2xl font-bold tracking-tight">Triggers</h1><p class="text-muted-foreground">Configure event source triggers for your Lambda functions.</p></div>
-      <Button v-if="view === 'list'" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button>
+      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
       <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
     </div>
     <template v-if="view === 'list'">
@@ -560,7 +567,6 @@ onMounted(loadMappings);
       <div v-else-if="!mappings.length" class="text-center py-16 text-muted-foreground"><Cable class="size-12 mx-auto mb-4 opacity-30" /><p>No active pipelines.</p><p class="text-xs mt-1">Click "New Pipeline" to set up a trigger chain.</p></div>
       <div v-else class="space-y-2">
         <div class="flex items-center gap-2 mb-3">
-          <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-3.5" /> Refresh</Button>
           <template v-if="selectedPipelines.size">
             <span class="text-xs text-muted-foreground">{{ selectedPipelines.size }} selected</span>
             <div class="relative">
@@ -575,13 +581,25 @@ onMounted(loadMappings);
             <Button variant="ghost" size="sm" class="text-xs cursor-pointer" @click="selectedPipelines = new Set()">Clear</Button>
           </template>
         </div>
-        <Card v-for="m in mappings" :key="m.id" class="!py-3" :class="selectedPipelines.has(m.id) ? 'border-primary ring-1 ring-primary/20' : ''"><CardContent class="py-3 space-y-2"><div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2 mb-3">
+          <div class="relative">
+            <Search class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input v-model="pipelineSearch" placeholder="Search..." class="h-7 w-36 rounded-md bg-background border pl-8 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+          </div>
+          <div class="h-4 w-px bg-border" />
+          <div class="flex items-center gap-1.5">
+            <button v-for="t in [{v:'all',l:'All'},{v:'app-pipeline',l:'App Pipeline'},{v:'direct-stream',l:'Direct Stream'},{v:'queue-consumer',l:'Queue Consumer'}]" :key="t.v" @click="pipelineTypeFilter = t.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="pipelineTypeFilter === t.v ? 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+              {{ t.l }}
+            </button>
+          </div>
+        </div>
+        <Card v-for="m in filteredMappings" :key="m.id" class="!py-3" :class="selectedPipelines.has(m.id) ? 'border-primary ring-1 ring-primary/20' : ''"><CardContent class="py-3 space-y-2"><div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-3 min-w-0 flex-1">
             <input type="checkbox" :checked="selectedPipelines.has(m.id)" @change="toggleSelect(m.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
             <div class="min-w-0 flex-1 space-y-1">
               <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="getWarnings(m).length"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>{{ getWarnings(m)[0].message }}</TooltipContent></Tooltip></p>
               <div class="flex items-center gap-1.5 text-muted-foreground">
-                <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span>
+                <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span><span v-if="m.type" class="text-[10px] text-muted-foreground ml-1">·</span><span v-if="m.type" class="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground">{{ m.type.replace('-', ' ') }}</span>
               </div>
             </div>
           </div>

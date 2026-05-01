@@ -549,7 +549,7 @@ onMounted(async () => {
         </div>
         <div class="h-4 w-px bg-border" />
         <div class="flex items-center gap-1.5">
-          <button v-for="f in [{v:'all',l:'All'},{v:'imported',l:'Imported'},{v:'scratch',l:'Scratch'},{v:'incomplete',l:'Incomplete'}]" :key="f.v" @click="wfFilter = f.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="wfFilter === f.v ? f.v === 'incomplete' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/40' : f.v === 'imported' ? 'bg-blue-400/20 text-blue-400 ring-1 ring-blue-400/40' : f.v === 'scratch' ? 'bg-purple-500/20 text-purple-400 ring-1 ring-purple-500/40' : 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+          <button v-for="f in [{v:'all',l:'All'},{v:'imported',l:'Imported'},{v:'scratch',l:'Scratch'},{v:'incomplete',l:'Incomplete'}]" :key="f.v" @click="wfFilter = f.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="wfFilter === f.v ? 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
             {{ f.l }}
           </button>
         </div>
