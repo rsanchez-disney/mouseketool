@@ -16,7 +16,7 @@ import TargetLambdaSelector from "@/components/TargetLambdaSelector.vue";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
-  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone, Search } from "lucide-vue-next";
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone, Search , Sparkles } from "lucide-vue-next";
 
 interface PipelineTypeDef { id: string; name: string; description: string; icon: string; steps: string[]; triggerKind: string; requiresStreamHandler: boolean; requiresFilterPolicy: boolean; supportsHeavyLoad: boolean; heavyLoadLabel?: string; aiLearningSource: string; templateLambda?: string; disabled?: boolean; disabledReason?: string; }
 
@@ -562,7 +562,7 @@ onMounted(loadMappings);
   <div class="space-y-3 overflow-hidden">
     <div class="flex items-center justify-between">
       <div><h1 class="text-2xl font-bold tracking-tight">Triggers</h1><p class="text-muted-foreground">Configure event source triggers for your Lambda functions.</p></div>
-      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
+      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Tooltip><TooltipTrigger as-child><Button variant="outline" class="gap-1.5 opacity-60" disabled><Sparkles class="size-3.5" /> From Diagram</Button></TooltipTrigger><TooltipContent>Coming in a next release</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
       <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
     </div>
     <template v-if="view === 'list'">
