@@ -9,12 +9,24 @@ import {
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
+import CommandPalette from "@/components/CommandPalette.vue";
 import { Home, Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play } from "lucide-vue-next";
 
 const route = useRoute();
 const router = useRouter();
 function navTo(path: string) { if (route.path === path || route.path.startsWith(path + "/")) { router.replace({ path, query: { _t: Date.now().toString() } }); } else { router.push(path); } }
 const dark = ref(localStorage.getItem("mk:theme") === "dark");
+const themeAnimation = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); themeAnimation.value = s.themeAnimation !== false; } catch {} });
+function toggleTheme(e: MouseEvent) {
+  if (!themeAnimation.value || !(document as any).startViewTransition) { dark.value = !dark.value; return; }
+  const x = e.clientX; const y = e.clientY;
+  const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+  const transition = (document as any).startViewTransition(() => { dark.value = !dark.value; });
+  transition.ready.then(() => {
+    document.documentElement.animate({ clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] }, { duration: 400, easing: "ease-in-out", pseudoElement: "::view-transition-new(root)" });
+  });
+}
 
 watchEffect(() => {
   document.documentElement.classList.toggle("dark", dark.value);
@@ -39,6 +51,7 @@ onUnmounted(() => { if (healthInterval) clearInterval(healthInterval); });
 // Kiro AI detection
 const kiroAvailable = ref(false);
 provide("kiroAvailable", kiroAvailable);
+provide("themeAnimation", themeAnimation);
 async function checkKiro() { try { const r = await fetch("/api/ai/status"); const d = await r.json(); kiroAvailable.value = d.available; } catch {} }
 const serverlessNav = [
   { label: "Lambda Builder", path: "/builder", icon: Rocket },
@@ -130,7 +143,7 @@ const allNav = [{ label: "Home", path: "/", icon: Home }, ...serverlessNav, ...b
             <SidebarMenuItem>
               <Tooltip>
                 <TooltipTrigger as-child>
-                  <Button variant="ghost" size="icon" class="size-8 cursor-pointer" @click="dark = !dark">
+                  <Button variant="ghost" size="icon" class="size-8 cursor-pointer" data-theme-toggle @click="toggleTheme($event)">
                     <Sun v-if="dark" class="size-4" />
                     <Moon v-else class="size-4" />
                   </Button>
@@ -205,6 +218,7 @@ const allNav = [{ label: "Home", path: "/", icon: Home }, ...serverlessNav, ...b
       </SidebarInset>
     </SidebarProvider>
   </TooltipProvider>
+  <CommandPalette />
 </template>
 
 <style>

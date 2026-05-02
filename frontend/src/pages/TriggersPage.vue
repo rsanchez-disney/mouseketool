@@ -192,6 +192,8 @@ function getWarnings(p: Pipeline): { message: string }[] {
   return w;
 }
 const mappings = ref<Pipeline[]>([]);
+const pipelineLastStatus = ref<Record<string, string>>({});
+async function loadPipelineStats() { try { const s = await (await fetch("/api/stats")).json(); for (const p of s.pipelineStats || []) { if (p.lastRunStatus) pipelineLastStatus.value[p.id] = p.lastRunStatus; } } catch {} }
 const loadingMappings = ref(false);
 const deploymentInfo = ref<Record<string, { status: string; runtime: string; deployedAt: string }>>({});
 async function loadDeploymentInfo() { try { const deps = await (await fetch("/api/deployments")).json(); for (const d of deps) { deploymentInfo.value[d.functionName] = { status: d.status || "unknown", runtime: d.runtime || "", deployedAt: d.deployedAt || "" }; } } catch {} }
@@ -555,14 +557,14 @@ function selectPipelineType(t: PipelineTypeDef) {
   if (firstKind === "lambda") { loadFunctions(); loadTemplates(); }
 }
 
-onMounted(loadMappings);
+onMounted(() => { loadMappings(); loadPipelineStats(); });
 </script>
 
 <template>
   <div class="space-y-3 overflow-hidden">
     <div class="flex items-center justify-between">
       <div><h1 class="text-2xl font-bold tracking-tight">Triggers</h1><p class="text-muted-foreground">Configure event source triggers for your Lambda functions.</p></div>
-      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Tooltip><TooltipTrigger as-child><Button variant="outline" class="gap-1.5 opacity-60" disabled><Sparkles class="size-3.5" /> From Diagram</Button></TooltipTrigger><TooltipContent>Coming in a next release</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
+      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><span class="inline-flex"><Button variant="ghost" size="sm" class="gap-1 text-xs opacity-50 cursor-not-allowed pointer-events-none"><Sparkles class="size-3" /> From Diagram</Button></span></TooltipTrigger><TooltipContent>Coming in a next release</TooltipContent></Tooltip><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
       <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
     </div>
     <template v-if="view === 'list'">
@@ -600,7 +602,7 @@ onMounted(loadMappings);
           <div class="flex items-center gap-3 min-w-0 flex-1">
             <input type="checkbox" :checked="selectedPipelines.has(m.id)" @change="toggleSelect(m.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
             <div class="min-w-0 flex-1 space-y-1">
-              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="getWarnings(m).length"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>{{ getWarnings(m)[0].message }}</TooltipContent></Tooltip></p>
+              <p class="font-semibold text-sm flex items-center gap-1.5"><span v-if="pipelineLastStatus[m.id]" class="size-2 rounded-full shrink-0" :class="pipelineLastStatus[m.id] === 'success' ? 'bg-green-500' : pipelineLastStatus[m.id] === 'filtered' ? 'bg-amber-500' : 'bg-red-500'" />{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="getWarnings(m).length"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>{{ getWarnings(m)[0].message }}</TooltipContent></Tooltip></p>
               <div class="flex items-center gap-1.5 text-muted-foreground">
                 <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span><span v-if="m.type" class="text-[10px] text-muted-foreground ml-1">·</span><span v-if="m.type" class="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground">{{ m.type.replace('-', ' ') }}</span>
               </div>

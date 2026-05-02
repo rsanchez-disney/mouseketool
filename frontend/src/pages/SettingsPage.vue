@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick, computed } from "vue";
+import { ref, onMounted, watch, nextTick, computed, inject } from "vue";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -29,9 +29,11 @@ const settings = ref({
   ai: { learnedStorage: "local" as "local" | "s3" },
   workflow: { autoBumpHealthchecks: false },
   historyRetention: { mode: "age" as "amount" | "age", maxRuns: 50, maxDays: 2 },
+  themeAnimation: true,
   confetti: { enabled: true, onDeploy: true, onInvoke: true, onPipeline: true, onBatch: true, onWorkflow: true },
   localstackManaged: false,
 });
+const globalThemeAnim = inject<{ value: boolean }>("themeAnimation");
 const saving = ref(false);
 const lsManaged = computed({ get: () => settings.value.localstackManaged, set: (v: boolean) => { settings.value.localstackManaged = v; } });
 const lsStatus = ref<"running" | "exited" | "not_found" | "loading">("loading");
@@ -72,6 +74,7 @@ async function save() {
   await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings.value) });
   saving.value = false;
   saved.value = true; dirty.value = false; initialSettings.value = JSON.stringify(settings.value);
+  if (globalThemeAnim) globalThemeAnim.value = settings.value.themeAnimation;
   setTimeout(() => (saved.value = false), 2000);
 }
 
@@ -393,6 +396,13 @@ async function restoreDefaults() {
         <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onPipeline" class="rounded size-3.5 accent-primary" /> When a pipeline execution completes successfully</label>
         <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onBatch" class="rounded size-3.5 accent-primary" /> When a batch run finishes without errors</label>
         <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onWorkflow" class="rounded size-3.5 accent-primary" /> When a workflow completes with all nodes healthy</label>
+      </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-medium">Theme transition animation</h2>
+          <p class="text-xs text-muted-foreground mt-0.5 max-w-md">Circular reveal animation when switching between dark and light mode.</p>
+        </div>
+        <Toggle v-model="settings.themeAnimation" />
       </div>
     </div>
     <div v-if="toast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg bg-green-600 animate-in fade-in slide-in-from-bottom-3 duration-300">{{ toast }}</div>
