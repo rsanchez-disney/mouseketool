@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") { showBrowser.value = false; } }
 onMounted(() => window.addEventListener("keydown", onKey));
@@ -181,6 +182,7 @@ const deployResult = ref<{ functionName: string; action: string } | null>(null);
 
 const deployMessage = ref("");
 const deploySuccess = ref(false);
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
 
 // Override modal
 const showOverrideModal = ref(false);
@@ -240,6 +242,7 @@ async function deploy(build: Build) {
         }).catch(() => {});
       }
       deploySuccess.value = true;
+      confettiRef.value?.fire();
       deployMessage.value = `Lambda "${data.functionName}" ${data.action} successfully`;
     }
   } catch (e: any) {
@@ -505,5 +508,6 @@ onMounted(() => { loadBuilds(); loadTtl(); });
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <ParticleBurst ref="confettiRef" />
   </div>
 </template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { useRouter } from "vue-router";
 import { Rocket, Layers, GitBranch, Container, Workflow, Activity, ArrowRight, Sparkles, RefreshCw, Gauge, Eye, LayoutGrid } from "lucide-vue-next";
 
@@ -106,9 +106,27 @@ function onMouseMove(e: MouseEvent) {
 
 function onMouseLeave() { mouse.x = -1000; mouse.y = -1000; }
 
+// Count-up animation
+const displayCounts = ref<Record<string, number>>({});
+function animateCountUp(key: string, target: number) {
+  if (!target) { displayCounts.value[key] = 0; return; }
+  const duration = 800;
+  const start = performance.now();
+  function tick() {
+    const elapsed = performance.now() - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    displayCounts.value[key] = Math.round(eased * target);
+    if (progress < 1) requestAnimationFrame(tick);
+  }
+  tick();
+}
+
 onMounted(async () => {
   try { stats.value = await (await fetch("/api/stats")).json(); } catch {}
+  nextTick(() => { quickStats.value.forEach(s => animateCountUp(s.label, s.value)); });
   setTimeout(() => { loaded.value = true; }, 100);
+
   setInterval(() => { now.value = Date.now(); }, 1000);
   setTimeout(typeStep, 800);
   setTimeout(() => { initParticles(); animateParticles(); }, 200);
@@ -229,7 +247,7 @@ function statusDot(status: string): string {
           <div :class="['flex items-center justify-center size-8 rounded-lg transition-transform group-hover:scale-110', s.bg]">
             <component :is="s.icon" :class="['size-4', s.color]" />
           </div>
-          <span class="text-xl font-bold tabular-nums">{{ s.value }}</span>
+          <span class="text-xl font-bold tabular-nums">{{ displayCounts[s.label] ?? s.value }}</span>
           <span class="text-[9px] text-muted-foreground uppercase tracking-wider">{{ s.label }}</span>
         </button>
       </div>

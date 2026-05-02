@@ -377,6 +377,6 @@ async function restoreDefaults() {
         </button>
       </div>
     </div>
-    <div v-if="toast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg bg-green-600 animate-in fade-in slide-in-from-bottom-2">{{ toast }}</div>
+    <div v-if="toast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg bg-green-600 animate-in fade-in slide-in-from-bottom-3 duration-300">{{ toast }}</div>
   </div>
 </template>

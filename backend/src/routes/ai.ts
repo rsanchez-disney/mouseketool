@@ -342,15 +342,16 @@ router.post("/compose", async (req, res) => {
       "Rules:",
       action === 'explain'
         ? "- Provide a clear explanation only. No YAML output needed."
-        : `- Output the YAML inside a ${fence}yaml code fence, followed by a brief explanation.`,
+        : `- Output ONLY the YAML inside a ${fence}yaml code fence, followed by a one-sentence explanation. Do NOT include reasoning, analysis, or commentary before the YAML fence.`,
       `- The container_name can be the same as the service name (the YAML section key). No special suffix needed.`,
-      "- For batch/application services from registered projects: use \`build:\\n  context: <absolute project path>\\n  dockerfile: Dockerfile\` (NOT image:). The project path is provided in the context below.",
+      "- For batch/application services from registered projects: use `build: .` with no context or dockerfile keys.",
       "- For infrastructure services (mysql, redis, localstack, etc.): use \`image:\` with the standard Docker Hub image.",
       "- Use the actual env vars, volumes, and ports from the registered projects when applicable.",
       "- Include healthchecks for infrastructure services (mysql, redis, postgres, etc.).",
       "- Use depends_on with condition: service_healthy where a healthcheck exists.",
       "- Include a shared network named `cs-batch-network`.",
       "- Use version-less compose format (no `version:` key).",
+      "- Do NOT output any thinking, reasoning, or analysis. Only YAML in a code fence and a brief explanation after it.",
       "",
       projectSummary ? `--- Registered projects and services ---\n${projectSummary}` : "",
       currentYaml ? `--- Current YAML (modify this) ---\n${currentYaml}` : "",

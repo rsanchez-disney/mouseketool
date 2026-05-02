@@ -26,6 +26,7 @@ import {
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
+import SkeletonCard from "@/components/SkeletonCard.vue";
 import EvaluateModal from "@/components/EvaluateModal.vue";
 import LogViewer from '@/components/LogViewer.vue';
 
@@ -421,9 +422,8 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
     <Button v-if="!loading && deployments.length" variant="outline" size="sm" class="gap-2 cursor-pointer" @click="loadDeployments"><RefreshCw class="size-3.5" /> Refresh</Button>
     </div>
 
-    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
-      <Loader2 class="size-8 animate-spin" />
-      <p class="text-sm">Checking deployment status...</p>
+    <div v-if="loading" class="space-y-3">
+      <SkeletonCard v-for="n in 3" :key="n" />
     </div>
 
     <div v-else-if="!deployments.length" class="text-center py-16 text-muted-foreground">

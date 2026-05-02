@@ -623,7 +623,7 @@ onMounted(async () => {
           <TooltipTrigger as-child>
             <button class="rounded-lg border p-4 text-left transition-colors" :class="!kiroAvailable ? 'opacity-50 cursor-not-allowed' : wizardSource === 'scratch' ? 'border-primary bg-primary/5 cursor-pointer' : 'cursor-pointer hover:bg-muted/50'" :disabled="!kiroAvailable" @click="kiroAvailable && (wizardSource = 'scratch')">
               <FileCode2 class="size-5 mb-2 text-primary" />
-              <p class="text-sm font-medium">Start from scratch</p>
+              <p class="text-sm font-medium">Start from scratch <Tooltip><TooltipTrigger as-child><span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-violet-500/15 text-violet-400 border border-violet-500/30 cursor-help">Beta</span></TooltipTrigger><TooltipContent>This feature uses AI and may produce inaccurate results</TooltipContent></Tooltip></p>
               <p class="text-xs text-muted-foreground mt-1">Use Compose Studio with AI to build your compose file.</p>
             </button>
           </TooltipTrigger>
@@ -841,7 +841,7 @@ onMounted(async () => {
     </Dialog>
 
     <!-- Toast -->
-    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
+    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
       {{ toastMsg }}
     </div>
   </div>

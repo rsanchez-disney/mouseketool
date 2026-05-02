@@ -491,7 +491,7 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
     </Dialog>
 
     <!-- Toast -->
-    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
+    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
       <AlertTriangle v-if="toastType === 'warning'" class="size-4" />{{ toastMsg }}
     </div>
   </div>

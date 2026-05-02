@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick, computed } from "vue";
+import SkeletonCard from "@/components/SkeletonCard.vue";
 import { useRouter } from "vue-router";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -192,6 +193,8 @@ function getWarnings(p: Pipeline): { message: string }[] {
 }
 const mappings = ref<Pipeline[]>([]);
 const loadingMappings = ref(false);
+const deploymentInfo = ref<Record<string, { status: string; runtime: string; deployedAt: string }>>({});
+async function loadDeploymentInfo() { try { const deps = await (await fetch("/api/deployments")).json(); for (const d of deps) { deploymentInfo.value[d.functionName] = { status: d.status || "unknown", runtime: d.runtime || "", deployedAt: d.deployedAt || "" }; } } catch {} }
 
 // Resources already used by existing pipelines
 const usedTables = computed(() => new Set(mappings.value.map(m => m.tableName)));
@@ -563,7 +566,7 @@ onMounted(loadMappings);
       <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
     </div>
     <template v-if="view === 'list'">
-      <div v-if="loadingMappings" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading pipelines...</p></div>
+      <div v-if="loadingMappings" class="space-y-3"><SkeletonCard v-for="n in 3" :key="n" /></div>
       <div v-else-if="!mappings.length" class="text-center py-16 text-muted-foreground"><Cable class="size-12 mx-auto mb-4 opacity-30" /><p>No active pipelines.</p><p class="text-xs mt-1">Click "New Pipeline" to set up a trigger chain.</p></div>
       <div v-else class="space-y-2">
         <div class="flex items-center gap-2 mb-3">
@@ -599,7 +602,7 @@ onMounted(loadMappings);
             <div class="min-w-0 flex-1 space-y-1">
               <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="getWarnings(m).length"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>{{ getWarnings(m)[0].message }}</TooltipContent></Tooltip></p>
               <div class="flex items-center gap-1.5 text-muted-foreground">
-                <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span><span v-if="m.type" class="text-[10px] text-muted-foreground ml-1">·</span><span v-if="m.type" class="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground">{{ m.type.replace('-', ' ') }}</span>
+                <Zap class="size-3.5 shrink-0" /><span class="relative group/lambda"><span class="font-mono text-xs cursor-default">{{ m.targetFunctionName }}</span><span class="absolute bottom-full left-0 mb-2 hidden group-hover/lambda:flex flex-col gap-1 bg-popover border rounded-lg shadow-lg px-3 py-2 z-50 w-48 animate-in fade-in zoom-in-95 duration-150"><span class="text-[10px] font-medium text-foreground">{{ m.targetFunctionName }}</span><span v-if="deploymentInfo[m.targetFunctionName]" class="flex items-center gap-2 text-[10px] text-muted-foreground"><span class="size-1.5 rounded-full" :class="deploymentInfo[m.targetFunctionName].status === 'active' ? 'bg-green-500' : 'bg-zinc-500'" /><span>{{ deploymentInfo[m.targetFunctionName].status }}</span><span v-if="deploymentInfo[m.targetFunctionName].runtime">· {{ deploymentInfo[m.targetFunctionName].runtime }}</span></span><span v-else class="text-[10px] text-muted-foreground/60">Not deployed</span></span></span><span v-if="m.type" class="text-[10px] text-muted-foreground ml-1">·</span><span v-if="m.type" class="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground">{{ m.type.replace('-', ' ') }}</span>
               </div>
             </div>
           </div>
@@ -1103,7 +1106,7 @@ onMounted(loadMappings);
     </SheetContent>
     </Sheet>
     <!-- Toast -->
-    <div v-if="toastMessage" :key="toastMessage" :class="toastError ? 'bg-destructive' : 'bg-green-600'" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+    <div v-if="toastMessage" :key="toastMessage" :class="toastError ? 'bg-destructive' : 'bg-green-600'" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300">
       <AlertTriangle v-if="toastError" class="size-4" /><Check v-else class="size-4" />{{ toastMessage }}
     </div>
   </div>

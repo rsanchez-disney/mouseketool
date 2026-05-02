@@ -212,7 +212,7 @@ function handleExport(p: BatchProject) {
       </DialogContent>
     </Dialog>
 
-    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in" :class="toastType === 'error' ? 'bg-red-600' : toastType === 'success' ? 'bg-green-600' : 'bg-primary'">
+    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'error' ? 'bg-red-600' : toastType === 'success' ? 'bg-green-600' : 'bg-primary'">
       <Loader2 v-if="toastType === 'loading'" class="size-4 animate-spin" />
       <Check v-else-if="toastType === 'success'" class="size-4" />
       <XCircle v-else class="size-4" />
