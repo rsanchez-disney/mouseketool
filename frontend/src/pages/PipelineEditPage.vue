@@ -54,6 +54,9 @@ const vaultToken = ref("");
 
 // Env var panel state (inline, not modal)
 const envVars = ref<{ key: string; value: string; isNull?: boolean }[]>([]);
+const lsManaged = ref(false);
+const hasLocalhostEnv = computed(() => lsManaged.value && envVars.value.some((e: any) => e.value?.includes("http://localhost")));
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); lsManaged.value = !!s.localstackManaged; } catch {} });
 const savingEnv = ref(false);
 const envLoaded = ref(false);
 const origEnvVars = ref("");
@@ -733,6 +736,7 @@ async function save() {
               </div>
             </div>
             <CardDescription class="text-xs mt-2">These are applied directly to the target Lambda's configuration — they are NOT pipeline-specific. If other pipelines share the same target Lambda, changes here will affect them too.</CardDescription>
+            <div v-if="hasLocalhostEnv" class="flex items-start gap-2 text-[11px] text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-1.5 mt-3"><AlertTriangle class="size-3 shrink-0" /> <span>Mouseketool's managed LocalStack runs on its own Docker network, so <code class="font-mono bg-amber-500/10 px-1 rounded text-[10px]">localhost</code> won't resolve to your host machine. Use <code class="font-mono bg-amber-500/10 px-1 rounded text-[10px]">host.docker.internal</code> instead.</span></div>
           </CardHeader>
           <CardContent class="space-y-2">
             <div v-for="(e, i) in envVars" :key="i" class="flex items-center gap-2">

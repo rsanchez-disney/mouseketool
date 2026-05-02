@@ -6,9 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import Toggle from "@/components/ui/Toggle.vue";
-import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container } from "lucide-vue-next";
+import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container, Palette } from "lucide-vue-next";
 
-const tab = ref<"connection" | "lambda" | "builds" | "pipelines" | "ai" | "workflows">("connection");
+const tab = ref<"connection" | "lambda" | "builds" | "pipelines" | "ai" | "workflows" | "ui">("connection");
 const tabs = [
   { id: "connection" as const, label: "Connection", icon: Server },
   { id: "lambda" as const, label: "Lambda", icon: Cpu },
@@ -16,6 +16,7 @@ const tabs = [
   { id: "pipelines" as const, label: "Pipelines", icon: Clock },
   { id: "ai" as const, label: "AI", icon: Sparkles },
   { id: "workflows" as const, label: "Workflows", icon: Container },
+  { id: "ui" as const, label: "UI", icon: Palette },
 ];
 
 const settings = ref({
@@ -28,6 +29,7 @@ const settings = ref({
   ai: { learnedStorage: "local" as "local" | "s3" },
   workflow: { autoBumpHealthchecks: false },
   historyRetention: { mode: "age" as "amount" | "age", maxRuns: 50, maxDays: 2 },
+  confetti: { enabled: true, onDeploy: true, onInvoke: true, onPipeline: true, onBatch: true, onWorkflow: true },
   localstackManaged: false,
 });
 const saving = ref(false);
@@ -45,7 +47,7 @@ const initialSettings = ref("");
 
 onMounted(async () => {
   const data = await (await fetch("/api/settings")).json();
-  const merged = { ...settings.value, ...data, localstack: { ...settings.value.localstack, ...data.localstack }, pipeline: { ...settings.value.pipeline, ...data.pipeline }, cleanup: { ...settings.value.cleanup, ...data.cleanup }, heavyLoad: { ...settings.value.heavyLoad, ...data.heavyLoad }, ai: { ...settings.value.ai, ...data.ai }, workflow: { ...settings.value.workflow, ...data.workflow }, historyRetention: { ...settings.value.historyRetention, ...data.historyRetention } };
+  const merged = { ...settings.value, ...data, localstack: { ...settings.value.localstack, ...data.localstack }, pipeline: { ...settings.value.pipeline, ...data.pipeline }, cleanup: { ...settings.value.cleanup, ...data.cleanup }, heavyLoad: { ...settings.value.heavyLoad, ...data.heavyLoad }, ai: { ...settings.value.ai, ...data.ai }, confetti: { ...settings.value.confetti, ...data.confetti }, workflow: { ...settings.value.workflow, ...data.workflow }, historyRetention: { ...settings.value.historyRetention, ...data.historyRetention } };
   initialSettings.value = JSON.stringify(merged);
   checkDocker(); checkLsStatus();
   settings.value = merged;
@@ -135,7 +137,7 @@ async function restoreDefaults() {
             <h2 class="text-sm font-medium flex items-center gap-2">Managed LocalStack Instance</h2>
             <p class="text-[11px] text-muted-foreground mt-0.5">Let Mouseketool manage a LocalStack container for you via Docker.</p>
           </div>
-          <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="lsManaged" @update:model-value="toggleManaged" :disabled="!dockerAvailable || portInUse || lsStatus === 'running'" /></span></TooltipTrigger><TooltipContent>{{ lsStatus === "running" ? "Stop the container before disabling" : !dockerAvailable ? "Docker not detected" : portInUse ? "Port 4566 in use" : "Enable managed LocalStack" }}</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="lsManaged" @update:model-value="toggleManaged" :disabled="!dockerAvailable || portInUse || lsStatus === 'running' || lsStarting" /></span></TooltipTrigger><TooltipContent>{{ lsStarting ? "Can't disable while the container is starting" : lsStatus === "running" ? "Stop the container before disabling" : !dockerAvailable ? "Docker not detected" : portInUse ? "Port 4566 in use" : "Enable managed LocalStack" }}</TooltipContent></Tooltip>
         </div>
 
         <div v-if="!dockerAvailable" class="text-[11px] text-amber-500 flex items-center gap-1.5 mb-3"><AlertTriangle class="size-3" /> Docker not detected on this system. Install Docker to enable this feature.</div>
@@ -375,6 +377,22 @@ async function restoreDefaults() {
         <button class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer shrink-0" :class="settings.workflow.autoBumpHealthchecks ? 'bg-primary' : 'bg-muted'" @click="settings.workflow.autoBumpHealthchecks = !settings.workflow.autoBumpHealthchecks">
           <span class="inline-block size-3.5 transform rounded-full bg-white transition-transform" :class="settings.workflow.autoBumpHealthchecks ? 'translate-x-4.5' : 'translate-x-0.5'" />
         </button>
+      </div>
+    </div>
+    <div v-show="tab === 'ui'" class="space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-sm font-medium">Confetti celebrations</h2>
+          <p class="text-xs text-muted-foreground mt-0.5 max-w-md">Show a confetti burst when actions complete successfully.</p>
+        </div>
+        <Toggle v-model="settings.confetti.enabled" />
+      </div>
+      <div class="space-y-2.5 pl-1" :class="!settings.confetti.enabled && 'opacity-40 pointer-events-none'">
+        <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onDeploy" class="rounded size-3.5 accent-primary" /> When a Lambda is deployed to LocalStack</label>
+        <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onInvoke" class="rounded size-3.5 accent-primary" /> When a Lambda invocation succeeds</label>
+        <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onPipeline" class="rounded size-3.5 accent-primary" /> When a pipeline execution completes successfully</label>
+        <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onBatch" class="rounded size-3.5 accent-primary" /> When a batch run finishes without errors</label>
+        <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onWorkflow" class="rounded size-3.5 accent-primary" /> When a workflow completes with all nodes healthy</label>
       </div>
     </div>
     <div v-if="toast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg bg-green-600 animate-in fade-in slide-in-from-bottom-3 duration-300">{{ toast }}</div>

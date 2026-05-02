@@ -62,6 +62,8 @@ function initSteps(p: Pipeline): Step[] {
 
 const allDone = computed(() => steps.value.every(s => s.status !== "pending" && s.status !== "running"));
 const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onPipeline; } catch {} });
 const copiedStep = ref("");
 const expandedLogStep = ref("");
 const expandedLogContent = ref<string[]>([]);
@@ -217,7 +219,7 @@ async function execute() {
             s.collapsed = true;
             // If all steps are done, reset executing immediately (don't wait for stream close)
             if (steps.value.every(st => st.status !== "pending" && st.status !== "running")) executing.value = false;
-            if (steps.value[steps.value.length - 1]?.status === "success") confettiRef.value?.fire();
+            if (steps.value[steps.value.length - 1]?.status === "success") if (confettiEnabled.value) confettiRef.value?.fire();
           }
         }
       } catch {}

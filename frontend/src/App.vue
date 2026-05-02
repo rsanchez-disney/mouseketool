@@ -154,7 +154,7 @@ const allNav = [{ label: "Home", path: "/", icon: Home }, ...serverlessNav, ...b
               <TooltipTrigger as-child>
                 <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/15 to-purple-500/15 border border-violet-500/40 shadow-[0_0_8px_rgba(139,92,246,0.15)]">
                   <div class="relative"><div class="size-2 rounded-full bg-violet-400"></div><div class="absolute inset-0 size-2 rounded-full bg-violet-400 animate-ping opacity-50"></div></div>
-                  <span class="text-[11px] font-semibold bg-gradient-to-r from-violet-300 to-purple-300 bg-clip-text text-transparent">Kiro AI</span>
+                  <span class="text-[11px] font-semibold bg-gradient-to-r from-violet-600 to-purple-600 dark:from-violet-300 dark:to-purple-300 bg-clip-text text-transparent">Kiro AI</span>
                 </div>
               </TooltipTrigger>
               <TooltipContent>Kiro AI detected and ready</TooltipContent>

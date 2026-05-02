@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick, inject } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 import { useRoute, useRouter } from "vue-router";
 import LogViewer from "@/components/LogViewer.vue";
 import { Card, CardContent } from "@/components/ui/card";
@@ -132,6 +133,9 @@ async function savePreset(presetId: string) {
 
 // Run
 const simpleRunning = ref(false);
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onBatch; } catch {} });
 const simpleLogs = ref<{ line: string }[]>([]);
 const simpleResult = ref<any>(null);
 const simpleError = ref("");

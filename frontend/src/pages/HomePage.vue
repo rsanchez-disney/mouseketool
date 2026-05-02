@@ -124,7 +124,7 @@ function animateCountUp(key: string, target: number) {
 
 onMounted(async () => {
   try { stats.value = await (await fetch("/api/stats")).json(); } catch {}
-  nextTick(() => { quickStats.value.forEach(s => animateCountUp(s.label, s.value)); });
+  setTimeout(() => { quickStats.value.forEach(s => { displayCounts.value[s.label] = 0; }); nextTick(() => { quickStats.value.forEach(s => animateCountUp(s.label, s.value)); }); }, 600);
   setTimeout(() => { loaded.value = true; }, 100);
 
   setInterval(() => { now.value = Date.now(); }, 1000);

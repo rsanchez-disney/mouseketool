@@ -183,6 +183,8 @@ const deployResult = ref<{ functionName: string; action: string } | null>(null);
 const deployMessage = ref("");
 const deploySuccess = ref(false);
 const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onDeploy; } catch {} });
 
 // Override modal
 const showOverrideModal = ref(false);
@@ -242,7 +244,7 @@ async function deploy(build: Build) {
         }).catch(() => {});
       }
       deploySuccess.value = true;
-      confettiRef.value?.fire();
+      if (confettiEnabled.value) confettiRef.value?.fire();
       deployMessage.value = `Lambda "${data.functionName}" ${data.action} successfully`;
     }
   } catch (e: any) {

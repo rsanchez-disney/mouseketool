@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick, provide, inject } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 import { VueFlow, useVueFlow, MarkerType } from "@vue-flow/core";
 import BatchJobNode from "@/components/BatchJobNode.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
@@ -26,6 +27,9 @@ import { Plus, Trash2, Variable, Save, Container, Server, Loader2, Info, Chevron
 // Toast
 const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 const toastMsg = ref("");
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onWorkflow; } catch {} });
 const toastType = ref<"warning" | "success">("warning");
 const route = useRoute();
 function showToast(msg: string, type: "warning" | "success" = "warning") { toastMsg.value = msg; toastType.value = type; setTimeout(() => toastMsg.value = "", 3000); }
@@ -450,7 +454,7 @@ async function runWorkflow() {
             }
           }
           else if (event === "remaps") portRemaps.value = data;
-          else if (event === "complete") showToast("Workflow completed", "success");
+          else if (event === "complete") { showToast("Workflow completed", "success"); if (confettiEnabled.value && flowNodes.value.every(n => n.data?.status === "exited" || n.data?.status === "healthy")) confettiRef.value?.fire(); }
           else if (event === "error") showToast(data.message || "Workflow failed", "warning");
         }
       }

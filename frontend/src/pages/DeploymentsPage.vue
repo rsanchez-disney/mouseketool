@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, inject } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 import { Card, CardContent } from "@/components/ui/card";
 
 
@@ -22,8 +23,7 @@ import Toggle from "@/components/ui/Toggle.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import {
   Rocket, Play, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, ArrowLeft, ArrowRight,
-  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Upload, Square, RefreshCw, Search, ChevronDown, Sparkles, FolderOpen, FileJson, MessageSquare,
-} from "lucide-vue-next";
+  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Upload, Square, RefreshCw, Search, ChevronDown, Sparkles, FolderOpen, FileJson, MessageSquare, AlertTriangle } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
 import SkeletonCard from "@/components/SkeletonCard.vue";
@@ -65,6 +65,10 @@ const availableRuntimes = computed(() => {
   return [...runtimes].sort();
 });
 const loading = ref(true);
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+const lsManaged = ref(false);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onInvoke; lsManaged.value = !!s.localstackManaged; } catch {} });
 const selected = ref<Deployment | null>(null);
 const step = ref<"list" | "addons" | "invoke">("list");
 
@@ -81,6 +85,7 @@ function uploadJson(e: Event) {
   (e.target as HTMLInputElement).value = "";
 }
 const deployEnvVars = ref<{ key: string; value: string }[]>([]);
+const hasLocalhostEnv = computed(() => lsManaged.value && deployEnvVars.value.some(e => e.value?.includes("http://localhost")));
 function prettifyPayload() { try { payload.value = JSON.stringify(JSON.parse(payload.value), null, 2); } catch {} }
 const savingEnvVars = ref(false);
 const envVarsCollapsed = ref(localStorage.getItem("mk:envCollapsed") !== "false");
@@ -371,6 +376,7 @@ async function invoke(debug = false) {
         data.logs = [...(data.logs || []), ...warnings];
       }
       result.value = data;
+      if (!data.functionError) if (confettiEnabled.value) confettiRef.value?.fire();
       // Cache result on the deployment for re-invoke
       if (selected.value) {
         const dep = deployments.value.find(d => d.functionName === selected.value!.functionName);
@@ -623,6 +629,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                 <template v-if="!envVarsCollapsed">
                   <div v-if="!deployEnvVars.length" class="text-xs text-muted-foreground py-2 text-center border border-dashed rounded-md">No env vars. Click "Add" or they'll be loaded from the SAM template on first deploy.</div>
                   <div v-else class="max-h-40 overflow-auto space-y-1.5 scrollbar-thin">
+                  <div v-if="hasLocalhostEnv" class="flex items-start gap-2 text-[11px] text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-1.5 mb-1"><AlertTriangle class="size-3 shrink-0" /> <span>Mouseketool's managed LocalStack runs on its own Docker network, so <code class="font-mono bg-amber-500/10 px-1 rounded text-[10px]">localhost</code> won't resolve to your host machine. Use <code class="font-mono bg-amber-500/10 px-1 rounded text-[10px]">host.docker.internal</code> instead.</span></div>
                     <div v-for="(env, i) in deployEnvVars" :key="i" class="flex items-center gap-2">
                       <Input v-model="env.key" placeholder="KEY" class="font-mono text-xs h-7 flex-[2]" />
                       <Input v-model="env.value" placeholder="value" class="font-mono text-xs h-7 flex-[3]" :disabled="env.isNull" :class="env.isNull ? 'opacity-40' : ''" />
@@ -845,5 +852,6 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
     Deleting deployment...
   </div>
   
+    <ParticleBurst ref="confettiRef" />
   </div>
 </template>
