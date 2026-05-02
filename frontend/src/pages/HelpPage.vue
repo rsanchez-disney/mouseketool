@@ -194,6 +194,8 @@ watch(searchQuery, (q) => {
                 <p>Choose where Kiro stores learned data — locally in <code class="text-xs bg-muted px-1 rounded">.data/learned/</code> or in LocalStack S3.</p>
                 <p class="font-medium text-foreground">Workflows</p>
                 <p>Toggle auto-bump healthchecks for imported docker-compose files.</p>
+                <p class="font-medium text-foreground">UI</p>
+                <p>Toggle confetti celebrations on success events (deploy, invoke, pipeline, batch, workflow) with granular per-action control.</p>
                 <p class="font-medium text-foreground">Unsaved Changes & Restore</p>
                 <p>An amber indicator appears when you have unsaved modifications. A <strong>Restore Defaults</strong> button resets all settings to their original values.</p>
               </div>
