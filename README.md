@@ -92,7 +92,7 @@ Mouseketool is organized into several pages, each focused on a specific part of 
 ### Home
 The default landing page. Shows quick stats (deployed Lambdas, cached builds, pipelines, batch projects,
 workflows), pipeline activity with status count badges, a recent invocation feed, quick action shortcuts,
-and feature highlights. Click any stat card to navigate directly to that section.
+and feature highlights. A weighted hint panel shows tips and shortcuts on each visit. Click any stat card to navigate directly to that section.
 
 ### [Builder](docs/builder.md)
 Build Java Lambda projects with a live streaming console. Supports Maven and Gradle with auto-detection. Manage
@@ -163,6 +163,7 @@ In-app documentation covering every feature with detailed explanations, code exa
 | Shortcut | Action | Where |
 |---|---|---|
 | `Ctrl+Enter` | Invoke the selected Lambda | Deployments page |
+| `Ctrl+.` | Open command palette | All pages |
 | `Escape` | Close expanded log modal | All pages |
 
 ## Tech Stack
