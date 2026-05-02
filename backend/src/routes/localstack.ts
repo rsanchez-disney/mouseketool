@@ -70,9 +70,7 @@ router.post("/start", async (_req, res) => {
       const state = await run(`docker inspect --format="{{.State.Status}}" ${CONTAINER_NAME}`);
       if (state === "running") { res.json({ ok: true, message: "Already running" }); return; }
       if (state === "exited" || state === "created") {
-        await run(`docker start ${CONTAINER_NAME}`);
-        res.json({ ok: true, message: "Started existing container" });
-        return;
+        await run(`docker rm ${CONTAINER_NAME}`);
       }
     } catch { /* container doesn't exist, create it */ }
 
@@ -99,6 +97,7 @@ router.post("/start", async (_req, res) => {
       `-e LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=240`,
       `-e MAIN_CONTAINER_NAME=${CONTAINER_NAME}`,
       `-e LAMBDA_DOCKER_NETWORK=${NETWORK_NAME}`,
+      `-e "LAMBDA_DOCKER_FLAGS=--add-host=host.docker.internal:host-gateway"`,
       IMAGE,
     ].join(" ");
 

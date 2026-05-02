@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick, computed } from "vue";
+import SkeletonCard from "@/components/SkeletonCard.vue";
 import { useRouter } from "vue-router";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,7 @@ import TargetLambdaSelector from "@/components/TargetLambdaSelector.vue";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
-  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone, Search } from "lucide-vue-next";
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone, Search , Sparkles } from "lucide-vue-next";
 
 interface PipelineTypeDef { id: string; name: string; description: string; icon: string; steps: string[]; triggerKind: string; requiresStreamHandler: boolean; requiresFilterPolicy: boolean; supportsHeavyLoad: boolean; heavyLoadLabel?: string; aiLearningSource: string; templateLambda?: string; disabled?: boolean; disabledReason?: string; }
 
@@ -191,7 +192,11 @@ function getWarnings(p: Pipeline): { message: string }[] {
   return w;
 }
 const mappings = ref<Pipeline[]>([]);
+const pipelineLastStatus = ref<Record<string, string>>({});
+async function loadPipelineStats() { try { const s = await (await fetch("/api/stats")).json(); for (const p of s.pipelineStats || []) { if (p.lastRunStatus) pipelineLastStatus.value[p.id] = p.lastRunStatus; } } catch {} }
 const loadingMappings = ref(false);
+const deploymentInfo = ref<Record<string, { status: string; runtime: string; deployedAt: string }>>({});
+async function loadDeploymentInfo() { try { const deps = await (await fetch("/api/deployments")).json(); for (const d of deps) { deploymentInfo.value[d.functionName] = { status: d.status || "unknown", runtime: d.runtime || "", deployedAt: d.deployedAt || "" }; } } catch {} }
 
 // Resources already used by existing pipelines
 const usedTables = computed(() => new Set(mappings.value.map(m => m.tableName)));
@@ -552,18 +557,18 @@ function selectPipelineType(t: PipelineTypeDef) {
   if (firstKind === "lambda") { loadFunctions(); loadTemplates(); }
 }
 
-onMounted(loadMappings);
+onMounted(() => { loadMappings(); loadPipelineStats(); });
 </script>
 
 <template>
   <div class="space-y-3 overflow-hidden">
     <div class="flex items-center justify-between">
       <div><h1 class="text-2xl font-bold tracking-tight">Triggers</h1><p class="text-muted-foreground">Configure event source triggers for your Lambda functions.</p></div>
-      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
+      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><span class="inline-flex"><Button variant="ghost" size="sm" class="gap-1 text-xs opacity-50 cursor-not-allowed pointer-events-none"><Sparkles class="size-3" /> From Diagram</Button></span></TooltipTrigger><TooltipContent>Coming in a next release</TooltipContent></Tooltip><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
       <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
     </div>
     <template v-if="view === 'list'">
-      <div v-if="loadingMappings" class="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3"><Loader2 class="size-8 animate-spin" /><p class="text-sm">Loading pipelines...</p></div>
+      <div v-if="loadingMappings" class="space-y-3"><SkeletonCard v-for="n in 3" :key="n" /></div>
       <div v-else-if="!mappings.length" class="text-center py-16 text-muted-foreground"><Cable class="size-12 mx-auto mb-4 opacity-30" /><p>No active pipelines.</p><p class="text-xs mt-1">Click "New Pipeline" to set up a trigger chain.</p></div>
       <div v-else class="space-y-2">
         <div class="flex items-center gap-2 mb-3">
@@ -1103,7 +1108,7 @@ onMounted(loadMappings);
     </SheetContent>
     </Sheet>
     <!-- Toast -->
-    <div v-if="toastMessage" :key="toastMessage" :class="toastError ? 'bg-destructive' : 'bg-green-600'" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+    <div v-if="toastMessage" :key="toastMessage" :class="toastError ? 'bg-destructive' : 'bg-green-600'" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300">
       <AlertTriangle v-if="toastError" class="size-4" /><Check v-else class="size-4" />{{ toastMessage }}
     </div>
   </div>

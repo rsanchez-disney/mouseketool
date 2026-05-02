@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick, provide, inject } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 import { VueFlow, useVueFlow, MarkerType } from "@vue-flow/core";
 import BatchJobNode from "@/components/BatchJobNode.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
@@ -26,6 +27,9 @@ import { Plus, Trash2, Variable, Save, Container, Server, Loader2, Info, Chevron
 // Toast
 const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
 const toastMsg = ref("");
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onWorkflow; } catch {} });
 const toastType = ref<"warning" | "success">("warning");
 const route = useRoute();
 function showToast(msg: string, type: "warning" | "success" = "warning") { toastMsg.value = msg; toastType.value = type; setTimeout(() => toastMsg.value = "", 3000); }
@@ -450,7 +454,7 @@ async function runWorkflow() {
             }
           }
           else if (event === "remaps") portRemaps.value = data;
-          else if (event === "complete") showToast("Workflow completed", "success");
+          else if (event === "complete") { showToast("Workflow completed", "success"); if (confettiEnabled.value && flowNodes.value.every(n => n.data?.status === "exited" || n.data?.status === "healthy")) confettiRef.value?.fire(); }
           else if (event === "error") showToast(data.message || "Workflow failed", "warning");
         }
       }
@@ -623,7 +627,7 @@ onMounted(async () => {
           <TooltipTrigger as-child>
             <button class="rounded-lg border p-4 text-left transition-colors" :class="!kiroAvailable ? 'opacity-50 cursor-not-allowed' : wizardSource === 'scratch' ? 'border-primary bg-primary/5 cursor-pointer' : 'cursor-pointer hover:bg-muted/50'" :disabled="!kiroAvailable" @click="kiroAvailable && (wizardSource = 'scratch')">
               <FileCode2 class="size-5 mb-2 text-primary" />
-              <p class="text-sm font-medium">Start from scratch</p>
+              <p class="text-sm font-medium">Start from scratch <Tooltip><TooltipTrigger as-child><span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-violet-500/15 text-violet-400 border border-violet-500/30 cursor-help">Beta</span></TooltipTrigger><TooltipContent>This feature uses AI and may produce inaccurate results</TooltipContent></Tooltip></p>
               <p class="text-xs text-muted-foreground mt-1">Use Compose Studio with AI to build your compose file.</p>
             </button>
           </TooltipTrigger>
@@ -841,7 +845,7 @@ onMounted(async () => {
     </Dialog>
 
     <!-- Toast -->
-    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
+    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
       {{ toastMsg }}
     </div>
   </div>

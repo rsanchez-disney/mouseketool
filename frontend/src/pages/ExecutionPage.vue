@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, inject } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 import { useRoute, useRouter } from "vue-router";
 
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") expandedLogStep.value = ""; }
@@ -60,6 +61,9 @@ function initSteps(p: Pipeline): Step[] {
 }
 
 const allDone = computed(() => steps.value.every(s => s.status !== "pending" && s.status !== "running"));
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onPipeline; } catch {} });
 const copiedStep = ref("");
 const expandedLogStep = ref("");
 const expandedLogContent = ref<string[]>([]);
@@ -215,6 +219,7 @@ async function execute() {
             s.collapsed = true;
             // If all steps are done, reset executing immediately (don't wait for stream close)
             if (steps.value.every(st => st.status !== "pending" && st.status !== "running")) executing.value = false;
+            if (steps.value[steps.value.length - 1]?.status === "success") if (confettiEnabled.value) confettiRef.value?.fire();
           }
         }
       } catch {}
@@ -358,8 +363,9 @@ onMounted(loadPipeline);
     />
 
     <!-- Toast -->
-    <div v-if="toastMessage" :key="toastMessage" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+    <div v-if="toastMessage" :key="toastMessage" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300">
       <Check class="size-4" />{{ toastMessage }}
     </div>
+    <ParticleBurst ref="confettiRef" />
   </div>
 </template>

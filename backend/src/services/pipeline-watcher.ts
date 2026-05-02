@@ -78,7 +78,7 @@ async function getCWClient() {
   });
 }
 
-function latestFile(files: string[]): string { return files.sort((a, b) => parseInt(a.match(/-(\d+)\.json/)?.[1] || "0") - parseInt(b.match(/-(\d+)\.json/)?.[1] || "0")).pop() || files[0]; }
+function latestFile(files: string[]): string { return [...files].sort((a, b) => parseInt(a.match(/-(\d+)\.json/)?.[1] || "0") - parseInt(b.match(/-(\d+)\.json/)?.[1] || "0")).at(-1) || files[0]; }
 
 // --- PipelineWatcher ---
 
@@ -339,14 +339,15 @@ class PipelineWatcher {
         const files = await listFolderFiles(pipeline.shadow.folder);
         const dynamoItemsFiles = files.filter(f => f.includes('/dynamo-items-') && !f.includes('-processed/'));
         if (dynamoItemsFiles.length) {
-          const dynamoItems = await readS3Json(latestFile(dynamoItemsFiles));
+          const eventFile = [...dynamoItemsFiles].sort((a, b) => parseInt(a.match(/-(\d+)\.json/)?.[1] || "0") - parseInt(b.match(/-(\d+)\.json/)?.[1] || "0")).at(-1)!;
+          const dynamoItems = await readS3Json(eventFile);
           if (dynamoItems) {
             run.item = JSON.stringify(dynamoItems);
             updateRun({ item: run.item });
             this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'dynamodb', status: 'success', logs: ['Inserted:', '', JSON.stringify(Array.isArray(dynamoItems) ? dynamoItems.map((i: any) => { const { _mk_ts, ...rest } = i; return rest; }) : dynamoItems, null, 2)] });
           }
-          const dynamoEventFile = latestFile(dynamoItemsFiles).replace('/dynamo-items-', '/dynamo-event-');
-          await moveToProcessed(pipeline.shadow.folder, [latestFile(dynamoItemsFiles), dynamoEventFile]);
+          const dynamoEventFile = eventFile.replace('/dynamo-items-', '/dynamo-event-');
+          await moveToProcessed(pipeline.shadow.folder, [eventFile, dynamoEventFile]);
         }
       } catch (e: any) { console.log(`${tag} Failed to read DynamoDB captures:`, e.message); }
     }

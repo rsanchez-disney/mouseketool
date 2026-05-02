@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, inject } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 import { useRoute, useRouter } from "vue-router";
 
 onUnmounted(() => { stopLive(); });
@@ -14,6 +15,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   Database, Loader2, ArrowLeft, Check, AlertTriangle, Bell, Inbox, Zap, ChevronDown, ChevronRight, Clock, Radio, Copy, Maximize2, Search, Info, Trash2,
 } from "lucide-vue-next";
+
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onPipeline; } catch {} });
 
 const route = useRoute();
 const router = useRouter();
@@ -155,6 +160,7 @@ function startLive() {
           if (data.status === "diagnosing") { run.target = { requestId: "", logs: data.logs, error: false }; run.status = "diagnosing"; return; }
           run.target = { requestId: "", logs: data.logs, error: data.status === "error" || data.status === "timeout" };
           run.status = data.status === "success" ? "success" : data.status === "filtered" ? "filtered" : "error";
+          if (data.status === "success" && confettiEnabled.value) confettiRef.value?.fire();
         } else if (data.step === "dynamodb") {
           run.item = data.logs.join("\n");
         }
@@ -301,8 +307,9 @@ onMounted(async () => {
     </DialogContent></Dialog>
 
     <!-- Toast -->
-    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-2">
+    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white bg-green-600 rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300">
       <Check class="size-4" />{{ toastMsg }}
     </div>
+    <ParticleBurst ref="confettiRef" />
   </div>
 </template>

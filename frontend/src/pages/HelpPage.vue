@@ -1,924 +1,798 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed, onMounted, nextTick, watch } from "vue";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Rocket, Hammer, CloudCog, Zap, AlertTriangle, Terminal, Shield,
-  Database, Bell, Inbox, Clock, Keyboard, Sparkles, RefreshCw,
-  Container, Play, MonitorPlay, Layers, Home, Settings } from "lucide-vue-next";
+  Database, Bell, Clock, Keyboard, Sparkles, RefreshCw,
+  Container, Play, Home, Settings, ChevronDown, ChevronRight, Search,
+  Layers, MonitorPlay, Workflow, Inbox, Radio, ChevronsDownUp, ChevronsUpDown
+} from "lucide-vue-next";
 
 const tabs = [
-  { id: "building", label: "Building", icon: Hammer },
-  { id: "deploying", label: "Deploying", icon: Rocket },
-  { id: "home", label: "Home", icon: Home },
-  { id: "settings", label: "Settings", icon: Settings },
-  { id: "status", label: "Status", icon: CloudCog },
-  { id: "invoking", label: "Invoking", icon: Zap },
-  { id: "triggers", label: "Triggers", icon: Database },
-  { id: "execution", label: "Execution", icon: Bell },
-  { id: "history", label: "History", icon: Clock },
-  { id: "console", label: "Console", icon: Terminal },
-  { id: "addons", label: "Add-ons", icon: Shield },
-  { id: "ai", label: "AI Features", icon: Sparkles },
-  { id: "selfhealing", label: "Self-Healing", icon: RefreshCw },
-  { id: "batch", label: "Batch Projects", icon: Container },
-  { id: "launchpad", label: "Launchpad", icon: Play },
-  { id: "logviewer", label: "Log Viewer", icon: MonitorPlay },
-  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
-  { id: "troubleshooting", label: "Troubleshooting", icon: AlertTriangle },
+  { id: "start", label: "Getting Started", icon: Home, accent: "emerald" },
+  { id: "lambda", label: "Lambda Workflow", icon: Hammer, accent: "blue" },
+  { id: "pipelines", label: "Pipelines", icon: Database, accent: "purple" },
+  { id: "batch", label: "Batch Jobs", icon: Container, accent: "amber" },
+  { id: "tools", label: "Tools & Add-ons", icon: Terminal, accent: "zinc" },
+  { id: "ai", label: "AI & Automation", icon: Sparkles, accent: "violet" },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard, accent: "zinc" },
+  { id: "troubleshooting", label: "Troubleshooting", icon: AlertTriangle, accent: "red" },
 ];
 
-const active = ref("building");
+const active = ref("start");
+const searchQuery = ref("");
+const openSections = ref<Set<string>>(new Set());
+const loaded = ref(false);
+const tabTransition = ref(false);
+
+onMounted(() => { setTimeout(() => { loaded.value = true; }, 50); });
+
+watch(active, () => {
+  tabTransition.value = false;
+  nextTick(() => { tabTransition.value = true; });
+});
+onMounted(() => { tabTransition.value = true; });
+
+function toggle(id: string) {
+  if (openSections.value.has(id)) { openSections.value.delete(id); return; }
+  // Close siblings (same prefix group)
+  const prefix = id.split('-')[0];
+  for (const key of [...openSections.value]) { if (key.startsWith(prefix + '-')) openSections.value.delete(key); }
+  openSections.value.add(id);
+}
+function isOpen(id: string) { return openSections.value.has(id); }
+function openAll(ids: string[]) { ids.forEach(id => openSections.value.add(id)); }
+function closeAll(ids: string[]) { ids.forEach(id => openSections.value.delete(id)); }
+
+const activeTab = computed(() => tabs.find(t => t.id === active.value));
 
 const sqsExample = JSON.stringify({ Records: [{ body: '{"key": "value"}' }] }, null, 2);
-const dynamoExample = JSON.stringify({ tt: { S: "my-key" }, message: { S: "hello world" } }, null, 2);
+
+// Search: map section IDs to their tab and text content
+const sectionContent: Record<string, { tab: string; text: string }> = {
+  "start-home": { tab: "start", text: "home dashboard quick stats pipelines batch projects workflows pulse indicator quick actions" },
+  "start-settings": { tab: "start", text: "settings connection lambda builds pipelines ai workflows managed localstack restore defaults unsaved" },
+  "lw-build": { tab: "lambda", text: "building build maven gradle handler artifact cached builds environment variables" },
+  "lw-deploy": { tab: "lambda", text: "deploying deploy localstack memory configuration override" },
+  "lw-status": { tab: "lambda", text: "status active failed unknown deleted refresh search runtime" },
+  "lw-invoke": { tab: "lambda", text: "invoking invoke payload environment variables debug re-invoke root cause diagnostics local class" },
+  "pt-app": { tab: "pipelines", text: "app pipeline dynamodb stream handler sns sqs lambda filter policies heavy load wizard" },
+  "pt-direct": { tab: "pipelines", text: "direct stream processor dynamodb lambda minimal event source mapping" },
+  "pt-queue": { tab: "pipelines", text: "queue consumer sqs lambda decoupled microservice" },
+  "pt-general": { tab: "pipelines", text: "general search filter edit page table schema save restore" },
+  "pl-exec": { tab: "pipelines", text: "running execution steps dynamodb insert stream handler sns sqs target lambda stop" },
+  "pl-history": { tab: "pipelines", text: "history runs dlq detection live watch filtering state time range source" },
+  "bj-registry": { tab: "batch", text: "project registry docker compose dockerfile file watcher" },
+  "bj-run": { tab: "batch", text: "simple run environment variable presets port conflict detection container visualization" },
+  "bj-workflow": { tab: "batch", text: "workflow editor canvas vueflow compose studio ai generate execution infrastructure" },
+  "tl-log": { tab: "tools", text: "log viewer auto-scroll search copy root cause kiro explain color coding" },
+  "tl-vault": { tab: "tools", text: "vault add-on secrets hashicorp docker networking host.docker.internal" },
+  "tl-heavy": { tab: "tools", text: "heavy load debug mode batch size window jvm flags verbose class" },
+  "ai-features": { tab: "ai", text: "kiro ai error explanation payload generation pipeline item generation learning evaluation" },
+  "ai-healing": { tab: "ai", text: "self-healing localstack restart reconciliation recreate dynamodb sns sqs lambda event source" },
+};
+
+const searchResults = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim();
+  if (!q) return null;
+  const matches: Record<string, string[]> = {};
+  for (const [id, { tab, text }] of Object.entries(sectionContent)) {
+    if (text.includes(q) || id.includes(q)) {
+      if (!matches[tab]) matches[tab] = [];
+      matches[tab].push(id);
+    }
+  }
+  return matches;
+});
+
+function tabMatchCount(tabId: string) {
+  if (!searchResults.value) return 0;
+  return searchResults.value[tabId]?.length || 0;
+}
+
+watch(searchQuery, (q) => {
+  if (!q.trim()) return;
+  const results = searchResults.value;
+  if (!results) return;
+  // Switch to first tab with matches
+  const firstTab = Object.keys(results)[0];
+  if (firstTab && !results[active.value]?.length) active.value = firstTab;
+  // Open matching sections
+  for (const ids of Object.values(results)) { ids.forEach(id => openSections.value.add(id)); }
+});
 </script>
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h1 class="text-2xl font-bold tracking-tight">Help & Guides</h1>
-      <p class="text-muted-foreground">Everything you need to know to get the most out of Mouseketool.</p>
+    <!-- Header with entrance animation -->
+    <div :class="['flex items-center justify-between transition-[opacity,transform] duration-700', loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4']">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">Help & Guides</h1>
+        <p class="text-muted-foreground text-sm">Everything you need to know to get the most out of Mouseketool.</p>
+      </div>
+      <div class="relative w-64">
+        <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+        <Input v-model="searchQuery" placeholder="Search help..." class="pl-8 h-8 text-xs" />
+      </div>
     </div>
 
-    <div class="flex gap-6 min-h-[70vh]">
-      <!-- Sidebar -->
-      <nav class="w-48 shrink-0 space-y-0.5">
-        <Button
-          v-for="tab in tabs" :key="tab.id"
-          variant="ghost" size="sm"
-          class="w-full justify-start gap-2 cursor-pointer"
-          :class="active === tab.id ? 'bg-muted text-foreground' : 'text-muted-foreground'"
-          @click="active = tab.id"
-        >
-          <component :is="tab.icon" class="size-3.5" />
-          {{ tab.label }}
-        </Button>
-      </nav>
+    <!-- Breadcrumb with fade -->
+    <div :class="['text-xs text-muted-foreground flex items-center gap-1 transition-[opacity,transform] duration-700 delay-100', loaded ? 'opacity-100' : 'opacity-0']">
+      <span>Help</span>
+      <ChevronRight class="size-3" />
+      <span class="text-foreground font-medium transition-all duration-300">{{ activeTab?.label }}</span>
+    </div>
 
-      <!-- Content -->
-      <div class="flex-1 min-w-0">
+    <!-- Horizontal tabs -->
+    <div :class="['transition-[opacity,transform] duration-700 delay-200', loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6']">
+    <div class="flex gap-1 border-b mb-6">
+      <button
+        v-for="t in tabs" :key="t.id"
+        :class="['flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors cursor-pointer -mb-px', active === t.id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground']"
+        @click="active = t.id"
+      >
+        <component :is="t.icon" class="size-3.5" />
+        {{ t.label }}
+        <span v-if="searchQuery && tabMatchCount(t.id)" class="ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-primary/15 text-primary">{{ tabMatchCount(t.id) }}</span>
+      </button>
+    </div>
 
-    <!-- BUILDING -->
-    <Card v-if="active === 'home'">
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2 text-base"><Home class="size-4" /> Home Dashboard</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>The Home page is the first thing you see when opening Mouseketool. It provides a high-level overview of your
-        development environment at a glance.</p>
+      <div class="min-w-0">
+        <Transition name="tab-fade" mode="out-in">
+          <div :key="active">
 
-        <p class="font-medium text-foreground">Quick Stats</p>
-        <p>Five stat cards show the number of deployed Lambdas, cached builds, pipelines, batch projects, and workflows.
-        Click any card to navigate directly to that section.</p>
 
-        <p class="font-medium text-foreground">Pipeline Activity</p>
-        <p>Each pipeline is listed with its name, type, and status count badges showing how many runs succeeded, failed,
-        were filtered, or are being verified. Pipelines with recent activity (last 5 minutes) display a live pulse indicator.</p>
-
-        <p class="font-medium text-foreground">Recent Activity</p>
-        <p>A feed of the most recent pipeline invocations showing the target Lambda name, status, and time since execution.</p>
-
-        <p class="font-medium text-foreground">Quick Actions</p>
-        <p>Shortcuts to common tasks: Build & Deploy Lambda, Create Pipeline, and Launch Workflow.</p>
-      </CardContent>
-    </Card>
-
-    <Card v-if="active === 'settings'">
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2 text-base"><Settings class="size-4" /> Settings</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Settings are organized into six tabbed categories for easy navigation. Changes are tracked automatically —
-        an indicator appears next to the Save button when you have unsaved modifications.</p>
-
-        <p class="font-medium text-foreground">Connection</p>
-        <p>Configure the LocalStack endpoint (protocol, host, port) and AWS credentials. The <strong>Managed LocalStack
-        Instance</strong> feature lets Mouseketool start and stop a LocalStack container via Docker. When enabled,
-        connection fields are auto-managed. Requires Docker installed on the system.</p>
-
-        <p class="font-medium text-foreground">Lambda</p>
-        <p>Set the default memory allocation applied to every Lambda deployed from the Builder page.</p>
-
-        <p class="font-medium text-foreground">Builds</p>
-        <p>Configure auto-cleanup TTL for cached builds and optionally delete all builds on backend startup.</p>
-
-        <p class="font-medium text-foreground">Pipelines</p>
-        <p>Control history retention (by age or amount) and heavy load batch settings (batch size and window).
-        Heavy load changes apply immediately to all pipelines with heavy load enabled.</p>
-
-        <p class="font-medium text-foreground">AI</p>
-        <p>Choose where Kiro stores learned data from evaluations — locally in
-        <code class="text-xs bg-muted px-1 rounded">.data/learned/</code> or in LocalStack S3.</p>
-
-        <p class="font-medium text-foreground">Workflows</p>
-        <p>Toggle auto-bump healthchecks for imported docker-compose files.</p>
-
-        <p class="font-medium text-foreground">Restore Defaults</p>
-        <p>A Restore Defaults button resets all settings to their original values and saves immediately.</p>
-      </CardContent>
-    </Card>
-
-    <Card v-if="active === 'building'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Hammer class="size-4" /> Building a Lambda</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>The Builder page is where you compile your Java Lambda project into a deployable artifact. It supports both
-        Maven and Gradle projects and will auto-detect which one you're using based on the presence of a
-        <code class="text-xs bg-muted px-1 rounded">pom.xml</code> or <code class="text-xs bg-muted px-1 rounded">build.gradle</code> file in the project root.</p>
-
-        <p class="font-medium text-foreground">Step 1: Select your project</p>
-        <p>Use the file browser to navigate to the root of your Java project. This is the directory where your build file lives.
-        Once you select a valid project, Mouseketool will scan it for Lambda handler classes and list them in a dropdown.
-        If you don't see your handler, make sure the class implements
-        <code class="text-xs bg-muted px-1 rounded">RequestHandler</code> or <code class="text-xs bg-muted px-1 rounded">RequestStreamHandler</code>.</p>
-
-        <p class="font-medium text-foreground">Step 2: Build</p>
-        <p>Select a handler from the dropdown and click <strong>Build</strong>. The build console will stream logs in real-time
-        so you can see exactly what Maven or Gradle is doing. The first build will be slower than usual because it needs to
-        download all the project dependencies — make sure you're connected to the VPN if your project uses internal repositories.</p>
-
-        <p>You can use the <strong>Stop</strong> button at any time to cancel a running build. A toast notification will confirm
-        the cancellation. The <strong>Auto-scroll</strong> toggle keeps the console pinned to the bottom as new logs come in.</p>
-
-        <p class="font-medium text-foreground">Step 3: Deploy or rebuild</p>
-        <p>After a successful build, the artifact appears in the <strong>Cached Builds</strong> section below the console.
-        From there you can either <strong>Deploy</strong> it directly to LocalStack or <strong>Rebuild</strong> it if you've
-        made changes to the source code. You can also delete old builds you no longer need.</p>
-
-        <p class="font-medium text-foreground">About environment variables</p>
-        <p>During the initial project analysis, Mouseketool will try to detect environment variables from your SAM template
-        or <code class="text-xs bg-muted px-1 rounded">.env</code> file. These are saved as defaults and applied to the
-        Lambda when you configure them on the Deployments page or the pipeline card's env var editor.</p>
-
-        <p>Environment variables are unified across both pages. The Lambda's own configuration is the source of truth
-        for active values. Editing env vars on either the Deployments page or the pipeline card updates the same Lambda.
-        Excluded (grayed-out) env vars are preserved locally so you can re-enable them later without re-entering values.</p>
-
-        <p>When you rebuild a project, env vars from the previous build are <strong>automatically carried over</strong>
-        to the new build so you don't have to re-enter them.</p>
-      </CardContent>
-    </Card>
-    <!-- DEPLOYING -->
-    <Card v-if="active === 'deploying'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Rocket class="size-4" /> Deploying to LocalStack</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Once you have a successful build, the next step is to deploy it to LocalStack so you can invoke it. You can
-        deploy from two places: the <strong>Deploy</strong> button on a cached build card (Builder page), or by navigating
-        to the Deployments page directly.</p>
-
-        <p>Before deploying, make sure LocalStack is running and that the connection settings (host, port, protocol) are
-        correct. You can verify this on the <strong>Settings</strong> page. LocalStack accepts any credentials so the
-        default <code class="text-xs bg-muted px-1 rounded">test/test</code> works fine.</p>
-
-        <p>If the function already exists on LocalStack, the deploy will update it with the new code. You don't need to
-        delete and recreate it. The Deployments page will show the updated artifact size and timestamp.</p>
-
-        <p class="font-medium text-foreground">Memory configuration</p>
-        <p>Java Lambdas on LocalStack need more memory than you might expect due to cold start overhead. Mouseketool
-        defaults to <strong>2048 MB</strong> which works well for most Java projects. You can change this per-function
-        on the Deployments page — there's a <strong>Memory</strong> dropdown in the invoke panel that lets you pick a
-        value before each invocation. If you're seeing
-        <code class="text-xs bg-muted px-1 rounded">OutOfMemoryError</code> or the Lambda times out during initialization,
-        try bumping it up.</p>
-
-        <p>A toast notification will confirm whether the deploy succeeded or failed. If it fails, check the
-        <strong>Troubleshooting</strong> tab for common errors.</p>
-      </CardContent>
-    </Card>
-
-    <!-- STATUS -->
-    <Card v-if="active === 'status'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><CloudCog class="size-4" /> Deployment Status</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Every time you open the Deployments page, Mouseketool checks each function against LocalStack to verify it's
-        still there and in a healthy state. The result is shown as a colored badge on each deployment card. You can also
-        click the <strong>Refresh</strong> button in the top-right corner to re-check at any time.</p>
-
-        <p>Here's what each status means:</p>
-        <div class="space-y-2">
-          <div class="flex items-center gap-2">
-            <Badge class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px]">active</Badge>
-            <span>The function exists on LocalStack and is ready to be invoked.</span>
+    <!-- GETTING STARTED -->
+    <div v-if="active === 'start'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><Home class="size-4 text-muted-foreground" /> Getting Started</h3>
+        <div class="flex gap-1">
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="openAll(['start-home','start-settings'])" title="Open all"><ChevronsUpDown class="size-3.5" /></Button>
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="closeAll(['start-home','start-settings'])" title="Close all"><ChevronsDownUp class="size-3.5" /></Button>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <!-- Home -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('start-home')">
+            <component :is="isOpen('start-home') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Home class="size-3.5 text-muted-foreground" /> Home Dashboard
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('start-home') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>The Home page is your dashboard. It displays quick stats (deployed Lambdas, cached builds, pipelines, batch projects, workflows), pipeline activity with status count badges, a recent invocation feed, quick action shortcuts, and feature highlights.</p>
+                <p>Click any stat card to navigate directly to that section. Pipelines with recent activity (last 5 minutes) display a live pulse indicator.</p>
+                <p class="font-medium text-foreground">Quick Actions</p>
+                <p>Shortcuts to common tasks: Build & Deploy Lambda, Create Pipeline, and Launch Workflow. Each opens the relevant page with the appropriate flow pre-selected.</p>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <Badge class="bg-red-500/20 text-red-500 border-red-500/40 text-[10px]">failed</Badge>
-            <span>The function exists but is in a failed state. This usually means the last deploy or configuration update had an issue.</span>
+        </div>
+        <!-- Settings -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('start-settings')">
+            <component :is="isOpen('start-settings') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Settings class="size-3.5 text-muted-foreground" /> Settings
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('start-settings') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Settings are organized into six tabbed categories: <strong>Connection</strong>, <strong>Lambda</strong>, <strong>Builds</strong>, <strong>Pipelines</strong>, <strong>AI</strong>, and <strong>Workflows</strong>.</p>
+                <p class="font-medium text-foreground">Connection</p>
+                <p>Configure the LocalStack endpoint (protocol, host, port) and AWS credentials. The <strong>Managed LocalStack Instance</strong> feature lets Mouseketool start and stop a LocalStack container via Docker. When enabled, connection fields are auto-managed.</p>
+                <p class="font-medium text-foreground">Lambda</p>
+                <p>Set the default memory allocation applied to every Lambda deployed from the Builder page.</p>
+                <p class="font-medium text-foreground">Builds</p>
+                <p>Configure auto-cleanup TTL for cached builds and optionally delete all builds on backend startup.</p>
+                <p class="font-medium text-foreground">Pipelines</p>
+                <p>Control history retention (by age or amount) and heavy load batch settings (batch size and window). Heavy load changes apply immediately to all pipelines with heavy load enabled.</p>
+                <p class="font-medium text-foreground">AI</p>
+                <p>Choose where Kiro stores learned data — locally in <code class="text-xs bg-muted px-1 rounded">.data/learned/</code> or in LocalStack S3.</p>
+                <p class="font-medium text-foreground">Workflows</p>
+                <p>Toggle auto-bump healthchecks for imported docker-compose files.</p>
+                <p class="font-medium text-foreground">UI</p>
+                <p>Toggle confetti celebrations on success events (deploy, invoke, pipeline, batch, workflow) with granular per-action control.</p>
+                <p class="font-medium text-foreground">Unsaved Changes & Restore</p>
+                <p>An amber indicator appears when you have unsaved modifications. A <strong>Restore Defaults</strong> button resets all settings to their original values.</p>
+              </div>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <Badge class="bg-yellow-500/20 text-yellow-500 border-yellow-500/40 text-[10px]">unknown</Badge>
-            <span>Mouseketool couldn't reach LocalStack within 3 seconds. The page still loads normally — check your connection and settings.</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <Badge class="bg-zinc-500/20 text-zinc-400 border-zinc-500/40 text-[10px]">deleted</Badge>
-            <span>The function was removed from LocalStack (maybe by a container restart). You'll need to redeploy.</span>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- LAMBDA WORKFLOW -->
+    <div v-if="active === 'lambda'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><Hammer class="size-4 text-muted-foreground" /> Lambda Workflow</h3>
+        <div class="flex gap-1">
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="openAll(['lw-build','lw-deploy','lw-status','lw-invoke'])" title="Open all"><ChevronsUpDown class="size-3.5" /></Button>
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="closeAll(['lw-build','lw-deploy','lw-status','lw-invoke'])" title="Close all"><ChevronsDownUp class="size-3.5" /></Button>
+        </div>
+      </div>
+      <div class="space-y-2">
+
+        <!-- Animated flow diagram -->
+        <div class="flex items-center justify-center gap-0 py-4 mb-3">
+          <div v-for="(step, i) in ['Build','Deploy','Configure','Invoke','Inspect']" :key="step" class="flex items-center">
+            <div class="px-3 py-1.5 rounded-md border border-blue-500/30 bg-blue-500/5 text-blue-400 text-xs font-medium transition-all duration-150 hover:bg-blue-500/15 hover:shadow-md hover:shadow-blue-500/10" :style="{ animationDelay: `${i * 100}ms` }">{{ step }}</div>
+            <div v-if="i < 4" class="w-8 h-px border-t border-dashed border-blue-500/40 flow-dash" />
           </div>
         </div>
 
-        <p class="font-medium text-foreground">Search</p>
-        <p>If you have many deployments, use the search bar at the top of the list to filter them. It matches against
-        both the function name and the handler class, so you can search for either one.</p>
-      </CardContent>
-    </Card>
+        <!-- Building -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('lw-build')">
+            <component :is="isOpen('lw-build') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Hammer class="size-3.5 text-muted-foreground" /> Building a Lambda
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('lw-build') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>The Builder page compiles your Java Lambda project into a deployable artifact. Supports Maven and Gradle with auto-detection based on <code class="text-xs bg-muted px-1 rounded">pom.xml</code> or <code class="text-xs bg-muted px-1 rounded">build.gradle</code>.</p>
+                <p class="font-medium text-foreground">Step 1: Select your project</p>
+                <p>Use the file browser to navigate to your Java project root. Mouseketool scans for Lambda handler classes implementing <code class="text-xs bg-muted px-1 rounded">RequestHandler</code> or <code class="text-xs bg-muted px-1 rounded">RequestStreamHandler</code>.</p>
+                <p class="font-medium text-foreground">Step 2: Build</p>
+                <p>Select a handler and click <strong>Build</strong>. The console streams logs in real-time. Use <strong>Stop</strong> to cancel, and <strong>Auto-scroll</strong> to pin to the bottom.</p>
+                <p class="font-medium text-foreground">Step 3: Deploy or rebuild</p>
+                <p>Successful builds appear in <strong>Cached Builds</strong>. Deploy directly to LocalStack or rebuild after source changes. Each build shows a TTL indicator based on the cleanup interval.</p>
+                <p class="font-medium text-foreground">Environment variables</p>
+                <p>Mouseketool detects env vars from SAM templates or <code class="text-xs bg-muted px-1 rounded">.env</code> files. These are unified across Deployments and pipeline cards. Rebuilding automatically carries over env vars from the previous build.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Deploying -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('lw-deploy')">
+            <component :is="isOpen('lw-deploy') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Rocket class="size-3.5 text-muted-foreground" /> Deploying to LocalStack
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('lw-deploy') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Deploy from the <strong>Deploy</strong> button on a cached build card or from the Deployments page. Make sure LocalStack is running and connection settings are correct.</p>
+                <p>If the function already exists, the deploy updates it with new code — no need to delete and recreate. The deploy override modal lets you confirm or skip redeployment.</p>
+                <p class="font-medium text-foreground">Memory configuration</p>
+                <p>Java Lambdas on LocalStack need more memory due to cold start overhead. Default is <strong>2048 MB</strong>. Change per-function via the Memory dropdown. Bump up if you see <code class="text-xs bg-muted px-1 rounded">OutOfMemoryError</code>.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Status -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('lw-status')">
+            <component :is="isOpen('lw-status') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <CloudCog class="size-3.5 text-muted-foreground" /> Deployment Status
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('lw-status') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Mouseketool checks each function against LocalStack on page load. Click <strong>Refresh</strong> to re-check manually.</p>
+                <div class="space-y-2">
+                  <div class="flex items-center gap-2"><Badge class="bg-green-500/20 text-green-500 border-green-500/40 text-[10px]">active</Badge><span>Function exists and is ready.</span></div>
+                  <div class="flex items-center gap-2"><Badge class="bg-red-500/20 text-red-500 border-red-500/40 text-[10px]">failed</Badge><span>Function exists but in a failed state.</span></div>
+                  <div class="flex items-center gap-2"><Badge class="bg-yellow-500/20 text-yellow-500 border-yellow-500/40 text-[10px]">unknown</Badge><span>Couldn't reach LocalStack within 3 seconds.</span></div>
+                  <div class="flex items-center gap-2"><Badge class="bg-zinc-500/20 text-zinc-400 border-zinc-500/40 text-[10px]">deleted</Badge><span>Function removed (container restart). Redeploy needed.</span></div>
+                </div>
+                <p>Use the search bar to filter by function name or handler class. The runtime dropdown filters by language runtime.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Invoking -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('lw-invoke')">
+            <component :is="isOpen('lw-invoke') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Zap class="size-3.5 text-muted-foreground" /> Invoking Functions
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('lw-invoke') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Click <strong>Invoke</strong> on a deployment card to open the Add-on Settings screen, then continue to the invoke panel.</p>
+                <p class="font-medium text-foreground">Environment variables</p>
+                <p>Env vars are applied before each invocation via <code class="text-xs bg-muted px-1 rounded">UpdateFunctionConfiguration</code>. Use the <strong>Exclude</strong> checkbox to temporarily remove a var without deleting it.</p>
+                <p class="font-medium text-foreground">Payload</p>
+                <p>The editor accepts any valid JSON. Upload from disk or press <code class="text-xs bg-muted px-1 rounded">Ctrl+Enter</code> to invoke directly. For SQS-triggered Lambdas:</p>
+                <pre class="bg-zinc-950 rounded-lg p-3 text-xs overflow-auto font-mono text-zinc-300 border border-zinc-800 relative"><span class="absolute top-1.5 right-2 text-[9px] text-zinc-600 font-sans">JSON</span>{{ sqsExample }}</pre>
+                <p class="font-medium text-foreground">Understanding results</p>
+                <ul class="list-disc list-inside space-y-1.5 ml-1">
+                  <li><strong>Root Cause panel</strong> — Extracts all <code class="text-xs bg-muted px-1 rounded">Caused by</code> lines from logs.</li>
+                  <li><strong>Diagnostics</strong> — Lists env vars pointing to unreachable services, checks handler class in jar.</li>
+                  <li><strong>Local Class Diagnostic</strong> — Runs the class locally to capture the full stack trace when <code class="text-xs bg-muted px-1 rounded">ExceptionInInitializerError</code> occurs.</li>
+                </ul>
+                <p class="font-medium text-foreground">Debug mode & Re-invoke</p>
+                <p><strong>Debug Invoke</strong> runs with extra JVM flags for detailed traces. The <strong>Re-invoke</strong> button (⚡) re-runs with the last payload without opening the invoke panel.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- PIPELINES -->
+    <div v-if="active === 'pipelines'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><Database class="size-4 text-muted-foreground" /> Pipelines</h3>
+        <div class="flex gap-1">
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="openAll(['pt-app','pt-direct','pt-queue','pt-general','pl-exec','pl-history'])" title="Open all"><ChevronsUpDown class="size-3.5" /></Button>
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="closeAll(['pt-app','pt-direct','pt-queue','pt-general','pl-exec','pl-history'])" title="Close all"><ChevronsDownUp class="size-3.5" /></Button>
+        </div>
+      </div>
+      <div class="space-y-2">
+
+
+        <p class="text-xs font-medium text-muted-foreground uppercase tracking-wider mt-1 mb-0.5">Usage</p>
+
+        <!-- Common pipeline features -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pt-general')">
+            <component :is="isOpen('pt-general') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Settings class="size-3.5 text-muted-foreground" /> General
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pt-general') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Search pipelines by name and filter by type using the pills at the top of the page.</p>
+                <p class="font-medium text-foreground">Pipeline Edit Page</p>
+                <p>Clickable step bubbles, editable filter policies, Heavy Load toggle, Add-ons, and Env Vars. Changes are not applied until you click Save.</p>
+                <p class="font-medium text-foreground">Table Schema Save/Restore</p>
+                <p>Save a table's schema for restoration after LocalStack restart. Optionally include a seed item in DynamoDB JSON format.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pl-exec')">
+            <component :is="isOpen('pl-exec') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Bell class="size-3.5 text-muted-foreground" /> Running Pipelines
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pl-exec') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Click <strong>Execute</strong> on a pipeline card to watch each step run in real-time via SSE.</p>
+                <p class="font-medium text-foreground">Execution steps</p>
+                <ul class="list-disc list-inside space-y-1.5 ml-1">
+                  <li><strong>DynamoDB Insert</strong> — Inserts test item, purges queues, deletes log groups for clean slate.</li>
+                  <li><strong>Stream Handler</strong> — Polls CloudWatch for stream handler logs.</li>
+                  <li><strong>SNS Publish</strong> — Inferred from SQS evidence (SNS doesn't produce logs).</li>
+                  <li><strong>SQS Deliver</strong> — Checks queue attributes and DLQ.</li>
+                  <li><strong>Target Lambda</strong> — Polls CloudWatch. If no logs appear, performs a diagnostic invoke.</li>
+                </ul>
+                <p>Use <strong>Stop</strong> to abort at any time. If a step times out, it may be LocalStack's ESM pollers being slow — try again or check History.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- History -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pl-history')">
+            <component :is="isOpen('pl-history') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Clock class="size-3.5 text-muted-foreground" /> Pipeline History
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pl-history') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Records every pipeline run, including external DynamoDB inserts. Runs are identified by the Stream Handler's <code class="text-xs bg-muted px-1 rounded">RequestId</code> and correlated with Target Lambda invocations within a 2-minute window.</p>
+                <p class="font-medium text-foreground">DLQ detection</p>
+                <p>When a run times out, Mouseketool checks the DLQ. If messages are found, a diagnostic invoke captures the full error details.</p>
+                <p class="font-medium text-foreground">Live watch</p>
+                <p>Click <strong>Watch Live</strong> for automatic SSE updates. New runs appear silently without loading spinners.</p>
+                <p class="font-medium text-foreground">Filtering</p>
+                <p>Filter by state (Success, Error, Filtered, Diagnosing), time range (5m, 15m, 1h, 6h), and source (Manual, External). Click any run to expand logs with color-coded output.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+        <p class="text-xs font-medium text-muted-foreground uppercase tracking-wider mt-1 mb-0.5">Types</p>
+
+        <!-- APP Pipeline -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pt-app')">
+            <component :is="isOpen('pt-app') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Database class="size-3.5 text-muted-foreground" /> APP Pipeline
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pt-app') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <!-- Animated diagram -->
+                <div class="flex items-center justify-center gap-0 py-2">
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-500/30 bg-amber-500/5"><Database class="size-3 text-amber-400" /><span class="text-[10px] text-amber-400 font-medium">DynamoDB</span></div>
+                  <div class="w-6 h-px flow-dash text-amber-500/40" />
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-blue-500/30 bg-blue-500/5"><Zap class="size-3 text-blue-400" /><span class="text-[10px] text-blue-400 font-medium">Stream</span></div>
+                  <div class="w-6 h-px flow-dash text-blue-500/40" />
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-violet-500/30 bg-violet-500/5"><Radio class="size-3 text-violet-400" /><span class="text-[10px] text-violet-400 font-medium">SNS</span></div>
+                  <div class="w-6 h-px flow-dash text-violet-500/40" />
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/5"><Inbox class="size-3 text-emerald-400" /><span class="text-[10px] text-emerald-400 font-medium">SQS</span></div>
+                  <div class="w-6 h-px flow-dash text-emerald-500/40" />
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-red-500/30 bg-red-500/5"><Zap class="size-3 text-red-400" /><span class="text-[10px] text-red-400 font-medium">Lambda</span></div>
+                </div>
+                <p>The full event-driven chain that mirrors real AWS architecture. A DynamoDB Stream event triggers a lightweight Node.js Stream Handler (auto-generated) that unmarshalls the record and publishes to SNS. SNS fans out to SQS with optional filter policies, and SQS triggers your target Lambda.</p>
+                <p class="font-medium text-foreground">The wizard</p>
+                <p>A 6-step process: Source → DynamoDB → SNS → SQS → Lambdas → Add-ons. Resources already in use show an "In use" badge. DLQ is optional with configurable <code class="text-xs bg-muted px-1 rounded">maxReceiveCount</code>.</p>
+                <p class="font-medium text-foreground">SNS Filter Policies</p>
+                <p>9 operator types: string exact, prefix, anything-but, suffix, wildcard, number exact, number range, key exists/not exists. Filter scope: Message body or Message attributes. Rules combine with AND logic.</p>
+                <p class="font-medium text-foreground">Heavy Load Mode</p>
+                <p>Increases DynamoDB Stream batch size and window for high-throughput scenarios. Configurable from Settings, applies retroactively to all heavy load pipelines.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Direct Stream -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pt-direct')">
+            <component :is="isOpen('pt-direct') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Zap class="size-3.5 text-muted-foreground" /> Direct Stream Processor
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pt-direct') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <!-- Animated diagram -->
+                <div class="flex items-center justify-center gap-0 py-2">
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-amber-500/30 bg-amber-500/5"><Database class="size-3 text-amber-400" /><span class="text-[10px] text-amber-400 font-medium">DynamoDB</span></div>
+                  <div class="w-10 h-px flow-dash text-amber-500/40" />
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-red-500/30 bg-red-500/5"><Zap class="size-3 text-red-400" /><span class="text-[10px] text-red-400 font-medium">Lambda</span></div>
+                </div>
+                <p>The simplest pipeline type. A DynamoDB Stream triggers your Lambda function directly via an event source mapping — no intermediary services. Best for cases where you don't need fan-out, filtering, or retry queues.</p>
+                <p class="font-medium text-foreground">When to use</p>
+                <p>Use Direct Stream when your Lambda is the only consumer of the table's change events and you want the lowest latency path from write to invocation.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Queue Consumer -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pt-queue')">
+            <component :is="isOpen('pt-queue') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Inbox class="size-3.5 text-muted-foreground" /> Queue Consumer
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pt-queue') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <!-- Animated diagram -->
+                <div class="flex items-center justify-center gap-0 py-2">
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/5"><Inbox class="size-3 text-emerald-400" /><span class="text-[10px] text-emerald-400 font-medium">SQS</span></div>
+                  <div class="w-10 h-px flow-dash text-emerald-500/40" />
+                  <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-red-500/30 bg-red-500/5"><Zap class="size-3 text-red-400" /><span class="text-[10px] text-red-400 font-medium">Lambda</span></div>
+                </div>
+                <p>An SQS queue triggers your Lambda function. Best for testing Lambdas that consume messages from a queue — common in decoupled microservice architectures where upstream services publish to SQS.</p>
+                <p class="font-medium text-foreground">When to use</p>
+                <p>Use Queue Consumer when your Lambda already expects SQS event payloads and you want to test it by sending messages directly to a queue.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Execution -->
+    </div>
+
+
+    <!-- BATCH JOBS -->
+    <div v-if="active === 'batch'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><Container class="size-4 text-muted-foreground" /> Batch Jobs</h3>
+        <div class="flex gap-1">
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="openAll(['bj-registry','bj-run','bj-workflow'])" title="Open all"><ChevronsUpDown class="size-3.5" /></Button>
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="closeAll(['bj-registry','bj-run','bj-workflow'])" title="Close all"><ChevronsDownUp class="size-3.5" /></Button>
+        </div>
+      </div>
+      <div class="space-y-2">
+
+        <!-- Animated flow diagram -->
+        <div class="flex items-center justify-center gap-0 py-4 mb-3">
+          <div v-for="(step, i) in ['Register','Configure','Run','Monitor']" :key="step" class="flex items-center">
+            <div class="px-3 py-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 text-amber-400 text-xs font-medium transition-all duration-150 hover:bg-amber-500/15 hover:shadow-md hover:shadow-amber-500/10" :style="{ animationDelay: `${i * 100}ms` }">{{ step }}</div>
+            <div v-if="i < 3" class="w-8 h-px border-t border-dashed border-amber-500/40 flow-dash" />
+          </div>
+        </div>
+
+        <!-- Project Registry -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('bj-registry')">
+            <component :is="isOpen('bj-registry') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Container class="size-3.5 text-muted-foreground" /> Project Registry
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('bj-registry') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Register Docker-based projects that use docker-compose. Mouseketool scans for Dockerfiles and compose files with common naming patterns.</p>
+                <p>Each project card shows the detected Dockerfile, image tag, compose services, and registration time. Edit paths if auto-detection picked wrong files. A file watcher monitors registered directories for changes and auto-refreshes via SSE.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Simple Run -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('bj-run')">
+            <component :is="isOpen('bj-run') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Play class="size-3.5 text-muted-foreground" /> Simple Run
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('bj-run') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Execute a project's docker-compose file with a single click from the Launchpad page.</p>
+                <p class="font-medium text-foreground">Environment variable presets</p>
+                <p>Mouseketool scans compose files and <code class="text-xs bg-muted px-1 rounded">.env</code> files for variables. Fork them into named presets to customize values without modifying source files. Only one preset can be active at a time.</p>
+                <p class="font-medium text-foreground">Port conflict detection</p>
+                <p>Before starting, Mouseketool checks host ports in use. Conflicts are automatically remapped to the next available port. A badge shows remap count, and you can view the effective docker-compose config.</p>
+                <p class="font-medium text-foreground">Container visualization</p>
+                <p>The project info panel lists all services with volumes, env vars, image, and port mappings. Volume entries pointing to <code class="text-xs bg-muted px-1 rounded">.sh</code> files have a view button for syntax-highlighted content.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Workflow -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('bj-workflow')">
+            <component :is="isOpen('bj-workflow') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Workflow class="size-3.5 text-muted-foreground" /> Workflow Editor
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('bj-workflow') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>A visual canvas (VueFlow) for building job dependency graphs. Each node represents a Docker container job with image, command, timeout, and env var overrides.</p>
+                <p class="font-medium text-foreground">Creating workflows</p>
+                <p>Click "New" then "Add Job" to place nodes. Connect by dragging handles. Import from existing compose files — <code class="text-xs bg-muted px-1 rounded">depends_on</code> relationships become edges.</p>
+                <p class="font-medium text-foreground">Compose Studio</p>
+                <p>AI-powered compose builder with Monaco editor. Actions: Generate (from prompt), Add Batch Project, Add Service, Add Healthchecks, Evaluate (review for issues).</p>
+                <p class="font-medium text-foreground">Execution</p>
+                <p>Clicking "Run" starts <code class="text-xs bg-muted px-1 rounded">docker compose up</code> in foreground. Each node shows live status (pending, running, healthy, exited, error). Logs stream in real-time.</p>
+                <p class="font-medium text-foreground">Infrastructure services</p>
+                <p>Supporting containers (databases, brokers, caches) are displayed in a separate panel to keep the dependency graph focused on batch jobs.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- TOOLS & ADD-ONS -->
+    <div v-if="active === 'tools'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><Terminal class="size-4 text-muted-foreground" /> Tools & Add-ons</h3>
+        <div class="flex gap-1">
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="openAll(['tl-log','tl-vault','tl-heavy'])" title="Open all"><ChevronsUpDown class="size-3.5" /></Button>
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="closeAll(['tl-log','tl-vault','tl-heavy'])" title="Close all"><ChevronsDownUp class="size-3.5" /></Button>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <!-- Log Viewer -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('tl-log')">
+            <component :is="isOpen('tl-log') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <MonitorPlay class="size-3.5 text-muted-foreground" /> Log Viewer
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('tl-log') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>All log viewers (Builder, Deployments, Execution, History, Launchpad) share consistent behavior:</p>
+                <ul class="list-disc list-inside space-y-1.5 ml-1">
+                  <li><strong>Auto-scroll</strong> — New lines scroll into view. Scrolling up disables follow; click arrow to re-enable.</li>
+                  <li><strong>Search</strong> — Expanded view dims non-matching lines to 20% opacity, keeping context visible.</li>
+                  <li><strong>Copy</strong> — Copies all content to clipboard with toast confirmation.</li>
+                  <li><strong>Root cause panel</strong> — Extracts <code class="text-xs bg-muted px-1 rounded">Caused by</code> and exception lines at the top.</li>
+                  <li><strong>Kiro explain</strong> — Sends error context to Kiro for plain-English explanation.</li>
+                </ul>
+                <p class="font-medium text-foreground">Color coding</p>
+                <div class="flex gap-4 text-xs">
+                  <span class="flex items-center gap-1"><span class="size-2 rounded-full bg-red-400" /> Errors & exceptions</span>
+                  <span class="flex items-center gap-1"><span class="size-2 rounded-full bg-yellow-400" /> Warnings</span>
+                  <span class="flex items-center gap-1"><span class="size-2 rounded-full bg-blue-400" /> Section headers</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Vault -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('tl-vault')">
+            <component :is="isOpen('tl-vault') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Shield class="size-3.5 text-muted-foreground" /> Vault Add-on
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('tl-vault') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Creates secrets in HashiCorp Vault before invocation. Configure Vault URL, root token, and secret paths with key-value entries.</p>
+                <ul class="list-disc list-inside space-y-1.5 ml-1">
+                  <li><strong>Existence guard</strong> — Existing secrets are skipped (not overwritten).</li>
+                  <li><strong>Auto-cleanup</strong> — Mouseketool-created secrets are deleted after invocation.</li>
+                  <li><strong>KV engine</strong> — Auto-detects KV v1 or v2.</li>
+                </ul>
+                <p class="font-medium text-foreground">Docker networking</p>
+                <p>Lambda containers can't reach <code class="text-xs bg-muted px-1 rounded">localhost</code>. Use <code class="text-xs bg-muted px-1 rounded">host.docker.internal</code> for host services, or container hostnames for same-network services.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Heavy Load & Debug -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('tl-heavy')">
+            <component :is="isOpen('tl-heavy') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Layers class="size-3.5 text-muted-foreground" /> Heavy Load & Debug Mode
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('tl-heavy') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p class="font-medium text-foreground">Heavy Load</p>
+                <p>Increases DynamoDB Stream batch size and window for high-throughput scenarios. Configurable from Settings, applies retroactively. A pulsating orange banner on History shows active batch insertions.</p>
+                <p class="font-medium text-foreground">Debug Mode</p>
+                <p>Runs Lambda with <code class="text-xs bg-muted px-1 rounded">-verbose:class -Xlog:exceptions=info</code> JVM flags for detailed class-loading and exception traces. Flags are automatically cleaned up after invoke.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI & AUTOMATION -->
+    <div v-if="active === 'ai'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><Sparkles class="size-4 text-violet-500" /> AI & Automation</h3>
+        <div class="flex gap-1">
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="openAll(['ai-features','ai-healing'])" title="Open all"><ChevronsUpDown class="size-3.5" /></Button>
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="closeAll(['ai-features','ai-healing'])" title="Close all"><ChevronsDownUp class="size-3.5" /></Button>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <!-- AI Features -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('ai-features')">
+            <component :is="isOpen('ai-features') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Sparkles class="size-3.5 text-violet-500" /> Kiro AI Features
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('ai-features') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Mouseketool integrates with Kiro CLI. When detected, a glowing purple badge appears in the header.</p>
+                <p class="font-medium text-foreground">Error Explanation</p>
+                <p>When a Lambda fails, <strong>Explain with Kiro</strong> sends the error context for a plain-English explanation and fix suggestion.</p>
+                <p class="font-medium text-foreground">Payload Generation</p>
+                <p>Configure a <strong>Sample Path</strong> pointing to JSON samples and source code. The <strong>Generate</strong> button offers Successful and Failure payload options.</p>
+                <p class="font-medium text-foreground">Pipeline Item Generation</p>
+                <p>Generate items matching the pipeline's expected input. Options: Successful, Filtered (fails SNS filter), and Failure. Uses learned data, key schema, filter policy, and favorites as context.</p>
+                <p class="font-medium text-foreground">Learning & Evaluation</p>
+                <p>Learns from successful executions (up to 50 items per pipeline). Use <strong>Evaluate</strong> to rate quality — good samples become favorites, bad samples include feedback for improvement.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Self-Healing -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('ai-healing')">
+            <component :is="isOpen('ai-healing') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <RefreshCw class="size-3.5 text-violet-500" /> Pipeline Self-Healing
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('ai-healing') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>When LocalStack restarts, all resources are deleted. Mouseketool detects this and recreates everything from locally persisted metadata.</p>
+                <p class="font-medium text-foreground">How it works</p>
+                <p>A health monitor polls every 5 seconds. On recovery, a blocking overlay ("Restoring AWS Resources") appears while full reconciliation runs.</p>
+                <p class="font-medium text-foreground">What gets recreated</p>
+                <ul class="list-disc list-inside space-y-1.5 ml-1">
+                  <li><strong>DynamoDB tables</strong> — From saved schemas (or generic pk/sk if none saved).</li>
+                  <li><strong>SNS topics & SQS queues</strong> — Same names, DLQ and redrive policies re-established.</li>
+                  <li><strong>Stream handler</strong> — Redeployed from template with same env vars.</li>
+                  <li><strong>Target Lambda</strong> — Redeployed from cached build. Warning icon if build was deleted.</li>
+                  <li><strong>Event source mappings</strong> — DynamoDB→handler and SQS→Lambda with same batch settings.</li>
+                  <li><strong>SNS subscriptions</strong> — Same filter policy and scope.</li>
+                </ul>
+                <p class="font-medium text-foreground">Vault secrets</p>
+                <p>Secret values are never stored. After reconciliation, an amber "Secrets need recreation" badge appears — recreate manually via the Vault add-on.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
-    <!-- INVOKING -->
-    <Card v-if="active === 'invoking'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Zap class="size-4" /> Invoking Functions</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>To invoke a Lambda, go to the Deployments page and click the <strong>Invoke</strong> button on any deployment
-        card. This opens the Add-on Settings screen where you can configure optional tools like Vault (more on that in the
-        <strong>Add-ons</strong> tab). Once you're ready, continue to the invoke panel.</p>
-
-        <p class="font-medium text-foreground">Environment variables</p>
-        <p>Env vars are configured directly in the invoke panel — you don't need to redeploy when changing them. Before
-        each invocation, Mouseketool calls <code class="text-xs bg-muted px-1 rounded">UpdateFunctionConfiguration</code>
-        to apply your current env vars to the Lambda function. This means you can change a Vault path, toggle a feature
-        flag, or point to a different service URL and invoke again immediately.</p>
-
-        <p>If you want to temporarily remove an env var without deleting it (so you can re-enable it later), check the
-        <strong>Exclude</strong> checkbox next to it. Excluded vars are kept in the UI but are not sent to the Lambda
-        configuration. The value is preserved — uncheck it anytime to bring it back.</p>
-
-        <p class="font-medium text-foreground">Payload</p>
-        <p>The payload editor accepts any valid JSON. For SQS-triggered Lambdas, you'll want to use the standard SQS
-        event format:</p>
-        <pre class="bg-muted rounded p-3 text-xs overflow-auto font-mono">{{ sqsExample }}</pre>
-        <p>You can also click the <strong>Upload</strong> button next to the editor to load a JSON file from disk. This
-        is handy if you have pre-built test events saved somewhere.</p>
-
-        <p>You can also press <code class="text-xs bg-muted px-1 rounded">Ctrl+Enter</code> to invoke directly from the
-        payload editor without clicking the button.</p>
-
-        <p class="font-medium text-foreground">Understanding the results</p>
-        <p>After invoking, the response panel shows the status code, function output, and any errors. If the Lambda
-        failed, Mouseketool does a few things automatically to help you understand what went wrong:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Root Cause panel</strong> — Extracts all <code class="text-xs bg-muted px-1 rounded">Caused by</code>
-          lines from the logs and surfaces them at the top so you don't have to scroll through the full stack trace.</li>
-          <li><strong>Diagnostics</strong> — Lists env vars pointing to potentially unreachable services and checks if
-          the handler class exists in the jar.</li>
-          <li><strong>Local Class Diagnostic</strong> — When the error is an
-          <code class="text-xs bg-muted px-1 rounded">ExceptionInInitializerError</code> (which means the class crashed
-          during static initialization and often produces no CloudWatch logs), Mouseketool runs the class locally on the
-          backend to capture the full stack trace. This is usually the most useful piece of information because it shows
-          you exactly which dependency failed to initialize and why.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Memory configuration</p>
-        <p>Above the env vars section you'll find a <strong>Memory</strong> dropdown that lets you change the Lambda's
-        allocated memory before invoking. Java Lambdas on LocalStack typically need at least <strong>2048 MB</strong>
-        for cold starts. If you're seeing <code class="text-xs bg-muted px-1 rounded">OutOfMemoryError</code> or the
-        Lambda times out during initialization, try bumping it up.</p>
-
-        <p class="font-medium text-foreground">Debug mode</p>
-        <p>The <strong>Debug Invoke</strong> button runs the Lambda with extra JVM flags
-        (<code class="text-xs bg-muted px-1 rounded">-verbose:class -Xlog:exceptions=info</code>) that produce detailed
-        class-loading and exception traces. These flags are automatically cleaned up after the invoke so they don't leak
-        into normal runs.</p>
-
-        <p class="font-medium text-foreground">Re-invoke</p>
-        <p>After invoking once, the <strong>Re-invoke</strong> button (⚡) becomes available on the deployment card. It
-        re-runs the function with the last payload without opening the invoke panel — useful for quick iteration.</p>
-      </CardContent>
-    </Card>
-    <!-- TRIGGERS -->
-    <Card v-if="active === 'triggers'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Database class="size-4" /> Triggers (Pipeline Builder)</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>The Triggers page lets you create end-to-end event-driven pipelines that emulate the team's real AWS
-        architecture: <strong>DynamoDB → Stream Handler Lambda → SNS → SQS → Target Lambda</strong>. Instead of
-        manually wiring up each resource through the AWS CLI or a YAML config, you walk through a visual wizard that
-        sets everything up for you.</p>
-
-        <p class="font-medium text-foreground">How the pipeline works</p>
-        <p>When you insert an item into the DynamoDB table, a DynamoDB Stream event fires and triggers the Stream Handler
-        Lambda. This is a lightweight Node.js function (auto-generated by Mouseketool) that reads the stream record,
-        extracts the item, and publishes it to an SNS topic. SNS then fans out the message to an SQS queue, which in
-        turn triggers your Target Lambda — the actual Java function you want to test.</p>
-
-        <p>This mirrors how the real infrastructure works in AWS, so you can test your Lambda's behavior in a realistic
-        event-driven context without deploying to the cloud.</p>
-
-        <p class="font-medium text-foreground">The wizard</p>
-        <p>Creating a pipeline is a 6-step process. The wizard guides you through each step:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Step 1 — Source</strong>: Choose the event source type. Currently only DynamoDB is supported.</li>
-          <li><strong>Step 2 — DynamoDB</strong>: Select an existing table or create a new one. Tables already used by
-          another pipeline are disabled and show an "In use" badge so you don't accidentally share resources.</li>
-          <li><strong>Step 3 — SNS</strong>: Select or create an SNS topic. Same resource locking applies.</li>
-          <li><strong>Step 4 — SQS</strong>: Select or create an SQS queue. You can optionally enable a
-          <strong>Dead Letter Queue (DLQ)</strong> with a configurable <code class="text-xs bg-muted px-1 rounded">maxReceiveCount</code>.
-          The DLQ catches messages that your Lambda fails to process after the specified number of retries.</li>
-          <li><strong>Step 5 — Lambdas</strong>: Select the target Lambda function (the one you deployed from the Builder).
-          The Stream Handler is auto-generated — you don't need to build or deploy it yourself.</li>
-          <li><strong>Step 6 — Add-ons</strong>: Optionally configure Vault secrets that should be created before the
-          pipeline is wired up. The secret values are applied as env vars on the target Lambda.</li>
-        </ul>
-
-        <p class="font-medium text-foreground" id="template-lambda">Template Lambdas</p>
-        <p>The Stream Handler Lambda is a template function that Mouseketool manages for you. It's a Node.js function
-        that reads DynamoDB Stream records, unmarshalls them into plain JSON objects, and publishes them to SNS.
-        For example, if your DynamoDB item is <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": {"S": "order-123"}, "count": {"N": "5"}}</code>,
-        the message published to SNS will be <code class="text-xs bg-muted px-1 py-0.5 rounded">{"pk": "order-123", "count": 5}</code>.
-        This means SNS filter policies can match directly on your item's field names and values without dealing with
-        DynamoDB's marshalled format.</p>
-        <p>Mouseketool tracks the template version using a
-        hash — if the template code changes (e.g. after an app update), the pipeline card will show an "outdated" badge
-        and you can redeploy the stream handler with one click.</p>
-
-        <p class="font-medium text-foreground">SNS Filter Policies</p>
-        <p>When selecting an SNS topic in Step 3, you can optionally enable a filter policy. This controls which messages
-        SNS delivers to the SQS queue. The filter policy builder supports 9 operator types: string exact match, prefix,
-        anything-but, anything-but prefix, suffix, wildcard, number exact match, number range, and key exists/not exists.
-        Values are entered as chips (type and press Enter). All rules are combined with AND logic. The filter is applied
-        on the SNS subscription, not the topic itself.</p>
-        <p>You can choose between <strong>Message body</strong> (default) and <strong>Message attributes</strong> as the
-        filter scope. Since the stream handler publishes unmarshalled items as the message body, Message body filtering
-        lets you match directly on your DynamoDB item fields.</p>
-
-        <p class="font-medium text-foreground">Background Pipeline Watcher</p>
-        <p>Mouseketool runs a continuous background worker that monitors CloudWatch logs for all pipeline stream handlers.
-        When a new invocation is detected (whether from a manual execution or an external DynamoDB insert), the watcher
-        spawns an observer that tracks the run through SNS, SQS, and the target Lambda in real-time. This means the
-        History page updates automatically without manual refresh. The observer polling interval is configurable in Settings.</p>
-
-        <p class="font-medium text-foreground">Shadow Infrastructure</p>
-        <p>Each pipeline gets its own shadow infrastructure deployed at wire time. A shared persistent S3 bucket
-        (<code>mouseketool-shadow</code>) stores all captured events. Per-pipeline shadow Lambdas capture events
-        to S3 for observation and diagnostic replay:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Direct Stream</strong> — A shadow Lambda subscribes to the DynamoDB stream alongside the target Lambda, capturing stream events to S3.</li>
-          <li><strong>Queue Consumer</strong> — A shadow Lambda is the sole consumer of the user's SQS queue. It captures events to S3 and relays messages to a relay queue that triggers the target Lambda.</li>
-          <li><strong>APP Pipeline</strong> — Two shadow Lambdas: one on the DynamoDB stream (captures items) and one on a shadow SQS queue subscribed to the SNS topic with the same filter policy (detects filter pass/block).</li>
-        </ul>
-        <p>Shadow resources are reconciled on every LocalStack restart. After LocalStack recovery, Lambda functions are also automatically redeployed from cached builds. If any shadow Lambda or ESM is missing, the entire shadow infrastructure for that pipeline is redeployed automatically.</p>
-
-        <p class="font-medium text-foreground">Managing pipelines</p>
-        <p>After creating a pipeline, it appears as a card on the Triggers page. You can select one or more pipelines
-        using the checkboxes and use the <strong>Actions</strong> dropdown to:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>See Steps</strong> — Opens a modal showing all the resources in the pipeline (table, topic, queue,
-          Lambdas) so you can verify the wiring.</li>
-          <li><strong>Delete Selected</strong> — Removes the pipeline and cleans up all associated resources: event source
-          mappings, the stream handler Lambda, SNS topic, SQS queues (including DLQ), and CloudWatch log groups. The
-          DynamoDB table and your target Lambda are <strong>not deleted</strong> since they may be used elsewhere.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Environment variables</p>
-        <p>You can configure env vars for the target Lambda from the pipeline edit page. These work the same way as
-        on the Deployments page — they're applied to the Lambda configuration and support the <strong>Exclude</strong>
-        checkbox to temporarily remove a var without deleting it.</p>
-
-        <p class="font-medium text-foreground">Pipeline Edit Page</p>
-        <p>Click the <strong>Edit</strong> button on a pipeline card to open the edit page. The left sidebar shows
-        clickable step bubbles for each resource in the pipeline (DynamoDB, Stream Handler, SNS, SQS, Target Lambda).
-        Clicking a step shows its read-only metadata on the right panel (ARN, status, item count, connected resources, etc.).
-        The SNS step also includes an editable filter policy builder. Below the step bubbles you'll find buttons for
-        Add-ons and Env Vars configuration.</p>
-        <p>The <strong>Heavy Load</strong> toggle in the top-right header increases the DynamoDB Stream batch size and
-        window for high-throughput scenarios. The <strong>Save</strong> button persists all changes atomically — filter
-        policies are updated on the SNS subscription, heavy load settings update the event source mapping, and vault
-        secrets are created in Vault. Changes are not applied until you click Save.</p>
-
-        <p class="font-medium text-foreground">Heavy Load Mode</p>
-        <p>When enabled (via the wizard Step 6 or the edit page), heavy load mode configures the DynamoDB Stream event
-        source mapping with a larger batch size and batch window. This causes the stream handler to wait longer and
-        collect more records before firing, which is useful when a backend service inserts many items rapidly. The batch
-        size and window are configurable from the Settings page and apply retroactively to all heavy load pipelines when
-        saved. A flickering flame icon appears next to the pipeline name when heavy load is active.</p>
-        <p><strong>Known limitation:</strong> LocalStack does not reliably honor <code class="text-xs bg-muted px-1 rounded">MaximumBatchingWindowInSeconds</code>.
-        Records may arrive split across multiple stream handler invocations regardless of the configured window. This
-        is a LocalStack Community Edition limitation and does not affect real AWS deployments.</p>
-
-        <p class="font-medium text-foreground">Inserts Only</p>
-        <p>By default, the template stream handler processes all DynamoDB Stream event types (INSERT, MODIFY, REMOVE).
-        If you only want to process new insertions, enable the <strong>Inserts only</strong> toggle on the Stream Handler
-        step of the edit page. This sets the <code class="text-xs bg-muted px-1 rounded">STREAM_INSERTS_ONLY</code> env
-        var on the stream handler Lambda, which skips MODIFY and REMOVE events.</p>
-
-        <p class="font-medium text-foreground">Batch Indicator</p>
-        <p>On the History page, a pulsating orange banner appears when items are actively being inserted into the
-        DynamoDB table for a heavy load pipeline. The count shows how many new items have landed since the last pipeline
-        run. The indicator persists across page navigations (it's tracked by the backend watcher) and disappears when
-        the stream handler fires and a new run appears in the history.</p>
-
-        <p class="font-medium text-foreground">Table Schema Save/Restore</p>
-        <p>You can save a DynamoDB table's schema (key schema, GSIs, LSIs, stream settings) for later restoration after
-        a LocalStack restart. Click <strong>Save Schema</strong> on the edit page's DynamoDB step or in the wizard's
-        table selection toolbar. Optionally include a seed item in DynamoDB JSON format that will be inserted when the
-        table is restored. Use <strong>Restore Table</strong> in the wizard to recreate a saved table.</p>
-      </CardContent>
-    </Card>
-
-    <!-- EXECUTION -->
-    <Card v-if="active === 'execution'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Bell class="size-4" /> Pipeline Execution</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Once you've created a pipeline, you can execute it by clicking the <strong>Execute</strong> button on the
-        pipeline card. This takes you to the Execution page where you can watch each step of the pipeline run in
-        real-time.</p>
-
-        <p class="font-medium text-foreground">What happens during execution</p>
-        <p>The execution follows 5 sequential steps. Each step waits for the previous one to complete before starting,
-        and if any step fails, the remaining steps are marked as "Skipped — previous step failed".</p>
-
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Step 1 — DynamoDB Insert</strong>: Mouseketool inserts a test item into the DynamoDB table. Before
-          doing this, it cleans the slate by purging the SQS queues and deleting CloudWatch log groups so that the logs
-          you see are guaranteed to be from this execution only.</li>
-          <li><strong>Step 2 — Stream Handler</strong>: Polls CloudWatch logs for the stream handler Lambda, filtering
-          by the execution start time. When logs appear, it means the DynamoDB Stream event was picked up and the handler
-          ran. The logs show both the raw DynamoDB record and the unmarshalled item.</li>
-          <li><strong>Step 3 — SNS Publish</strong>: Since SNS doesn't produce CloudWatch logs, this step is inferred
-          from evidence — if the SQS queue receives a message, it means SNS successfully delivered it.</li>
-          <li><strong>Step 4 — SQS Deliver</strong>: Checks SQS queue attributes and the DLQ to confirm the message
-          arrived. The message is often consumed very quickly by the target Lambda, so Mouseketool checks multiple
-          evidence sources rather than trying to catch the message in-flight.</li>
-          <li><strong>Step 5 — Target Lambda</strong>: Polls CloudWatch logs for your target Lambda. If no logs appear
-          within the timeout (which can happen with Java cold starts under CPU contention), Mouseketool performs a
-          <strong>diagnostic invoke</strong> — it calls the Lambda directly with an SQS-shaped payload to capture the
-          actual error.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Stop button</p>
-        <p>You can click <strong>Stop</strong> at any time to abort the execution. This cancels all pending polling and
-        marks the current step as stopped.</p>
-
-        <p class="font-medium text-foreground">A note about LocalStack</p>
-        <p>LocalStack's event source mapping pollers (the mechanism that triggers Lambdas from DynamoDB Streams and SQS)
-        can be slow or inconsistent on the free tier. If a step times out, it doesn't necessarily mean your wiring is
-        wrong — it may just be LocalStack being slow. Try running the execution again, or check the
-        <strong>History</strong> tab to see if the invocation eventually happened.</p>
-      </CardContent>
-    </Card>
-
-    <!-- HISTORY -->
-    <Card v-if="active === 'history'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Clock class="size-4" /> Pipeline History</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>The History page shows a record of every pipeline run, including ones that happened outside of the Execution
-        page (for example, if you insert an item into DynamoDB manually via the CLI). It works by querying CloudWatch
-        logs for both the Stream Handler and Target Lambda and correlating them by timestamp.</p>
-
-        <p class="font-medium text-foreground">How runs are tracked</p>
-        <p>Each run is identified by the Stream Handler's <code class="text-xs bg-muted px-1 rounded">RequestId</code>.
-        Mouseketool then looks for a Target Lambda invocation that happened within a 2-minute window after the handler
-        ran. If it finds one, the two are linked together as a single pipeline run.</p>
-
-        <p>Runs are persisted in <code class="text-xs bg-muted px-1 rounded">pipelines.json</code> so they survive
-        page refreshes and app restarts. Once a run is marked as "success" or "error", it's locked and won't change.
-        Pending runs that haven't resolved within 2 minutes are automatically marked as errors.</p>
-
-        <p class="font-medium text-foreground">DLQ detection</p>
-        <p>When a pending run times out, Mouseketool checks the Dead Letter Queue before giving up. If there are
-        messages in the DLQ, it means the target Lambda failed and SQS moved the message there after exhausting retries.
-        In this case, Mouseketool performs a <strong>diagnostic invoke</strong> — it calls the target Lambda directly to
-        capture the full error details (error message, type, stack trace, and local class diagnostic). This gives you
-        the same level of detail you'd see on the Deployments page.</p>
-
-        <p class="font-medium text-foreground">Live watch</p>
-        <p>Click the <strong>Watch Live</strong> button to enable automatic refresh via Server-Sent Events (SSE). When
-        a new run is detected or a pending run changes status, the page updates silently in the background — no loading
-        spinner, no blink. This is useful when you're inserting items into DynamoDB from another terminal and want to
-        see the results appear in real-time.</p>
-
-        <p class="font-medium text-foreground">Filtering runs</p>
-        <p>The toolbar at the top of the runs list lets you filter by state (Success, Error, Filtered, Diagnosing),
-        time range (5 min, 15 min, 1 hour, 6 hours), and source (All, Manual, External). All filters work together.
-        The run count on the right shows how many runs match the current filters out of the total.</p>
-
-        <p class="font-medium text-foreground">Clearing history</p>
-        <p>The <strong>Clear</strong> button removes all completed invocation records. Runs that are still pending or
-        being diagnosed are preserved. A confirmation dialog appears before clearing.</p>
-
-
-        <p class="font-medium text-foreground">Expanding a run</p>
-        <p>Click on any run to expand it and see the full logs for both the Stream Handler and Target Lambda. The logs
-        are color-coded the same way as on the Deployments page: <span class="text-red-400">red</span> for errors and
-        exceptions, <span class="text-yellow-400">yellow</span> for warnings, and
-        <span class="text-blue-400">blue</span> for section headers. Each run also shows the DynamoDB item that
-        triggered it (unmarshalled from the stream handler logs).</p>
-      </CardContent>
-    </Card>
-    <!-- CONSOLE -->
-    <Card v-if="active === 'console'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Terminal class="size-4" /> Log Console</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Every page that displays logs (Builder, Deployments, Execution, History) follows the same console pattern.
-        There's a compact inline view and an expanded full-screen view, both with the same set of features.</p>
-
-        <p class="font-medium text-foreground">Inline console</p>
-        <p>The inline console shows a scrollable log panel directly on the page. It has a fixed max height so it doesn't
-        push the rest of the page down. Logs never wrap — they scroll horizontally if a line is too long, which keeps
-        structured log output (like JSON) readable. Each panel has a <strong>Copy</strong> button that copies all log
-        content to your clipboard (with a toast confirmation) and an <strong>Expand</strong> button that opens the
-        full-screen view.</p>
-
-        <p class="font-medium text-foreground">Expanded console</p>
-        <p>The expanded console is a near full-screen modal (97% viewport width) with always-visible scrollbars. The
-        toolbar at the top includes:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Search</strong> — Click the magnifying glass icon to open the search bar. Type to filter: matching
-          lines stay fully visible while non-matching lines are dimmed to 20% opacity, so you keep the surrounding
-          context. Click the <strong>X</strong> button to close the search and clear the filter.</li>
-          <li><strong>Scroll to bottom</strong> (↓) — Jumps to the end of the log output. Available on Builder and
-          Deployments pages.</li>
-          <li><strong>Copy</strong> — Copies all log content to clipboard.</li>
-          <li><strong>Minimize</strong> — Closes the expanded view and returns to the inline console.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Color coding</p>
-        <p>Log lines are color-coded across all pages to help you spot important information at a glance:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><span class="text-red-400">Red</span> — Lines containing <code class="text-xs bg-muted px-1 rounded">ERROR</code>,
-          <code class="text-xs bg-muted px-1 rounded">Exception</code>,
-          <code class="text-xs bg-muted px-1 rounded">Caused by</code>, or
-          <code class="text-xs bg-muted px-1 rounded">FunctionError</code>.</li>
-          <li><span class="text-yellow-400">Yellow</span> — Warning lines (starting with ⚠).</li>
-          <li><span class="text-blue-400">Blue</span> — Section headers like
-          <code class="text-xs bg-muted px-1 rounded">── Diagnostics ──</code> or
-          <code class="text-xs bg-muted px-1 rounded">── Local Class Diagnostic ──</code>.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Root Cause panel</p>
-        <p>On the Deployments page, when a Lambda invocation fails, the expanded console shows a <strong>Root Cause</strong>
-        box at the top that extracts all <code class="text-xs bg-muted px-1 rounded">Caused by</code> lines from the
-        logs. This saves you from scrolling through a 200-line stack trace to find the one line that actually matters.</p>
-      </CardContent>
-    </Card>
-
-    <!-- ADD-ONS -->
-    <Card v-if="active === 'addons'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Shield class="size-4" /> Add-ons</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Add-ons are optional tools that run as part of the invoke or pipeline creation flow. They're configured in the
-        Add-on Settings screen that appears when you click Invoke on a deployment card, or in Step 6 of the pipeline
-        wizard.</p>
-
-        <p class="font-medium text-foreground">Vault</p>
-        <p>The Vault add-on creates secrets in a HashiCorp Vault instance. This is useful when your Lambda reads
-        configuration from Vault during initialization (like a <code class="text-xs bg-muted px-1 rounded">clientSecret</code>
-        for authentication).</p>
-
-        <p>To set it up:</p>
-        <ol class="list-decimal list-inside space-y-1.5 ml-1">
-          <li>Enter the <strong>Vault URL</strong> (e.g. <code class="text-xs bg-muted px-1 rounded">http://localhost:8200</code>)
-          and the <strong>Root Token</strong> (shown in the Vault container logs on startup).</li>
-          <li>Click <strong>Test Connection</strong> to verify Mouseketool can reach Vault.</li>
-          <li>Add one or more secret paths with key-value entries. For example, path
-          <code class="text-xs bg-muted px-1 rounded">dummy/secret</code> with key
-          <code class="text-xs bg-muted px-1 rounded">AUTH_CLIENT_SECRET</code>.</li>
-        </ol>
-
-        <p>A few things to know about how Vault secrets are handled:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Existence guard</strong> — If a secret already exists at the specified path, it's skipped (not
-          overwritten). Skipped secrets appear as warnings in the invoke logs.</li>
-          <li><strong>Auto-cleanup</strong> — When enabled, secrets that were created by Mouseketool are deleted from
-          Vault after invocation. Secrets that were skipped (because they already existed) are never deleted.</li>
-          <li><strong>KV engine</strong> — Mouseketool auto-detects whether your Vault instance uses KV v1 or v2.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Docker networking</p>
-        <p>This is a common gotcha. Lambda functions run inside Docker containers managed by LocalStack. Services running
-        on your host machine (like Vault on <code class="text-xs bg-muted px-1 rounded">localhost:8200</code>) are
-        <strong>not reachable via localhost</strong> from inside the Lambda container.</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li>If Vault runs on your host, use <code class="text-xs bg-muted px-1 rounded">http://host.docker.internal:8200</code>
-          in your Lambda's env vars.</li>
-          <li>If Vault runs in Docker on the same network as LocalStack, use the container hostname (e.g.
-          <code class="text-xs bg-muted px-1 rounded">http://vault:8200</code>).</li>
-          <li>Set <code class="text-xs bg-muted px-1 rounded">LAMBDA_DOCKER_NETWORK</code> in your LocalStack
-          docker-compose to put Lambda containers on the same network as your other services.</li>
-        </ul>
-      </CardContent>
-    </Card>
-
-    <!-- AI FEATURES -->
-    <Card v-if="active === 'ai'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Sparkles class="size-4" /> AI Features</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Mouseketool integrates with Kiro CLI to provide AI-powered features across the app. When Kiro is detected
-        on your system, a glowing purple badge appears in the header. If Kiro is not installed, AI features are hidden
-        and a gray badge with an install prompt is shown instead.</p>
-
-        <p class="font-medium text-foreground">Error Explanation</p>
-        <p>When a Lambda invocation fails and the Root Cause panel appears (in the Deployments page, History page, or
-        Execution page), an <strong>Explain with Kiro</strong> button lets you send the error context to Kiro for a
-        plain-English explanation and fix suggestion. In the minimized log view, a hint label says "Expand to use Kiro
-        Assistance" — the full button is available in the expanded log modal.</p>
-
-        <p class="font-medium text-foreground">Payload Generation</p>
-        <p>On the Deployments page, you can configure a <strong>Sample Path</strong> in the Invoke Settings view
-        (step 2). Point it to a folder containing JSON sample files and your project source code using the file
-        browser. Once configured, the payload editor toolbar shows a <strong>Generate</strong> button with two
-        options: Successful payload and Failure payload. Kiro reads the sample files and handler source code to
-        generate a realistic payload matching your intent.</p>
-
-        <p class="font-medium text-foreground">Pipeline Item Generation</p>
-        <p>On the Execution page, a <strong>Generate</strong> button next to the test item editor offers three
-        options: Successful item, Filtered item (intentionally fails the SNS filter), and Failure item. Kiro uses
-        learned data from previous pipeline runs, the table's key schema, the active filter policy, and any saved
-        favorites to generate items that match the pipeline's expected input.</p>
-
-        <p class="font-medium text-foreground">Pipeline Learning</p>
-        <p>Mouseketool automatically learns from every successful pipeline execution. Items that pass the SNS filter
-        are captured and stored locally (up to 50 per pipeline). These learned items are included as context when
-        generating new items, so generation quality improves over time. The storage location (local or S3) is
-        configurable in Settings.</p>
-
-        <p class="font-medium text-foreground">Evaluation and Feedback</p>
-        <p>After generating a payload or item, an <strong>Evaluate</strong> button appears. Clicking it opens a modal
-        where you rate the generation as good (thumbs up) or bad (thumbs down). Good samples are saved as favorites
-        for future generation context. Bad samples prompt you to explain what was wrong — Kiro uses this feedback to
-        avoid the same mistakes in future generations. Favorites and feedback are stored per deployment or pipeline.</p>
-      </CardContent>
-    </Card>
-
-    <!-- SELF-HEALING -->
-    <Card v-if="active === 'selfhealing'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><RefreshCw class="size-4" /> Pipeline Self-Healing</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>When LocalStack restarts, all AWS resources (tables, topics, queues, Lambdas, event source mappings) are
-        deleted. Mouseketool detects this automatically and recreates everything from locally persisted metadata.</p>
-
-        <p class="font-medium text-foreground">How it works</p>
-        <p>A health monitor polls LocalStack every 5 seconds. When it detects that LocalStack has recovered from being
-        unreachable, it runs a full reconciliation for every saved pipeline. During reconciliation, a blocking overlay
-        appears on the UI with "Restoring AWS Resources" to prevent interaction until the process completes.</p>
-
-        <p class="font-medium text-foreground">What gets recreated</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>DynamoDB tables</strong> — Restored from saved schemas. If no schema was saved, a generic table
-          with <code class="text-xs bg-muted px-1 rounded">pk</code> and <code class="text-xs bg-muted px-1 rounded">sk</code>
-          string keys is created. Always save your table schema from the pipeline edit page.</li>
-          <li><strong>SNS topics and SQS queues</strong> — Recreated with the same names. DLQ and redrive policies
-          are re-established.</li>
-          <li><strong>Stream handler Lambda</strong> — Redeployed from the template source code with the same
-          environment variables.</li>
-          <li><strong>Target Lambda</strong> — Redeployed from the cached build artifact. If the build was deleted,
-          the pipeline is flagged with a warning icon and you must select a new deployment from the edit page.</li>
-          <li><strong>Event source mappings</strong> — DynamoDB Stream to stream handler and SQS to target Lambda
-          connections are re-established with the same batch settings.</li>
-          <li><strong>SNS subscriptions</strong> — Recreated with the same filter policy and scope.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Vault secrets</p>
-        <p>Vault secret values are never stored by Mouseketool. After reconciliation, if a pipeline had Vault
-        configured, an amber "Secrets need recreation" badge appears on the pipeline card and edit page. You must
-        recreate the secrets manually through the Vault add-on configuration.</p>
-
-        <p class="font-medium text-foreground">Target Lambda missing</p>
-        <p>If the cached build for a target Lambda was deleted, an amber warning icon appears on the pipeline card.
-        On the edit page's Target Lambda step, a deployment selector lets you pick an available deployment to
-        reconnect the pipeline. Selecting a new target clears all previous execution logs.</p>
-      </CardContent>
-    </Card>
-
-        <!-- BATCH PROJECTS -->
-    <Card v-if="active === 'batch'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Container class="size-4" /> Batch Projects</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>The Batch Projects page is where you register Docker-based projects that use docker-compose for local
-        execution. Unlike the Builder page (which targets individual Java Lambda functions), Batch Projects manages
-        multi-container applications that run as a group.</p>
-
-        <p class="font-medium text-foreground">Registering a project</p>
-        <p>Use the file browser or paste a path to point Mouseketool at your project root. On registration,
-        Mouseketool scans the directory for Dockerfiles and docker-compose files. It detects common naming patterns
-        like <code class="text-xs bg-muted px-1 rounded">Dockerfile</code>,
-        <code class="text-xs bg-muted px-1 rounded">Dockerfile.local</code>,
-        <code class="text-xs bg-muted px-1 rounded">docker-compose.yml</code>, and
-        <code class="text-xs bg-muted px-1 rounded">compose.yaml</code> (including variants). If multiple compose
-        files are found, all of them are listed and you can choose which one to use at run time.</p>
-
-        <p class="font-medium text-foreground">Editing and deleting</p>
-        <p>Each registered project card shows the detected Dockerfile, image tag, compose services, and registration
-        time. Click the pencil icon to edit the Dockerfile and compose file paths if auto-detection picked the wrong
-        files. Click the trash icon to remove the project from the registry. This does not delete any files on disk.</p>
-
-        <p class="font-medium text-foreground">File watcher</p>
-        <p>Mouseketool watches registered project directories for changes to compose files and
-        <code class="text-xs bg-muted px-1 rounded">.env</code> files. When a change is detected, the Launchpad page
-        receives a notification via Server-Sent Events and automatically refreshes the scanned environment variables
-        and service list. A toast notification confirms the update.</p>
-      </CardContent>
-    </Card>
-
-    ﻿    <!-- LAUNCHPAD -->
-    <Card v-if="active === 'launchpad'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Layers class="size-4" /> Launchpad</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>The Launchpad page is the control center for running and orchestrating batch projects. It has two tabs:
-        <strong>Simple Run</strong> for direct docker-compose execution, and <strong>Workflow</strong> for building
-        visual job graphs.</p>
-
-        <p class="font-medium text-foreground">Simple Run</p>
-        <p>Simple Run lets you execute a registered project's docker-compose file with a single click. The flow is:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Project selection</strong> -- Pick a registered batch project from the dropdown.</li>
-          <li><strong>Compose file selection</strong> -- If the project has multiple compose files, a second dropdown
-          lets you choose which one to run. Changing the selection re-scans environment variables and services.</li>
-          <li><strong>Environment variable presets</strong> -- Mouseketool scans the compose file and referenced
-          <code class="text-xs bg-muted px-1 rounded">.env</code> files for environment variables, grouped by source.
-          You can view these via the "Scanned Env Vars" button. To customize values without modifying the original
-          files, click "Fork Env Vars" to create a named preset. Presets are editable, sortable, and can be activated
-          or deactivated. Only one preset can be active at a time. When no preset is active, the scanned defaults are
-          used.</li>
-          <li><strong>Port conflict detection</strong> -- Before starting containers, Mouseketool checks which host
-          ports are already in use. Conflicting ports are automatically remapped to the next available port. A badge
-          in the output header shows how many ports were remapped, and you can click the file icon to view the
-          effective docker-compose config with the applied changes.</li>
-          <li><strong>Effective config viewer</strong> -- After a run with port remaps, you can view the generated
-          docker-compose file that Mouseketool actually used. Port changes are shown in a summary panel with
-          before/after values, and the full YAML is syntax-highlighted.</li>
-          <li><strong>Container visualization</strong> -- The project info panel lists all services parsed from the
-          compose file. Expanding a service shows its volumes, environment variables, image, and port mappings. Volume
-          entries pointing to <code class="text-xs bg-muted px-1 rounded">.sh</code> files have a view button that
-          opens the file contents with syntax highlighting.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Workflow tab</p>
-        <p>The Workflow tab provides a visual canvas (powered by VueFlow) for building job dependency graphs. Each
-        node on the canvas represents a Docker container job with its own image, command, timeout, and environment
-        variable overrides. Nodes are connected by edges that define execution order.</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Creating workflows</strong> -- Click "New" to create a workflow, then "Add Job" to place nodes
-          on the canvas. Connect nodes by dragging from one handle to another.</li>
-          <li><strong>Importing from compose</strong> -- If a registered project has docker-compose services, you can
-          import them into a workflow. Services become nodes, <code class="text-xs bg-muted px-1 rounded">depends_on</code>
-          relationships become edges, and shared environment variables are extracted into the common env vars pool.
-          Batch projects referenced in the imported compose file are auto-registered if not already present.</li>
-          <li><strong>Common env vars</strong> -- Variables shared across all jobs in the workflow. Node-specific
-          overrides take precedence on key conflicts.</li>
-          <li><strong>Node editing</strong> -- Click a node to open the edit sheet where you can configure the job
-          name, Docker image, command override, timeout, and node-specific environment variables.</li>
-          <li><strong>Search and filters</strong> -- The workflow list includes a search bar for filtering by name
-          and filter controls for workflow type (imported vs scratch) and completion state.</li>
-          <li><strong>Workflow types</strong> -- Workflows are classified as <strong>imported</strong> (created from
-          an existing compose file) or <strong>scratch</strong> (built manually on the canvas). Each workflow tracks
-          a completion state that reflects whether all nodes have been configured and connected.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Compose Studio</p>
-        <p>Compose Studio is an AI-powered compose file builder available when creating a workflow from scratch.
-        It provides a Monaco editor for direct YAML editing alongside structured AI actions:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Generate</strong> -- Produces a complete docker-compose file from a natural language prompt.
-          Kiro generates the YAML based on your description of the services you need.</li>
-          <li><strong>Add Batch Project</strong> -- Inserts a service block for a registered batch project into the
-          current compose file, including its image, ports, and environment variables.</li>
-          <li><strong>Add Service</strong> -- Adds a new service definition to the compose file based on a
-          description of what the service should do.</li>
-          <li><strong>Add Healthchecks</strong> -- Generates healthcheck configurations for all services in the
-          current compose file that do not already have one.</li>
-          <li><strong>Evaluate</strong> -- Sends the current compose file to Kiro for review. Returns feedback on
-          potential issues, missing configurations, and improvement suggestions.</li>
-        </ul>
-
-        <p class="font-medium text-foreground">Workflow execution</p>
-        <p>Clicking "Run" on a workflow starts a foreground <code class="text-xs bg-muted px-1 rounded">docker compose up</code>
-        process. Each node on the canvas displays a live status indicator (pending, running, healthy, exited, error)
-        updated by per-node observers that track container state. Logs stream in real-time to the output panel.
-        Stopping the workflow sends a compose down signal and tears down all containers.</p>
-
-        <p class="font-medium text-foreground">Infrastructure services panel</p>
-        <p>The VueFlow canvas includes an infrastructure services panel that lists supporting containers (databases,
-        message brokers, caches) defined in the workflow. These are displayed separately from application nodes to
-        keep the dependency graph focused on your batch jobs while still showing the full picture of running
-        services.</p>
-
-        <p class="font-medium text-foreground">Auto-registration of batch projects</p>
-        <p>When importing a compose file into a workflow, Mouseketool checks each service against the batch project
-        registry. Services that reference a project directory not yet registered are automatically added to the
-        Batch Projects page. This keeps the registry in sync without requiring manual registration for every
-        project in a multi-service compose file.</p>
-      </CardContent>
-    </Card>
-
-    <!-- LOG VIEWER -->
-    <Card v-if="active === 'logviewer'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><MonitorPlay class="size-4" /> Log Viewer</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>All log viewers across the application (Builder, Deployments, Execution, History, and Launchpad) use a
-        shared LogViewer component with consistent behavior and controls:</p>
-        <ul class="list-disc list-inside space-y-1.5 ml-1">
-          <li><strong>Auto-scroll and follow mode</strong> -- New log lines automatically scroll into view while
-          follow mode is active. Scrolling up disables follow; clicking the arrow button re-enables it.</li>
-          <li><strong>Search</strong> -- The expanded view includes a search bar that dims non-matching lines to 20%
-          opacity while keeping matching lines fully visible, preserving surrounding context.</li>
-          <li><strong>Copy</strong> -- A copy button on both the inline and expanded views copies all log content to
-          the clipboard.</li>
-          <li><strong>Root cause panel</strong> -- When error lines are detected, a root cause panel appears at the
-          top of the log output, extracting <code class="text-xs bg-muted px-1 rounded">Caused by</code>,
-          <code class="text-xs bg-muted px-1 rounded">Exception</code>, and daemon error lines for quick
-          identification.</li>
-          <li><strong>Kiro explain</strong> -- When Kiro is available and errors are present, an "Explain with Kiro"
-          button in the expanded view sends the error context to Kiro for a plain-English explanation and fix
-          suggestion.</li>
-        </ul>
-      </CardContent>
-    </Card>
     <!-- SHORTCUTS -->
-    <Card v-if="active === 'shortcuts'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Keyboard class="size-4" /> Keyboard Shortcuts</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Mouseketool supports a few keyboard shortcuts to speed up common actions:</p>
+    <div v-if="active === 'shortcuts'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><Keyboard class="size-4 text-muted-foreground" /> Keyboard Shortcuts</h3>
+      </div>
+      <div class="text-sm text-muted-foreground space-y-3">
+        <p>Mouseketool supports keyboard shortcuts for common actions:</p>
         <div class="space-y-2">
-          <div class="flex items-center gap-3">
-            <code class="text-xs bg-muted px-2 py-0.5 rounded font-mono shrink-0">Ctrl + Enter</code>
+          <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
+            <code class="text-xs bg-zinc-950 text-zinc-300 border border-zinc-800 px-2.5 py-1 rounded font-mono shrink-0 shadow-sm">Ctrl + Enter</code>
             <span>Invoke the selected Lambda from the payload editor (Deployments page).</span>
           </div>
-          <div class="flex items-center gap-3">
-            <code class="text-xs bg-muted px-2 py-0.5 rounded font-mono shrink-0">Escape</code>
+          <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
+            <code class="text-xs bg-zinc-950 text-zinc-300 border border-zinc-800 px-2.5 py-1 rounded font-mono shrink-0 shadow-sm">Escape</code>
             <span>Close the expanded log console or any open modal/dialog.</span>
           </div>
         </div>
-        <p>These shortcuts work on all pages where the corresponding action is available.</p>
-      </CardContent>
-    </Card>
-
+      </div>
+    </div>
 
     <!-- TROUBLESHOOTING -->
-    <Card v-if="active === 'troubleshooting'">
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><AlertTriangle class="size-4" /> Troubleshooting</CardTitle>
-      </CardHeader>
-      <CardContent class="text-sm text-muted-foreground space-y-3">
-        <p>Here are the most common errors you might run into and how to fix them:</p>
+    <div v-if="active === 'troubleshooting'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><AlertTriangle class="size-4 text-muted-foreground" /> Troubleshooting</h3>
+      </div>
+      <div class="text-sm text-muted-foreground space-y-3">
+        <p>Common errors and how to fix them:</p>
 
-        <p class="font-medium text-foreground">ECONNREFUSED</p>
-        <p>LocalStack isn't running, or the host/port in Settings is wrong. Start your LocalStack container and verify
-        the connection settings.</p>
-
-        <p class="font-medium text-foreground">ECONNRESET</p>
-        <p>You're using the wrong protocol. If you're connecting over
-        <code class="text-xs bg-muted px-1 rounded">https</code> but LocalStack is running plain HTTP (or vice versa),
-        you'll get this error. Try switching the protocol in Settings.</p>
-
-        <p class="font-medium text-foreground">getaddrinfo EAI_AGAIN</p>
-        <p>The Host field in Settings contains a protocol prefix. Remove
-        <code class="text-xs bg-muted px-1 rounded">http://</code> or
-        <code class="text-xs bg-muted px-1 rounded">https://</code> and use just the hostname (e.g.
-        <code class="text-xs bg-muted px-1 rounded">localhost</code>).</p>
-
-        <p class="font-medium text-foreground">ExceptionInInitializerError</p>
-        <p>The Lambda class was found in the jar but crashed during static initialization. This almost always means a
-        dependency (Vault, a database, an external service) is unreachable from inside the Lambda container. Check your
-        env vars and make sure you're using <code class="text-xs bg-muted px-1 rounded">host.docker.internal</code>
-        instead of <code class="text-xs bg-muted px-1 rounded">localhost</code> for services running on your host
-        machine. The <strong>Local Class Diagnostic</strong> section in the invoke results will show you the full stack
-        trace.</p>
-
-        <p class="font-medium text-foreground">Vault URL mismatch</p>
-        <p>If the Lambda logs show a different Vault URL than what you configured in the env vars, the Java code may be
-        reading from an internal config file (like <code class="text-xs bg-muted px-1 rounded">application.properties</code>)
-        rather than the env var. Check the project's configuration files to see where the Vault URL is sourced from.</p>
-
-        <p class="font-medium text-foreground">Pipeline step times out</p>
-        <p>LocalStack's event source mapping pollers can be slow or inconsistent on the free tier. If a pipeline step
-        times out, it doesn't mean your wiring is wrong. Try running the execution again, restart the LocalStack
-        container to reset the pollers, or check the History page — the invocation may have happened after the timeout
-        window.</p>
-
-        <p class="font-medium text-foreground">Stale logs from previous invocations</p>
-        <p>LocalStack reuses warm Lambda containers. When you update env vars and invoke again, the logs might include
-        output from the previous container. Mouseketool mitigates this by killing warm containers before invoke (via
-        Docker) and skipping stale log sources when errors are detected. If you still see stale logs, try restarting
-        the LocalStack container.</p>
-      </CardContent>
-    </Card>
+        <div class="space-y-3">
+          <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
+            <p class="font-medium text-foreground text-xs mb-1">ECONNREFUSED</p>
+            <p class="text-xs">LocalStack isn't running, or the host/port in Settings is wrong. Start your LocalStack container and verify connection settings.</p>
+          </div>
+          <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
+            <p class="font-medium text-foreground text-xs mb-1">ECONNRESET</p>
+            <p class="text-xs">Wrong protocol. If using <code class="text-[10px] bg-muted px-1 rounded">https</code> but LocalStack runs HTTP (or vice versa), switch the protocol in Settings.</p>
+          </div>
+          <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
+            <p class="font-medium text-foreground text-xs mb-1">getaddrinfo EAI_AGAIN</p>
+            <p class="text-xs">Host field contains a protocol prefix. Remove <code class="text-[10px] bg-muted px-1 rounded">http://</code> and use just the hostname.</p>
+          </div>
+          <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
+            <p class="font-medium text-foreground text-xs mb-1">ExceptionInInitializerError</p>
+            <p class="text-xs">Class crashed during static initialization — a dependency is unreachable from inside the Lambda container. Use <code class="text-[10px] bg-muted px-1 rounded">host.docker.internal</code> instead of <code class="text-[10px] bg-muted px-1 rounded">localhost</code>. The Local Class Diagnostic shows the full stack trace.</p>
+          </div>
+          <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
+            <p class="font-medium text-foreground text-xs mb-1">Vault URL mismatch</p>
+            <p class="text-xs">Lambda may be reading from an internal config file rather than the env var. Check <code class="text-[10px] bg-muted px-1 rounded">application.properties</code> for where the Vault URL is sourced.</p>
+          </div>
+          <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
+            <p class="font-medium text-foreground text-xs mb-1">Pipeline step times out</p>
+            <p class="text-xs">LocalStack's ESM pollers can be slow on the free tier. Try again, restart LocalStack, or check History — the invocation may have happened after the timeout.</p>
+          </div>
+          <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
+            <p class="font-medium text-foreground text-xs mb-1">Stale logs from previous invocations</p>
+            <p class="text-xs">LocalStack reuses warm containers. Mouseketool mitigates by killing warm containers before invoke and skipping stale log sources. If still seeing stale logs, restart LocalStack.</p>
+          </div>
+        </div>
+      </div>
     </div>
+
+          </div>
+        </Transition>
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.tab-fade-enter-active { transition: opacity 0.2s ease, transform 0.2s ease; }
+.tab-fade-leave-active { transition: opacity 0.15s ease, transform 0.15s ease; }
+.tab-fade-enter-from { opacity: 0; transform: translateX(8px); }
+.tab-fade-leave-to { opacity: 0; transform: translateX(-8px); }
+
+.flow-dash {
+  background: repeating-linear-gradient(90deg, currentColor 0, currentColor 4px, transparent 4px, transparent 8px);
+  background-size: 200% 100%;
+  animation: flow 4s linear infinite;
+  height: 1px;
+  border: none;
+}
+
+@keyframes flow {
+  0% { background-position: 0% 0; }
+  100% { background-position: -200% 0; }
+}
+</style>

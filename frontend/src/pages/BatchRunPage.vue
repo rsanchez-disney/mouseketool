@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, computed, nextTick, inject } from "vue";
+import ParticleBurst from "@/components/ParticleBurst.vue";
 import { useRoute, useRouter } from "vue-router";
 import LogViewer from "@/components/LogViewer.vue";
 import { Card, CardContent } from "@/components/ui/card";
@@ -132,6 +133,9 @@ async function savePreset(presetId: string) {
 
 // Run
 const simpleRunning = ref(false);
+const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
+const confettiEnabled = ref(true);
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onBatch; } catch {} });
 const simpleLogs = ref<{ line: string }[]>([]);
 const simpleResult = ref<any>(null);
 const simpleError = ref("");
@@ -491,7 +495,7 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
     </Dialog>
 
     <!-- Toast -->
-    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
+    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
       <AlertTriangle v-if="toastType === 'warning'" class="size-4" />{{ toastMsg }}
     </div>
   </div>

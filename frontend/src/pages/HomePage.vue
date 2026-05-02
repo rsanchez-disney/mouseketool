@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+
+import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 import { useRouter } from "vue-router";
-import { Rocket, Layers, GitBranch, Container, Workflow, Activity, ArrowRight, Sparkles, RefreshCw, Gauge, Eye, LayoutGrid } from "lucide-vue-next";
+import { Rocket, Layers, GitBranch, Container, Workflow, Activity, ArrowRight, Sparkles, RefreshCw, Gauge, Eye, LayoutGrid , Lightbulb } from "lucide-vue-next";
 
 const router = useRouter();
 
@@ -106,9 +107,27 @@ function onMouseMove(e: MouseEvent) {
 
 function onMouseLeave() { mouse.x = -1000; mouse.y = -1000; }
 
+// Count-up animation
+const displayCounts = ref<Record<string, number>>({});
+function animateCountUp(key: string, target: number) {
+  if (!target) { displayCounts.value[key] = 0; return; }
+  const duration = 800;
+  const start = performance.now();
+  function tick() {
+    const elapsed = performance.now() - start;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    displayCounts.value[key] = Math.round(eased * target);
+    if (progress < 1) requestAnimationFrame(tick);
+  }
+  tick();
+}
+
 onMounted(async () => {
   try { stats.value = await (await fetch("/api/stats")).json(); } catch {}
+  setTimeout(() => { quickStats.value.forEach(s => { displayCounts.value[s.label] = 0; }); nextTick(() => { quickStats.value.forEach(s => animateCountUp(s.label, s.value)); }); }, 600);
   setTimeout(() => { loaded.value = true; }, 100);
+
   setInterval(() => { now.value = Date.now(); }, 1000);
   setTimeout(typeStep, 800);
   setTimeout(() => { initParticles(); animateParticles(); }, 200);
@@ -139,6 +158,20 @@ const successRate = computed(() => {
   const successes = stats.value?.pipelineStats.reduce((s, p) => s + (p.statusCounts.success || 0), 0) || 0;
   return Math.round((successes / totalRuns.value) * 100);
 });
+
+const hints = [
+  "Press <code class=\"text-[10px] bg-muted px-1 py-0.5 rounded font-mono\">Ctrl+.</code> to open the command palette and navigate anywhere instantly",
+  "Use <code class=\"text-[10px] bg-muted px-1 py-0.5 rounded font-mono\">Ctrl+Enter</code> to invoke a Lambda directly from the payload editor",
+  "Click any stat card below to jump directly to that section",
+  "The pipeline watcher detects runs from any source — manual or external — automatically",
+  "Toggle dark mode with the sun/moon icon — watch the reveal animation",
+  "Search the Help page to find answers across all sections at once",
+  "Env var presets on the Launchpad let you customize runs without editing files",
+  "The <code class=\"text-[10px] bg-muted px-1 py-0.5 rounded font-mono\">Re-invoke ⚡</code> button re-runs a Lambda with the last payload — no panel needed",
+];
+const weights = [2,1,1,3,1,1,1,1,1,1,3,3,1,3,3,3];
+const weighted = hints.flatMap((h, i) => Array(weights[i] || 1).fill(h));
+const currentHint = ref(weighted[Math.floor(Math.random() * weighted.length)]);
 
 const recentActivity = computed(() => {
   if (!stats.value) return [];
@@ -189,7 +222,7 @@ function statusDot(status: string): string {
 <template>
   <div class="min-h-full overflow-hidden scrollbar-thin">
     <!-- Hero Section with particle background -->
-    <div ref="heroRef" class="relative flex flex-col items-center justify-center pt-4 pb-6">
+    <div ref="heroRef" class="relative flex flex-col items-center justify-center pt-4 pb-2">
       <!-- <canvas ref="canvasRef" class="absolute inset-0 w-full h-full pointer-events-none" /> -->
 
       <!-- Logo -->
@@ -209,15 +242,15 @@ function statusDot(status: string): string {
         Disney developer tool for <span class="text-foreground font-medium">{{ currentPhrase }}</span><span class="animate-pulse">|</span>
       </p>
 
-      <div :class="['relative z-10 mt-3 flex items-center gap-2 text-xs text-muted-foreground transition-[opacity,transform] duration-1000 delay-500', loaded ? 'opacity-100' : 'opacity-0']">
-        <span class="relative flex size-2">
-          <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-          <span class="relative inline-flex rounded-full size-2 bg-emerald-500" />
-        </span>
-        Connected to LocalStack
-      </div>
     </div>
 
+    <!-- Hint -->
+    <div :class="['max-w-5xl mx-auto px-6 mb-3 transition-[opacity,transform] duration-1000 delay-400', loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4']">
+      <div class="flex items-center justify-center gap-2 py-1.5">
+        <Lightbulb class="size-3 text-muted-foreground/60 shrink-0" />
+        <p class="text-[11px] text-muted-foreground"><span class="font-medium text-muted-foreground/80">Hint:</span> <span v-html="currentHint" /></p>
+      </div>
+    </div>
     <!-- Quick Stats -->
     <div :class="['max-w-5xl mx-auto px-6 transition-[opacity,transform] duration-1000 delay-500', loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8']">
       <div class="grid grid-cols-5 gap-2.5">
@@ -229,7 +262,7 @@ function statusDot(status: string): string {
           <div :class="['flex items-center justify-center size-8 rounded-lg transition-transform group-hover:scale-110', s.bg]">
             <component :is="s.icon" :class="['size-4', s.color]" />
           </div>
-          <span class="text-xl font-bold tabular-nums">{{ s.value }}</span>
+          <span class="text-xl font-bold tabular-nums">{{ displayCounts[s.label] ?? s.value }}</span>
           <span class="text-[9px] text-muted-foreground uppercase tracking-wider">{{ s.label }}</span>
         </button>
       </div>
@@ -313,12 +346,12 @@ function statusDot(status: string): string {
           <p class="text-[10px] text-muted-foreground leading-relaxed">{{ f.desc }}</p>
         </div>
       </div>
-    </div>
-
     <!-- Empty state -->
     <div v-if="stats && !stats.counts.lambdas && !stats.counts.pipelines" :class="['max-w-5xl mx-auto px-6 mt-2 text-center transition-[opacity,transform] duration-1000 delay-900', loaded ? 'opacity-100' : 'opacity-0']">
       <p class="text-sm text-muted-foreground">Get started by building and deploying a Lambda function →</p>
       <button class="mt-3 text-xs text-violet-400 hover:text-violet-300 transition-colors cursor-pointer" @click="router.push('/builder')">Open Lambda Builder</button>
     </div>
   </div>
+  </div>
 </template>
+
