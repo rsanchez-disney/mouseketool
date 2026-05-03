@@ -166,7 +166,6 @@ const vaultSecrets = ref<{ path: string; entries: { key: string; value: string }
 const vaultCleanup = ref(false);
 const vaultTesting = ref(false);
 const vaultTestResult = ref<{ ok: boolean; message: string } | null>(null);
-const vaultSave = ref(false);
 
 // Delete confirm
 const confirmDelete = ref(false);
@@ -275,44 +274,29 @@ async function testVaultConnection() {
 function addSecret() { vaultSecrets.value.push({ path: "", entries: [{ key: "", value: "" }] }); }
 function removeSecret(i: number) { vaultSecrets.value.splice(i, 1); }
 
-const VAULT_STORAGE_KEY = "vault_addon_settings";
 
 async function saveVaultConfig() {
   vaultEnabled.value = true;
   vaultPanelOpen.value = false;
-  if (vaultSave.value) {
-    const stripped = vaultSecrets.value.map(s => ({ path: s.path, entries: s.entries.map(e => ({ key: e.key, value: "" })) }));
-    const data = JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets: stripped, cleanup: vaultCleanup.value });
-    localStorage.setItem(VAULT_STORAGE_KEY, data);
-  } else {
-    localStorage.removeItem(VAULT_STORAGE_KEY);
-  }
 }
   if (selected.value) fetch(`/api/deployments/${selected.value.functionName}/vault-config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: vaultUrl.value, token: vaultToken.value, secrets: vaultSecrets.value, cleanup: vaultCleanup.value }) }).catch(() => {});
 
 
 async function loadVaultConfig() {
-  const stored = localStorage.getItem(VAULT_STORAGE_KEY);
-  if (!stored) return;
-  const json = stored;
-  if (!json) { localStorage.removeItem(VAULT_STORAGE_KEY); return; }
-  try {
-    const data = JSON.parse(json);
-    vaultUrl.value = data.url || "";
-    vaultToken.value = data.token || "";
-    vaultSecrets.value = data.secrets || [];
-    vaultCleanup.value = data.cleanup || false;
-    vaultSave.value = true;
-    vaultEnabled.value = true;
-    const paths = (data.secrets || []).filter((s: any) => s.path).map((s: any) => s.path);
-    if (paths.length && data.url && data.token) {
-      try {
-        const r = await fetch("/api/vault/read-secrets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: data.url, token: data.token, paths }) });
-        const hydrated = await r.json();
-        for (const h of hydrated) { const s = vaultSecrets.value.find((vs: any) => vs.path === h.path); if (s && h.entries.length) s.entries = h.entries; }
-      } catch {}
-    }
-  } catch { localStorage.removeItem(VAULT_STORAGE_KEY); }
+  if (!selected.value?.vaultConfig) return;
+  const { url, token, paths } = selected.value.vaultConfig;
+  vaultUrl.value = url || "";
+  vaultToken.value = token || "";
+  vaultSecrets.value = (paths || []).map((p: string) => ({ path: p, entries: [{ key: "", value: "" }] }));
+  vaultCleanup.value = false;
+  vaultEnabled.value = true;
+  if (paths?.length && url && token) {
+    try {
+      const r = await fetch("/api/vault/read-secrets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, token, paths }) });
+      const hydrated = await r.json();
+      for (const h of hydrated) { const s = vaultSecrets.value.find((vs: any) => vs.path === h.path); if (s && h.entries.length) s.entries = h.entries; }
+    } catch {}
+  }
 }
 
 // --- Invoke ---
@@ -547,13 +531,35 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                   </div>
                   <div class="flex items-center gap-3">
                     <Badge v-if="vaultEnabled && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
-                    <span class="text-xs text-muted-foreground">{{ vaultEnabled ? 'Enabled' : 'Disabled' }}</span>
+
                     <Badge v-if="vaultEnabled && vaultTestResult && !vaultTestResult.ok && vaultUrl" class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]">Secrets may need recreation</Badge>
 
                     <Toggle v-model="vaultEnabled" />
                     <Button @click="vaultPanelOpen = true" :disabled="!vaultEnabled" variant="outline" size="sm" class="gap-1.5 cursor-pointer">
                       Configure
                     </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+
+            <!-- S3 Buckets Add-on (Coming Soon) -->
+            <Card class="!py-3 opacity-50 border-dashed pointer-events-none">
+              <CardContent class="py-3">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-3">
+                    <div class="size-9 rounded-lg bg-muted flex items-center justify-center">
+                      <HardDrive class="size-4" />
+                    </div>
+                    <div>
+                      <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming Soon</span></p>
+                      <p class="text-xs text-muted-foreground">Ensure required buckets and seed files exist before invocation</p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <Toggle :model-value="false" disabled />
+                    <Button variant="outline" size="sm" class="gap-1.5" disabled>Configure</Button>
                   </div>
                 </div>
               </CardContent>
@@ -827,15 +833,6 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
             </div>
             <Toggle v-model="vaultCleanup" />
           </div>
-        </div>
-
-        <!-- Save settings -->
-        <div class="flex items-center justify-between rounded-lg border p-4">
-          <div>
-            <p class="text-sm font-medium">Remember settings</p>
-            <p class="text-xs text-muted-foreground">Stored in this browser. Available across tabs and reloads.</p>
-          </div>
-          <Toggle v-model="vaultSave" />
         </div>
 
         <Button @click="saveVaultConfig" class="w-full cursor-pointer" :disabled="!vaultUrl || !vaultToken">

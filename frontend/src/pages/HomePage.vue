@@ -168,8 +168,17 @@ const hints = [
   "Search the Help page to find answers across all sections at once",
   "Env var presets on the Launchpad let you customize runs without editing files",
   "The <code class=\"text-[10px] bg-muted px-1 py-0.5 rounded font-mono\">Re-invoke ⚡</code> button re-runs a Lambda with the last payload — no panel needed",
+  "Vault settings are remembered per Lambda — configure once, invoke forever",
+  "Pipeline vault add-ons sync automatically from the target Lambda's config",
+  "Restarted LocalStack? Mouseketool auto-reconciles all pipelines — no manual rewiring needed",
+  "Self-healing recreates DynamoDB streams, SNS topics, SQS queues, and event source mappings automatically",
+  "The history watcher picks up external events too — anything that hits your pipeline table gets tracked",
+  "No setup needed — Mouseketool detects pipeline runs the moment they happen, zero configuration required",
+  "Pipeline reconciliation also verifies your Vault secrets are still intact",
+  "Point Mouseketool at any LocalStack instance and start building — fully plug-and-play",
+  "Lost your DynamoDB tables, SNS topics, or SQS queues? One reconciliation brings everything back",
 ];
-const weights = [2,1,1,3,1,1,1,1,1,1,3,3,1,3,3,3];
+const weights = [2,1,1,4,1,1,1,1,2,2,4,4,3,3,3,3,3,3,3];
 const weighted = hints.flatMap((h, i) => Array(weights[i] || 1).fill(h));
 const currentHint = ref(weighted[Math.floor(Math.random() * weighted.length)]);
 

@@ -627,7 +627,7 @@ onMounted(async () => {
           <TooltipTrigger as-child>
             <button class="rounded-lg border p-4 text-left transition-colors" :class="!kiroAvailable ? 'opacity-50 cursor-not-allowed' : wizardSource === 'scratch' ? 'border-primary bg-primary/5 cursor-pointer' : 'cursor-pointer hover:bg-muted/50'" :disabled="!kiroAvailable" @click="kiroAvailable && (wizardSource = 'scratch')">
               <FileCode2 class="size-5 mb-2 text-primary" />
-              <p class="text-sm font-medium">Start from scratch <Tooltip><TooltipTrigger as-child><span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-violet-500/15 text-violet-400 border border-violet-500/30 cursor-help">Beta</span></TooltipTrigger><TooltipContent>This feature uses AI and may produce inaccurate results</TooltipContent></Tooltip></p>
+              <p class="text-sm font-medium">Start from scratch <Tooltip><TooltipTrigger as-child><span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-violet-500/10 text-violet-400 cursor-help">Beta</span></TooltipTrigger><TooltipContent>This feature uses AI and may produce inaccurate results</TooltipContent></Tooltip></p>
               <p class="text-xs text-muted-foreground mt-1">Use Compose Studio with AI to build your compose file.</p>
             </button>
           </TooltipTrigger>

@@ -188,7 +188,7 @@ interface Pipeline { id: string; name: string; type?: string; sourceType: string
 function getWarnings(p: Pipeline): { message: string }[] {
   const w: { message: string }[] = [];
   if (p.targetMissing) w.push({ message: "Target Lambda build not found — select a deployment on the edit page" });
-  if (p.vaultIncomplete) w.push({ message: "Vault secrets need to be recreated after LocalStack restart" });
+  if (p.vaultIncomplete) w.push({ message: "Vault secrets may be missing — check the add-ons section" });
   return w;
 }
 const mappings = ref<Pipeline[]>([]);
@@ -557,7 +557,7 @@ function selectPipelineType(t: PipelineTypeDef) {
   if (firstKind === "lambda") { loadFunctions(); loadTemplates(); }
 }
 
-onMounted(() => { loadMappings(); loadPipelineStats(); });
+onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/triggers/pipelines/check-vault", { method: "POST" }).then(() => loadMappings()); });
 </script>
 
 <template>
@@ -637,7 +637,7 @@ onMounted(() => { loadMappings(); loadPipelineStats(); });
                 <component :is="typeIcons[t.icon] || Workflow" class="size-7 text-primary" />
                 <p class="text-sm font-semibold">{{ t.name }}</p>
                 <p class="text-xs text-muted-foreground leading-relaxed">{{ t.description }}</p>
-                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge><Badge v-if="t.disabled" class="text-[10px] bg-amber-500/20 text-amber-500 border-amber-500/40">Coming soon</Badge></div>
+                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge><Badge v-if="t.disabled" class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium border-0">Coming soon</Badge></div>
               </button>
             </TooltipTrigger>
             <TooltipContent v-if="t.disabled">{{ t.disabledReason }}</TooltipContent>
@@ -647,7 +647,7 @@ onMounted(() => { loadMappings(); loadPipelineStats(); });
               <HardDrive class="size-7 text-muted-foreground" />
               <p class="text-sm font-semibold text-muted-foreground">S3 Event Processor</p>
               <p class="text-xs text-muted-foreground leading-relaxed">Trigger a Lambda from S3 bucket events (object created, deleted).</p>
-              <div class="flex flex-wrap gap-1 pt-1"><Badge variant="secondary" class="text-[10px]">s3</Badge><Badge variant="secondary" class="text-[10px]">lambda</Badge><Badge class="text-[10px] bg-amber-500/20 text-amber-500 border-amber-500/40">Coming soon</Badge></div>
+              <div class="flex flex-wrap gap-1 pt-1"><Badge variant="secondary" class="text-[10px]">s3</Badge><Badge variant="secondary" class="text-[10px]">lambda</Badge><Badge class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium border-0">Coming soon</Badge></div>
             </div>
           </TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
         </div>
@@ -892,7 +892,7 @@ onMounted(() => { loadMappings(); loadPipelineStats(); });
                 </div>
                 <div class="flex items-center gap-3">
                   <Badge v-if="vaultEnabled && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
-                  <span class="text-xs text-muted-foreground">{{ vaultEnabled ? 'Enabled' : 'Disabled' }}</span>
+
                   <Toggle v-model="vaultEnabled" />
                   <Button @click="showVaultSheet = true" :disabled="!vaultEnabled" variant="outline" size="sm" class="gap-1.5 cursor-pointer">Configure</Button>
                 </div>
@@ -901,6 +901,25 @@ onMounted(() => { loadMappings(); loadPipelineStats(); });
           </Card>
 
           <!-- Info banner -->
+          <!-- S3 Buckets Add-on (Coming Soon) -->
+          <Card class="!py-3 opacity-50 border-dashed pointer-events-none">
+            <CardContent class="py-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="size-9 rounded-lg bg-muted flex items-center justify-center"><HardDrive class="size-4" /></div>
+                  <div>
+                    <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming Soon</span></p>
+                    <p class="text-xs text-muted-foreground">Ensure required buckets and seed files exist before execution</p>
+                  </div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <Toggle :model-value="false" disabled />
+                  <Button variant="outline" size="sm" class="gap-1.5" disabled>Configure</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <!-- Heavy Load Card -->
           <Card class="!py-3" :class="{ 'opacity-50': !selectedPipelineType?.supportsHeavyLoad }">
             <CardContent class="py-3">
@@ -913,7 +932,7 @@ onMounted(() => { loadMappings(); loadPipelineStats(); });
                   </div>
                 </div>
                 <div class="flex items-center gap-3">
-                  <span class="text-xs text-muted-foreground">{{ heavyLoad ? 'Enabled' : 'Disabled' }}</span>
+
                   <Tooltip :disabled="selectedPipelineType?.supportsHeavyLoad !== false"><TooltipTrigger as-child><span><Toggle v-model="heavyLoad" :disabled="!selectedPipelineType?.supportsHeavyLoad" /></span></TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
                 </div>
               </div>

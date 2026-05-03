@@ -258,6 +258,15 @@ router.post("/wire", async (req, res) => {
     pipelines.push(pipeline);
     savePipelines(pipelines);
 
+    // Sync vault config to deployment
+    if (vaultConfig && targetFunctionName) {
+      try {
+        const depsAll = JSON.parse(readFileSync(DEPLOYMENTS_FILE, "utf-8"));
+        const dep = depsAll.find((d: any) => d.functionName === targetFunctionName);
+        if (dep) { dep.vaultConfig = { url: vaultConfig.url, token: vaultConfig.token, paths: vaultConfig.paths }; writeFileSync(DEPLOYMENTS_FILE, JSON.stringify(depsAll, null, 2)); }
+      } catch {}
+    }
+
     // Deploy per-pipeline shadow infrastructure
     try {
       const { deployShadowForPipeline } = await import("../services/shadow-deploy.js");
@@ -278,6 +287,27 @@ router.post("/wire", async (req, res) => {
 router.get("/pipelines", (_req, res) => {
   res.json(loadPipelines());
 });
+
+// POST /api/triggers/pipelines/check-vault — verify vault secrets exist for all pipelines with vault config
+router.post("/pipelines/check-vault", async (_req, res) => {
+  const pipelines = loadPipelines();
+  const updates: string[] = [];
+  for (const p of pipelines) {
+    if (!p.vaultConfig?.paths?.length) continue;
+    try {
+      let missing = false;
+      for (const path of p.vaultConfig.paths) {
+        const r = await fetch(`${p.vaultConfig.url}/v1/secret/data/${path}`, { headers: { "X-Vault-Token": p.vaultConfig.token } });
+        if (!r.ok) { missing = true; break; }
+      }
+      if (missing && !(p as any).vaultIncomplete) { (p as any).vaultIncomplete = true; updates.push(p.id); }
+      else if (!missing && (p as any).vaultIncomplete) { (p as any).vaultIncomplete = false; updates.push(p.id); }
+    } catch { if (!(p as any).vaultIncomplete) { (p as any).vaultIncomplete = true; updates.push(p.id); } }
+  }
+  if (updates.length) savePipelines(pipelines);
+  res.json({ checked: pipelines.filter(p => p.vaultConfig?.paths?.length).length, updated: updates.length });
+});
+
 
 // GET /api/triggers/pipelines/:id/env
 router.get("/pipelines/:id/env", (req, res) => {
@@ -414,6 +444,16 @@ router.put("/pipelines/:id/edit", async (req, res) => {
     pipeline.addons = addons ?? pipeline.addons;
     if (vaultConfig) { pipeline.vaultConfig = vaultConfig; (pipeline as any).vaultIncomplete = false; }
     else if (addons && !addons.includes("vault")) delete pipeline.vaultConfig;
+    // Sync vault config back to the target deployment
+    if (vaultConfig && pipeline.targetFunctionName) {
+      try {
+        const { readFile, writeFile } = await import("fs/promises");
+        const { DEPLOYMENTS_FILE } = await import("../config/constants.js");
+        const deps = JSON.parse(await readFile(DEPLOYMENTS_FILE, "utf-8").catch(() => "[]"));
+        const dep = deps.find((d: any) => d.functionName === pipeline.targetFunctionName);
+        if (dep) { dep.vaultConfig = { url: vaultConfig.url, token: vaultConfig.token, paths: vaultConfig.paths }; await writeFile(DEPLOYMENTS_FILE, JSON.stringify(deps, null, 2)); }
+      } catch {}
+    }
     // Change target Lambda
     if (newTargetFunctionName && (newTargetFunctionName !== pipeline.targetFunctionName || (pipeline as any).targetMissing)) {
       // Delete old SQS → Target ESM
