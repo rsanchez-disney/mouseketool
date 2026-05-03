@@ -109,7 +109,9 @@ router.post("/", (req, res) => {
     send("log", { line: `$ cd ${projectPath}` });
     send("log", { line: `$ ${cmd} ${args}` });
 
-    const logFile = join(SETTINGS_DIR, `build-${Date.now()}.log`);
+    const earlyBuildId = uuid();
+    const logDir = join(SETTINGS_DIR, "build-logs", projectPath.replace(/[\\/:*?"<>|]/g, "_"), earlyBuildId); await mkdir(logDir, { recursive: true });
+    const logFile = join(logDir, `build-${Date.now()}.log`);
     const script = isWin
       ? `cd /d "${projectPath}" && ${cmd} ${args} > "${logFile}" 2>&1 & echo %errorlevel% > "${logFile}.exit"`
       : `cd "${projectPath}" && ${cmd} ${args} > "${logFile}" 2>&1; echo $? > "${logFile}.exit"`;
@@ -153,7 +155,7 @@ router.post("/", (req, res) => {
         const jarPath = await findJar(targetDir);
         if (!jarPath) { send("error", { message: "Build succeeded but no JAR found" }); finish(); return; }
 
-        const buildId = uuid();
+        const buildId = earlyBuildId;
         const buildDir = join(BUILDS_DIR, buildId);
         await mkdir(buildDir);
         const jarName = jarPath.split(/[/\\]/).pop()!;
@@ -304,6 +306,19 @@ export async function cleanupBuilds() {
       } catch {}
     }
     if (firstRun && settings.cleanup.deleteOnStartup) console.log("[cleanup] Deleted all cached builds on startup");
+  } catch {}
+  // Clean up old build log files
+  try {
+    const { readdir: rd2 } = await import("fs/promises");
+    const logBaseDir = join(SETTINGS_DIR, "build-logs");
+    const ttlMs = settings.cleanup.ttlMinutes * 60 * 1000;
+    for (const proj of await rd2(logBaseDir).catch(() => [] as string[])) {
+      const projDir = join(logBaseDir, proj);
+      for (const f of await rd2(projDir).catch(() => [] as string[])) {
+        const ts = parseInt(f.match(/build-(\d+)\.log/)?.[1] || "0");
+        if (ts && Date.now() - ts > ttlMs) await rm(join(projDir, f)).catch(() => {});
+      }
+    }
   } catch {}
   firstRun = false;
 }

@@ -1,4 +1,4 @@
-import { readFileSync, createWriteStream, mkdirSync } from "fs";
+import { readFileSync, createWriteStream, mkdirSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import archiver from "archiver";
@@ -50,7 +50,7 @@ async function zipTemplate(templateFile: string): Promise<Buffer> {
   const zipPath = join(SETTINGS_DIR, `shadow-${Date.now()}.zip`);
   mkdirSync(SETTINGS_DIR, { recursive: true });
   await createZip([{ name: "index.mjs", content: src }], zipPath);
-  return readFileSync(zipPath);
+  const bytes = readFileSync(zipPath); unlinkSync(zipPath); return bytes;
 }
 
 async function getDynamoStreamArn(tableName: string): Promise<string> {
