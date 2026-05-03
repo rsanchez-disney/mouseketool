@@ -62,7 +62,7 @@ onMounted(() => {
   }, 500);
 });
 
-async function toggleManaged(v: boolean) { settings.value.localstackManaged = v; await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings.value) }); initialSettings.value = JSON.stringify(settings.value); dirty.value = false; }
+async function toggleManaged(v: boolean) { const prev = initialSettings.value; settings.value.localstackManaged = v; initialSettings.value = JSON.stringify(settings.value); await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings.value) }); initialSettings.value = JSON.stringify(settings.value); dirty.value = false; }
 
 async function checkDocker() { try { const r = await (await fetch("/api/localstack/docker-check")).json(); dockerAvailable.value = r.available; portInUse.value = r.portInUse || false; } catch { dockerAvailable.value = false; } }
 async function checkLsStatus() { try { const r = await (await fetch("/api/localstack/status")).json(); lsStatus.value = r.status as any; } catch { lsStatus.value = "not_found"; } }
@@ -121,7 +121,7 @@ async function restoreDefaults() {
     <!-- Connection Tab -->
     <div v-show="tab === 'connection'" class="space-y-6">
       <!-- Infrastructure Carousel -->
-      <div class="relative mb-6">
+      <div class="relative">
         <div class="flex items-center justify-between mb-2">
           <span class="text-[10px] text-muted-foreground uppercase tracking-wider">Infrastructure Provider</span>
           <div class="flex items-center gap-1">
@@ -132,66 +132,45 @@ async function restoreDefaults() {
         </div>
         <div class="overflow-hidden rounded-xl">
           <div class="flex transition-transform duration-300 ease-in-out" :style="{ transform: `translateX(-${infraPanel * 100}%)` }">
+            <!-- LocalStack Panel -->
             <div class="w-full shrink-0">
-      <!-- LocalStack Management -->
-      <div class="rounded-xl border border-white/10 bg-gradient-to-br from-violet-500/5 to-cyan-500/5 p-5 mb-6">
-        <div class="flex items-center justify-between mb-3">
-          <div>
-            <h2 class="text-sm font-medium flex items-center gap-2">Managed LocalStack Instance</h2>
-            <p class="text-[11px] text-muted-foreground mt-0.5">Let Mouseketool manage a LocalStack container for you via Docker.</p>
-          </div>
-          <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="lsManaged" @update:model-value="toggleManaged" :disabled="!dockerAvailable || portInUse || lsStatus === 'running' || lsStarting" /></span></TooltipTrigger><TooltipContent>{{ lsStarting ? "Can't disable while the container is starting" : lsStatus === "running" ? "Stop the container before disabling" : !dockerAvailable ? "Docker not detected" : portInUse ? "Port 4566 in use" : "Enable managed LocalStack" }}</TooltipContent></Tooltip>
-        </div>
-
-        <div v-if="!dockerAvailable" class="text-[11px] text-amber-500 flex items-center gap-1.5 mb-3"><AlertTriangle class="size-3" /> Docker not detected on this system. Install Docker to enable this feature.</div>
-        <div v-if="dockerAvailable && portInUse && !lsManaged" class="text-[11px] text-amber-500 flex items-center gap-1.5 mb-3"><AlertTriangle class="size-3" /> Port 4566 is already in use. Stop the existing process to enable managed mode.</div>
-
-        <div v-if="lsManaged" class="space-y-4">
-          <!-- Status -->
-          <div class="flex items-center justify-between rounded-lg bg-white/[0.03] border border-white/5 px-4 py-3">
-            <div class="flex items-center gap-3">
-              <span v-if="lsStatus === 'running'" class="relative flex size-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span class="relative inline-flex rounded-full size-2.5 bg-emerald-500" /></span>
-              <div v-else :class="['size-2.5 rounded-full', lsStatus === 'loading' ? 'bg-zinc-500 animate-pulse' : 'bg-zinc-600']" />
-              <div>
-                <p class="text-xs font-medium">{{ lsStatus === "running" ? "Running" : lsStatus === "exited" ? "Stopped" : lsStatus === "loading" ? "Checking..." : "Not Started" }}</p>
-                <p class="text-[10px] text-muted-foreground font-mono">mouseketool-localstack · localstack/localstack:community-archive</p>
+              <div class="rounded-xl border border-white/10 bg-gradient-to-br from-violet-500/5 to-cyan-500/5 p-5">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <h2 class="text-sm font-medium">Managed LocalStack Instance</h2>
+                    <p class="text-[11px] text-muted-foreground mt-0.5">Let Mouseketool manage a LocalStack container for you via Docker.</p>
+                  </div>
+                  <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="lsManaged" @update:model-value="toggleManaged" :disabled="!dockerAvailable || portInUse || lsStatus === 'running' || lsStarting" /></span></TooltipTrigger><TooltipContent>{{ lsStarting ? "Can't disable while the container is starting" : lsStatus === "running" ? "Stop the container before disabling" : !dockerAvailable ? "Docker not detected" : portInUse ? "Port 4566 in use" : "Enable managed LocalStack" }}</TooltipContent></Tooltip>
+                </div>
+                <div v-if="!dockerAvailable" class="text-[11px] text-amber-500 flex items-center gap-1.5 mt-3"><AlertTriangle class="size-3" /> Docker not detected. Install Docker to enable this feature.</div>
+                <div v-if="dockerAvailable && portInUse && !lsManaged" class="text-[11px] text-amber-500 flex items-center gap-1.5 mt-3"><AlertTriangle class="size-3" /> Port 4566 is already in use.</div>
+                <div class="space-y-4 mt-4">
+                    <div class="flex items-center justify-between rounded-lg bg-white/[0.03] border border-white/5 px-4 py-3">
+                      <div class="flex items-center gap-3">
+                        <span v-if="lsStatus === 'running'" class="relative flex size-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span class="relative inline-flex rounded-full size-2.5 bg-emerald-500" /></span>
+                        <div v-else :class="['size-2.5 rounded-full', lsStatus === 'loading' ? 'bg-zinc-500 animate-pulse' : 'bg-zinc-600']" />
+                        <div>
+                          <p class="text-xs font-medium">{{ lsStatus === "running" ? "Running" : lsStatus === "exited" ? "Stopped" : lsStatus === "loading" ? "Checking..." : "Not Started" }}</p>
+                          <p class="text-[10px] text-muted-foreground font-mono">mouseketool-localstack · localstack/localstack:community-archive</p>
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <Button v-if="lsStatus !== 'running'" size="sm" @click="startLs" :disabled="!lsManaged || lsStarting || lsStatus === 'loading'" class="gap-1.5 text-xs h-7 cursor-pointer"><Loader2 v-if="lsStarting" class="size-3 animate-spin" /><Power v-else class="size-3" /> {{ lsStarting ? "Starting..." : "Start" }}</Button>
+                        <Button v-else variant="outline" size="sm" @click="stopLs" :disabled="!lsManaged || lsStopping" class="gap-1.5 text-xs h-7 cursor-pointer text-red-400 hover:text-red-300"><Loader2 v-if="lsStopping" class="size-3 animate-spin" /><Square v-else class="size-3" /> {{ lsStopping ? "Stopping..." : "Stop" }}</Button>
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-[11px]">
+                      <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">Endpoint</p><p class="font-mono mt-0.5">http://localhost:4566</p></div>
+                      <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">Network</p><p class="font-mono mt-0.5">mouseketool-network</p></div>
+                      <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">Data Persistence</p><p class="font-mono mt-0.5">.data/localstack-data</p></div>
+                      <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">Host Access</p><p class="font-mono mt-0.5">host.docker.internal</p></div>
+                    </div>
+                    <p class="text-[10px] text-muted-foreground">Lambdas can reach host services via <code class="text-[10px]">host.docker.internal</code>.</p>
+                </div>
               </div>
             </div>
-            <div class="flex items-center gap-2">
-              <Button v-if="lsStatus !== 'running'" size="sm" @click="startLs" :disabled="lsStarting || lsStatus === 'loading'" class="gap-1.5 text-xs h-7 cursor-pointer">
-                <Loader2 v-if="lsStarting" class="size-3 animate-spin" /><Power v-else class="size-3" /> {{ lsStarting ? "Starting..." : "Start" }}
-              </Button>
-              <Button v-else variant="outline" size="sm" @click="stopLs" :disabled="lsStopping" class="gap-1.5 text-xs h-7 cursor-pointer text-red-400 hover:text-red-300">
-                <Loader2 v-if="lsStopping" class="size-3 animate-spin" /><Square v-else class="size-3" /> {{ lsStopping ? "Stopping..." : "Stop" }}
-              </Button>
-            </div>
-          </div>
-
-          <!-- Info -->
-          <div class="grid grid-cols-2 gap-3 text-[11px]">
-            <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
-              <p class="text-muted-foreground">Endpoint</p>
-              <p class="font-mono mt-0.5">http://localhost:4566</p>
-            </div>
-            <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
-              <p class="text-muted-foreground">Network</p>
-              <p class="font-mono mt-0.5">mouseketool-network</p>
-            </div>
-            <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
-              <p class="text-muted-foreground">Data Persistence</p>
-              <p class="font-mono mt-0.5">.data/localstack-data</p>
-            </div>
-            <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2">
-              <p class="text-muted-foreground">Host Access</p>
-              <p class="font-mono mt-0.5">host.docker.internal</p>
-            </div>
-          </div>
-          <p class="text-[10px] text-muted-foreground">Lambdas running inside this instance can reach host services (e.g. Vault on localhost:8200) via <code class="text-[10px]">host.docker.internal</code>.</p>
-        </div>
-      </div>
-            </div>
+            <!-- MiniStack Panel -->
             <div class="w-full shrink-0">
-              <!-- MiniStack Panel -->
               <div class="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/5 to-teal-500/5 p-5">
                 <div class="flex items-center justify-between mb-3">
                   <div>
@@ -201,15 +180,7 @@ async function restoreDefaults() {
                   <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="false" disabled /></span></TooltipTrigger><TooltipContent>Coming in a future version</TooltipContent></Tooltip>
                 </div>
                 <div class="space-y-3 opacity-50">
-                  <div class="flex items-center justify-between rounded-lg bg-white/[0.03] border border-white/5 px-4 py-3">
-                    <div class="flex items-center gap-3">
-                      <div class="size-2.5 rounded-full bg-zinc-600" />
-                      <div>
-                        <p class="text-xs font-medium">Not Available</p>
-                        <p class="text-[10px] text-muted-foreground font-mono">mouseketool-ministack · ministackorg/ministack:latest</p>
-                      </div>
-                    </div>
-                  </div>
+                  <div class="flex items-center justify-between rounded-lg bg-white/[0.03] border border-white/5 px-4 py-3"><div class="flex items-center gap-3"><div class="size-2.5 rounded-full bg-zinc-600" /><div><p class="text-xs font-medium">Not Available</p><p class="text-[10px] text-muted-foreground font-mono">mouseketool-ministack · ministackorg/ministack:latest</p></div></div></div>
                   <div class="grid grid-cols-2 gap-3 text-[11px]">
                     <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">Image Size</p><p class="font-mono mt-0.5">~270 MB</p></div>
                     <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">RAM at Idle</p><p class="font-mono mt-0.5">~21 MB</p></div>
