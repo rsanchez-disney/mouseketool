@@ -12,7 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
-  Database, Zap, Bell, Inbox, ArrowLeft, Save, Loader2, AlertTriangle, Check, X, Plus, ListFilter, Lock, Settings2, Package, Plug, CheckCircle2, XCircle, ShieldAlert, ChevronDown,
+  Database, Zap, Bell, Inbox, ArrowLeft, Save, Loader2, AlertTriangle, Check, X, Plus, ListFilter, Lock, Settings2, Package, Plug, CheckCircle2, XCircle, ShieldAlert, ChevronDown, HardDrive,
 } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
@@ -644,7 +644,6 @@ async function save() {
                 <Badge v-if="addons.includes('vault') && vaultTestResult?.ok" class="bg-green-500/10 text-green-600 border-green-500/20 text-[10px]">Connected</Badge>
                 <Badge v-if="pipeline?.vaultIncomplete" class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]">Secrets need recreation</Badge>
 
-                <span class="text-xs text-muted-foreground">{{ addons.includes('vault') ? 'Enabled' : 'Disabled' }}</span>
                 <Toggle :model-value="addons.includes('vault')" @update:model-value="addons.includes('vault') ? addons = addons.filter(a => a !== 'vault') : addons.push('vault')" />
               </div>
             </div>
@@ -722,6 +721,26 @@ async function save() {
             </div>
           </CardContent>
         </Card>
+
+        <!-- S3 Buckets Add-on (Coming Soon) -->
+        <Card class="!py-3 opacity-50 border-dashed pointer-events-none">
+          <CardContent class="py-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="size-9 rounded-lg bg-muted flex items-center justify-center"><HardDrive class="size-4" /></div>
+                <div>
+                  <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming Soon</span></p>
+                  <p class="text-xs text-muted-foreground">Ensure required buckets and seed files exist before execution</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-3">
+
+                <Toggle :model-value="false" disabled />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
       </template>
 
       <!-- Env Vars panel -->

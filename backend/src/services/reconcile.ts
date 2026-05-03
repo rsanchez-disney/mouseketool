@@ -258,10 +258,24 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
   // Mark target missing on pipeline for UI
   (p as any).targetMissing = r.targetMissing;
 
-  // Mark vault incomplete if vault was configured but secrets can't be recreated (no values stored)
+  // Check vault secrets still exist after reconciliation
   if (p.vaultConfig && p.vaultConfig.paths?.length && r.actions.length) {
-    (p as any).vaultIncomplete = true;
-    r.warnings.push("Vault secrets need to be recreated — values are not stored");
+    try {
+      const missing: string[] = [];
+      for (const path of p.vaultConfig.paths) {
+        const vr = await fetch(`${p.vaultConfig.url}/v1/secret/data/${path}`, { headers: { "X-Vault-Token": p.vaultConfig.token } });
+        if (!vr.ok) missing.push(path);
+      }
+      if (missing.length) {
+        (p as any).vaultIncomplete = true;
+        r.warnings.push(`Vault secrets missing: ${missing.join(", ")}`);
+      } else {
+        (p as any).vaultIncomplete = false;
+      }
+    } catch {
+      (p as any).vaultIncomplete = true;
+      r.warnings.push("Could not reach Vault to verify secrets");
+    }
   }
 }
 
