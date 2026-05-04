@@ -12,8 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
-  Database, Zap, Bell, Inbox, ArrowLeft, Save, Loader2, AlertTriangle, Check, X, Plus, ListFilter, Lock, Settings2, Package, Plug, CheckCircle2, XCircle, ShieldAlert, ChevronDown, HardDrive,
-} from "lucide-vue-next";
+  Database, Zap, Bell, Inbox, ArrowLeft, Save, Loader2, AlertTriangle, Check, X, Plus, ListFilter, Lock, Settings2, Package, Plug, CheckCircle2, XCircle, ShieldAlert, ChevronDown, HardDrive, Info } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 
@@ -54,6 +53,7 @@ const vaultToken = ref("");
 
 // Env var panel state (inline, not modal)
 const envVars = ref<{ key: string; value: string; isNull?: boolean }[]>([]);
+const envSource = ref("");
 const lsManaged = ref(false);
 const hasLocalhostEnv = computed(() => lsManaged.value && envVars.value.some((e: any) => e.value?.includes("http://localhost")));
 onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); lsManaged.value = !!s.localstackManaged; } catch {} });
@@ -63,6 +63,7 @@ const origEnvVars = ref("");
 async function loadEnvVars() {
   if (!pipeline.value || envLoaded.value || pipeline.value.targetMissing) return;
   try { envVars.value = await (await fetch(`/api/deployments/lambda-env/${pipeline.value.targetFunctionName}`)).json(); } catch { envVars.value = []; }
+  try { const deps = await (await fetch("/api/deployments")).json(); const dep = deps.find((d: any) => d.functionName === pipeline.value?.targetFunctionName); envSource.value = dep?.envSource || ""; } catch {}
   if (!envVars.value.length) envVars.value.push({ key: "", value: "" });
   envLoaded.value = true;
   origEnvVars.value = JSON.stringify(envVars.value);
@@ -722,14 +723,14 @@ async function save() {
           </CardContent>
         </Card>
 
-        <!-- S3 Buckets Add-on (Coming Soon) -->
+        <!-- S3 Buckets Add-on (Coming soon) -->
         <Card class="!py-3 opacity-50 border-dashed pointer-events-none">
           <CardContent class="py-3">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
                 <div class="size-9 rounded-lg bg-muted flex items-center justify-center"><HardDrive class="size-4" /></div>
                 <div>
-                  <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming Soon</span></p>
+                  <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming soon</span></p>
                   <p class="text-xs text-muted-foreground">Ensure required buckets and seed files exist before execution</p>
                 </div>
               </div>
@@ -748,7 +749,7 @@ async function save() {
         <Card>
           <CardHeader class="pb-3">
             <div class="flex items-center justify-between">
-              <CardTitle class="text-sm flex items-center gap-2"><Settings2 class="size-4" /> Environment Variables <Badge variant="outline" class="text-[10px]">{{ envVars.filter(e => e.key).length }}</Badge></CardTitle>
+              <CardTitle class="text-sm flex items-center gap-2"><Settings2 class="size-4" /> Environment Variables <Badge variant="outline" class="text-[10px]">{{ envVars.filter(e => e.key).length }}</Badge><Tooltip v-if="envSource"><TooltipTrigger as-child><Info class="size-3 text-muted-foreground" /></TooltipTrigger><TooltipContent>Detected from {{ envSource }}</TooltipContent></Tooltip></CardTitle>
               <div class="flex items-center gap-2">
                 <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="addEnvVar"><Plus class="size-3.5" /> Add</Button>
                 

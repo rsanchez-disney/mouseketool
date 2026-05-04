@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watchEffect, onMounted, onUnmounted, provide } from "vue";
+import { ref, computed, watchEffect, onMounted, onUnmounted, provide } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import CommandPalette from "@/components/CommandPalette.vue";
-import { Home, Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play } from "lucide-vue-next";
+import { Home, Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play, FolderKanban } from "lucide-vue-next";
 
 const route = useRoute();
 const router = useRouter();
@@ -45,19 +45,38 @@ async function checkHealth() {
     isReconciling.value = !!data.reconciling;
   } catch { localstackDown.value = true; }
 }
-onMounted(() => { checkHealth(); healthInterval = setInterval(checkHealth, 5000); checkKiro(); });
+onMounted(() => { checkHealth(); healthInterval = setInterval(checkHealth, 5000); checkKiro(); loadProfileState(); });
 onUnmounted(() => { if (healthInterval) clearInterval(healthInterval); });
+
+// Active profile badge
+const activeProfileName = ref("");
+async function loadProfileState() {
+  try {
+    const [state, profiles] = await Promise.all([
+      fetch("/api/profile/state").then(r => r.json()),
+      fetch("/api/profile").then(r => r.json()),
+    ]);
+    if (state?.activeProfile) {
+      const p = (profiles as any[]).find((pr: any) => pr.id === state.activeProfile);
+      activeProfileName.value = p?.name || state.activeProfile;
+    }
+  } catch {}
+}
 
 // Kiro AI detection
 const kiroAvailable = ref(false);
 provide("kiroAvailable", kiroAvailable);
 provide("themeAnimation", themeAnimation);
 async function checkKiro() { try { const r = await fetch("/api/ai/status"); const d = await r.json(); kiroAvailable.value = d.available; } catch {} }
-const serverlessNav = [
-  { label: "Lambda Builder", path: "/builder", icon: Rocket },
-  { label: "Deployments", path: "/deployments", icon: CloudCog },
-  { label: "Triggers", path: "/triggers", icon: Workflow },
-];
+const serverlessNav = computed(() => {
+  const items: any[] = [
+    { label: "Lambda Builder", path: "/builder", icon: Rocket },
+    { label: "Deployments", path: "/deployments", icon: CloudCog },
+    { label: "Triggers", path: "/triggers", icon: Workflow },
+  ];
+  if (activeProfileName.value) items.splice(1, 0, { label: "Projects", path: "/projects", icon: FolderKanban });
+  return items;
+});
 const batchNav = [
   { label: "Batch Projects", path: "/batch-projects", icon: Container },
   { label: "Launchpad", path: "/launchpad", icon: Play },
@@ -65,7 +84,7 @@ const batchNav = [
 const otherNav = [
   { label: "Settings", path: "/settings", icon: Settings },
 ];
-const allNav = [{ label: "Home", path: "/", icon: Home }, ...serverlessNav, ...batchNav, ...otherNav];
+const allNav = computed(() => [{ label: "Home", path: "/", icon: Home }, ...serverlessNav.value, ...batchNav, ...otherNav]);
 </script>
 
 <template>
@@ -163,6 +182,7 @@ const allNav = [{ label: "Home", path: "/", icon: Home }, ...serverlessNav, ...b
             {{ allNav.find(n => n.path === route.path || route.path.startsWith(n.path + '/'))?.label ?? 'Mouseketool' }}
           </span>
           <div class="ml-auto flex items-center gap-2">
+            <Tooltip v-if="activeProfileName"><TooltipTrigger as-child><div class="flex items-center px-2.5 py-1 rounded-md border border-foreground/20 bg-foreground/5 cursor-pointer hover:bg-foreground/10 transition-colors" @click="navTo('/settings?tab=profile')"><span class="text-[11px] font-medium text-foreground/80">{{ activeProfileName }}</span></div></TooltipTrigger><TooltipContent side="bottom">Active profile</TooltipContent></Tooltip>
             <Tooltip v-if="kiroAvailable">
               <TooltipTrigger as-child>
                 <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-violet-500/15 to-purple-500/15 border border-violet-500/40 shadow-[0_0_8px_rgba(139,92,246,0.15)]">

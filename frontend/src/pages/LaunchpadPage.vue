@@ -537,13 +537,13 @@ onMounted(async () => {
     </div>
 
     <!-- Step 0: Landing — Workflow List -->
-    <div v-if="wizardStep === 0" class="max-w-3xl mx-auto space-y-4">
+    <div v-if="wizardStep === 0" class="space-y-4">
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-lg font-semibold">Workflows</h2>
           <p class="text-xs text-muted-foreground">Visual docker-compose orchestration with dependency graphs.</p>
         </div>
-        <Button size="sm" class="gap-1.5 cursor-pointer" @click="startNewWorkflow"><Plus class="size-3.5" /> New Workflow</Button>
+        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="startNewWorkflow"><Plus class="size-3.5" /> New Workflow</Button>
       </div>
       <!-- Search & Filters -->
       <div class="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2">

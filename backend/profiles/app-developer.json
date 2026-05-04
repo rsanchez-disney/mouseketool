@@ -1,0 +1,34 @@
+{
+  "id": "app-developer",
+  "name": "APP Developer",
+  "description": "Profile for members of the APP development team",
+  "version": 1,
+  "org": "DisneyPaymentsOrg",
+  "lambdas": [
+    {
+      "repoName": "wdpr-app-retry-handler",
+      "displayName": "Payment Retry Handler"
+    },
+    {
+      "repoName": "wdpr-app-payment-stream-handler",
+      "displayName": "Payment Stream Handler"
+    },
+    {
+      "repoName": "wdpr-app-dlp-payment-stream-handler",
+      "displayName": "DLP Payment Stream Handler"
+    }
+  ],
+  "batches": [
+    {
+      "repoName": "wdpr-app-credit-settlement-batch",
+      "displayName": "Credit Settlement Batch",
+      "composeFile": "docker-compose-local.yml"
+    },
+    {
+      "repoName": "wdpr-app-apmp-contract-submission-batch",
+      "displayName": "Contract Submission Batch",
+      "composeFile": "docker-compose-local.yml"
+    }
+  ],
+  "pipelineTypes": ["app-pipeline"]
+}

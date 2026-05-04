@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,26 +8,56 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import FolderBrowser from "@/components/FolderBrowser.vue";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/format";
-import { FolderOpen, Container, Trash2, Plus, RefreshCw, FileCode2, Clock, Loader2, Check, XCircle, Pencil, AlertTriangle, Play, Rocket } from "lucide-vue-next";
+import { FolderOpen, Container, Trash2, Plus, RefreshCw, FileCode2, Clock, Loader2, Check, XCircle, Pencil, AlertTriangle, Play, Rocket, ChevronDown, Search } from "lucide-vue-next";
 import { useRouter } from "vue-router";
 const router = useRouter();
 
 interface BatchProject { id: string; name: string; projectPath: string; dockerfile: string; imageTag: string; services: any[]; createdAt: string }
 
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") showBrowser.value = false; }
-onMounted(() => { window.addEventListener("keydown", onKey); loadProjects(); });
+onMounted(async () => {
+  window.addEventListener("keydown", onKey);
+  await loadProjects();
+  const [pState, pList] = await Promise.all([
+    fetch("/api/profile/state").then(r => r.json()).catch(() => null),
+    fetch("/api/profile").then(r => r.json()).catch(() => []),
+  ]);
+  profileState.value = pState;
+  if (pState) {
+    profile.value = pList.find((p: any) => p.id === pState.activeProfile);
+    profileBatchNames.value = (profile.value?.batches || []).map((b: any) => b.repoName);
+    // Find missing batches (in profile but not registered)
+    const registered = projects.value.map(p => p.name);
+    missingBatches.value = (profile.value?.batches || []).filter((b: any) => !registered.includes(b.repoName));
+  }
+});
 onUnmounted(() => window.removeEventListener("keydown", onKey));
 
 const projects = ref<BatchProject[]>([]);
 const showBrowser = ref(false);
 const selectedPath = ref("");
+const profileState = ref<any>(null);
+const profile = ref<any>(null);
+const profileBatchNames = ref<string[]>([]);
+const missingBatches = ref<any[]>([]);
+const batchSearch = ref("");
+
+const filteredProjects = computed(() => {
+  if (!batchSearch.value) return projects.value;
+  const q = batchSearch.value.toLowerCase();
+  return projects.value.filter(p => p.name.toLowerCase().includes(q) || p.projectPath.toLowerCase().includes(q));
+});
+
+
+const selectedBatches = ref<Set<string>>(new Set());
+const showActionsMenu = ref(false);
 
 const registering = ref(false);
 const registerError = ref("");
 
 async function loadProjects() { try { projects.value = await (await fetch("/api/batch-builds")).json(); } catch {} }
 
-function selectFolder(path: string) { selectedPath.value = path; }
+function selectFolder(path: string) { selectedPath.value = path; showBrowser.value = false; registerProject(); }
 
 async function registerProject() {
   if (!selectedPath.value) return;
@@ -66,6 +95,16 @@ async function saveEdit() {
 }
 async function confirmDelete() { if (!deleteTarget.value) return; await fetch(`/api/batch-builds/${deleteTarget.value.id}`, { method: "DELETE" }); deleteTarget.value = null; loadProjects(); }
 
+function toggleSelect(id: string) { selectedBatches.value.has(id) ? selectedBatches.value.delete(id) : selectedBatches.value.add(id); selectedBatches.value = new Set(selectedBatches.value); }
+
+async function confirmBulkDelete() {
+  for (const id of selectedBatches.value) {
+    await fetch(`/api/batch-builds/${id}`, { method: "DELETE" });
+  }
+  selectedBatches.value = new Set();
+  loadProjects();
+}
+
 const rescanning = ref("");
 const toastMsg = ref("");
 const toastType = ref<"loading" | "success" | "error">("loading");
@@ -102,121 +141,101 @@ function handleExport(p: BatchProject) {
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto space-y-6">
-    <!-- Register Project -->
-    <Card>
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base"><Container class="size-4" /> Register Batch Project</CardTitle>
-      </CardHeader>
-      <CardContent class="space-y-4">
-        <p class="text-xs text-muted-foreground">Point to a project directory. Mouseketool will auto-detect the Dockerfile and docker-compose file.</p>
-        <div class="flex gap-3 items-end">
-          <div class="flex-1 space-y-2">
-            <Label class="text-xs">Project Path</Label>
-            <Input v-model="selectedPath" placeholder="/path/to/your/batch/project" class="text-sm" />
-          </div>
-          <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer mb-0.5" @click="showBrowser = true"><FolderOpen class="size-3.5" /> Browse</Button>
-        </div>
-        <div class="flex items-center gap-2">
-          <Button size="sm" class="gap-1.5 cursor-pointer" :disabled="!selectedPath || registering" @click="registerProject">
-            <Loader2 v-if="registering" class="size-3.5 animate-spin" /><Plus v-else class="size-3.5" /> Register
-          </Button>
-          <span v-if="registerError" class="text-xs text-red-500">{{ registerError }}</span>
-        </div>
-      </CardContent>
-    </Card>
+  <div>
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Batch Projects</h1>
+        <p class="text-sm text-muted-foreground mt-1">Register and manage Docker-based batch projects.</p>
+      </div>
+      <Button variant="outline" @click="showBrowser = true" class="gap-2 cursor-pointer active:scale-95 transition-all"><Plus class="size-4" /> Register</Button>
+    </div>
 
-    <!-- Registered Projects -->
-    <Card>
-      <CardHeader class="pb-1">
-        <CardTitle class="flex items-center gap-2 text-base">Registered Projects <Badge v-if="projects.length" variant="secondary">{{ projects.length }}</Badge></CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div v-if="projects.length" class="space-y-2">
-          <div v-for="p in projects" :key="p.id" class="flex items-center justify-between rounded-lg border p-3">
-            <div class="space-y-0.5 min-w-0 flex-1">
-              <p class="text-sm font-medium">{{ p.name }}</p>
-              <p class="text-xs text-muted-foreground truncate">{{ p.projectPath }}</p>
-              <div class="flex items-center gap-3 mt-1.5">
-                <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1 text-xs text-muted-foreground font-mono"><Container class="size-3 shrink-0" />{{ p.imageTag }}</span></TooltipTrigger><TooltipContent>Docker image tag</TooltipContent></Tooltip>
-                <Tooltip v-if="p.services?.length"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px]">{{ p.services.length }} service(s)</Badge></TooltipTrigger><TooltipContent>Detected docker-compose services</TooltipContent></Tooltip>
-                <Tooltip v-if="!p.composefile"><TooltipTrigger as-child><Badge class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px] gap-1"><AlertTriangle class="size-2.5" />No compose file</Badge></TooltipTrigger><TooltipContent>No docker-compose file was detected. Click edit to specify one.</TooltipContent></Tooltip>
-                <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1 text-xs text-muted-foreground"><Clock class="size-3 shrink-0" />{{ timeAgo(p.createdAt) }}</span></TooltipTrigger><TooltipContent>Registered on {{ new Date(p.createdAt).toLocaleString('en-GB') }}</TooltipContent></Tooltip>
-              </div>
-            </div>
-            <div class="flex items-center gap-1 shrink-0 ml-3">
-              <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-emerald-500 cursor-pointer" @click="router.push(`/batch-projects/${p.id}/run`)"><Play class="size-4" /></Button></TooltipTrigger><TooltipContent>Run project</TooltipContent></Tooltip>
-              <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-blue-500 cursor-pointer" :disabled="exporting" @click="handleExport(p)"><Rocket class="size-4" /></Button></TooltipTrigger><TooltipContent>Export to Launchpad</TooltipContent></Tooltip>
-              <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-foreground cursor-pointer" @click="openEdit(p)"><Pencil class="size-4" /></Button></TooltipTrigger><TooltipContent>Edit project settings</TooltipContent></Tooltip>
-              <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-red-500 cursor-pointer" @click="deleteTarget = p"><Trash2 class="size-4" /></Button></TooltipTrigger><TooltipContent>Remove project</TooltipContent></Tooltip>
-            </div>
+    <!-- Search + Actions -->
+    <div v-if="projects.length" class="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2 mb-4">
+      <div class="relative">
+        <Search class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        <input v-model="batchSearch" placeholder="Search..." class="h-7 w-44 rounded-md bg-background border pl-8 pr-2 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+      </div>
+      <div class="h-4 w-px bg-border" />
+      <template v-if="selectedBatches.size">
+        <span class="text-xs text-muted-foreground">{{ selectedBatches.size }} selected</span>
+        <div class="relative">
+          <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showActionsMenu = !showActionsMenu"><ChevronDown class="size-3.5" /> Actions</Button>
+          <div v-if="showActionsMenu" class="fixed inset-0 z-40" @click="showActionsMenu = false" />
+          <div v-if="showActionsMenu" class="absolute left-0 top-full mt-1 w-48 rounded-md border bg-popover shadow-md z-50 py-1">
+            <button class="w-full text-left px-3 py-1.5 text-sm hover:bg-muted transition-colors flex items-center gap-2" :class="selectedBatches.size > 1 ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'" :disabled="selectedBatches.size > 1" @click="selectedBatches.size === 1 && openEdit(projects.find(p => p.id === [...selectedBatches][0])!)"><Pencil class="size-3.5" /> Edit</button>
+            <div class="border-t my-1" />
+            <button class="w-full text-left px-3 py-1.5 text-sm text-destructive hover:bg-muted transition-colors flex items-center gap-2 cursor-pointer" @click="confirmBulkDelete(); showActionsMenu = false"><Trash2 class="size-3.5" /> Delete selected</button>
           </div>
         </div>
-        <p v-else class="text-sm text-muted-foreground text-center py-6">No projects registered yet. Add a batch project above to get started.</p>
-      </CardContent>
-    </Card>
+        <Button variant="ghost" size="sm" class="text-xs cursor-pointer" @click="selectedBatches = new Set()">Clear</Button>
+      </template>
+      <span v-else class="ml-auto text-[11px] text-muted-foreground font-mono tabular-nums">{{ filteredProjects.length }}<span class="text-muted-foreground/40">/{{ projects.length }}</span></span>
+    </div>
+
+    <!-- Project List -->
+    <div class="space-y-2">
+      <div v-for="p in filteredProjects" :key="p.id" class="flex items-center gap-3 rounded-xl border p-4 transition-all hover:bg-muted/30">
+        <Tooltip :disabled="!profileBatchNames.includes(p.name)"><TooltipTrigger as-child><input type="checkbox" :checked="selectedBatches.has(p.id)" @change="toggleSelect(p.id)" :disabled="profileBatchNames.includes(p.name)" :class="['accent-primary size-4 shrink-0', profileBatchNames.includes(p.name) ? 'cursor-not-allowed' : 'cursor-pointer']" /></TooltipTrigger><TooltipContent>Managed by active profile — cannot be deleted</TooltipContent></Tooltip>
+        <div class="min-w-0 flex-1 space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold">{{ p.name }}</span>
+            <Tooltip v-if="profileBatchNames.includes(p.name)"><TooltipTrigger as-child><span class="inline-flex items-center px-1.5 py-0.5 rounded-md border border-foreground/20 bg-foreground/5 text-[10px] font-medium text-foreground/80">{{ profile?.name }}</span></TooltipTrigger><TooltipContent>This batch was imported from the {{ profile?.name }} profile</TooltipContent></Tooltip>
+            <Tooltip v-if="!p.composefile"><TooltipTrigger as-child><Badge class="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px] gap-1"><AlertTriangle class="size-2.5" />No compose file</Badge></TooltipTrigger><TooltipContent>No docker-compose file was detected. Click edit to specify one.</TooltipContent></Tooltip>
+          </div>
+          <p class="text-xs text-muted-foreground truncate">{{ p.projectPath }}</p>
+          <div class="flex items-center gap-3 text-xs text-muted-foreground">
+            <span class="flex items-center gap-1 font-mono"><Container class="size-3" />{{ p.imageTag }}</span>
+            <Badge v-if="p.services?.length" variant="secondary" class="text-[10px]">{{ p.services.length }} service(s)</Badge>
+            <span class="flex items-center gap-1"><Clock class="size-3" />Registered {{ timeAgo(p.createdAt) }}</span>
+            
+          </div>
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+          <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-emerald-500 cursor-pointer" @click="router.push(`/batch-projects/${p.id}/run`)"><Play class="size-4" /></Button></TooltipTrigger><TooltipContent>Run project</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-blue-500 cursor-pointer" :disabled="exporting" @click="handleExport(p)"><Rocket class="size-4" /></Button></TooltipTrigger><TooltipContent>Export to Launchpad</TooltipContent></Tooltip>
+        </div>
+      </div>
+    </div>
+
+    <p v-if="!filteredProjects.length && batchSearch" class="text-sm text-muted-foreground text-center py-10">No projects match your search.</p>
+    <div v-else-if="!projects.length" class="flex flex-col items-center justify-center py-20 text-muted-foreground"><Container class="size-12 mb-4 opacity-40" /><p class="text-sm font-medium">No batch projects registered.</p><p class="text-xs mt-1">Click "Register" to add a Docker-based project.</p></div>
+
+    <!-- Missing from profile -->
+    <div v-if="missingBatches.length" class="space-y-2 mt-6">
+      <p class="text-xs text-muted-foreground font-medium">Missing from workspace:</p>
+      <div v-for="b in missingBatches" :key="b.repoName" class="flex items-center justify-between rounded-xl border border-dashed p-4 opacity-50">
+        <div class="space-y-0.5">
+          <p class="text-sm font-medium">{{ b.displayName }}</p>
+          <p class="text-xs text-muted-foreground font-mono">{{ b.repoName }}</p>
+        </div>
+        <span class="text-xs text-muted-foreground">Not found in workspace</span>
+      </div>
+    </div>
 
     <FolderBrowser v-model="showBrowser" title="Select Project Directory" description="Navigate to your batch project root." @select="selectFolder" />
     <Dialog :open="!!editTarget" @update:open="v => { if (!v) editTarget = null }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Edit Project Settings</DialogTitle>
-          <DialogDescription>Update the Dockerfile and compose file paths for {{ editTarget?.name }}.</DialogDescription>
+          <DialogDescription>Update the Dockerfile and compose file paths for this project.</DialogDescription>
         </DialogHeader>
-        <div class="space-y-3 py-2">
-          <div class="space-y-1.5">
-            <Label class="text-xs">Dockerfile</Label>
-            <Input v-model="editDockerfile" class="text-sm font-mono" placeholder="Dockerfile" />
-          </div>
-          <div class="space-y-1.5">
-            <Label class="text-xs">Compose File</Label>
-            <Input v-model="editComposefile" class="text-sm font-mono" placeholder="docker-compose.yml" />
-          </div>
+        <div class="space-y-4 py-2">
+          <div class="space-y-2"><Label>Dockerfile</Label><Input v-model="editDockerfile" placeholder="Dockerfile" /></div>
+          <div class="space-y-2"><Label>Compose File</Label><Input v-model="editComposefile" placeholder="docker-compose.yml" /></div>
         </div>
-        <DialogFooter class="gap-2">
-          <Button variant="outline" class="cursor-pointer" @click="editTarget = null">Cancel</Button>
-          <Button class="cursor-pointer" @click="saveEdit">Save</Button>
-        </DialogFooter>
+        <DialogFooter><Button @click="saveEdit" class="cursor-pointer">Save</Button></DialogFooter>
       </DialogContent>
     </Dialog>
-
-    <Dialog :open="!!deleteTarget" @update:open="v => { if (!v) deleteTarget = null }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Remove Project</DialogTitle>
-          <DialogDescription>Remove {{ deleteTarget?.name }} from the registry? This does not delete any files.</DialogDescription>
-        </DialogHeader>
-        <DialogFooter class="gap-2">
-          <Button variant="outline" class="cursor-pointer" @click="deleteTarget = null">Cancel</Button>
-          <Button variant="destructive" class="cursor-pointer" @click="confirmDelete">Remove</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
     <Dialog :open="!!exportTarget" @update:open="v => { if (!v) exportTarget = null }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Select Compose File</DialogTitle>
-          <DialogDescription>{{ exportTarget?.name }} has multiple compose files. Pick one to export.</DialogDescription>
-        </DialogHeader>
+      <DialogContent class="sm:max-w-sm">
+        <DialogHeader><DialogTitle>Select Compose File</DialogTitle><DialogDescription>This project has multiple compose files. Choose one to export.</DialogDescription></DialogHeader>
         <div class="space-y-2 py-2">
-          <button v-for="cf in exportTarget?.composeFiles" :key="cf" class="w-full flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50 transition-colors text-left" :class="exportCompose === cf ? 'border-primary bg-primary/5' : ''" @click="exportCompose = cf">
-            <FileCode2 class="size-4 shrink-0 text-muted-foreground" />
-            <span class="text-sm font-mono">{{ cf }}</span>
-          </button>
+          <label v-for="cf in exportTarget?.composeFiles" :key="cf" class="flex items-center gap-2 cursor-pointer text-sm"><input type="radio" :value="cf" v-model="exportCompose" class="accent-primary" />{{ cf }}</label>
         </div>
-        <DialogFooter class="gap-2">
-          <Button variant="outline" class="cursor-pointer" @click="exportTarget = null">Cancel</Button>
-          <Button class="cursor-pointer gap-1.5" :disabled="!exportCompose || exporting" @click="exportToLaunchpad(exportTarget!, exportCompose)"><Loader2 v-if="exporting" class="size-3.5 animate-spin" /><Rocket v-else class="size-3.5" /> Export</Button>
-        </DialogFooter>
+        <DialogFooter><Button @click="exportToLaunchpad(exportTarget!, exportCompose)" :disabled="exporting" class="cursor-pointer">Export</Button></DialogFooter>
       </DialogContent>
     </Dialog>
-
-    <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'error' ? 'bg-red-600' : toastType === 'success' ? 'bg-green-600' : 'bg-primary'">
-      <Loader2 v-if="toastType === 'loading'" class="size-4 animate-spin" />
-      <Check v-else-if="toastType === 'success'" class="size-4" />
-      <XCircle v-else class="size-4" />
-      {{ toastMsg }}
-    </div>
+    <div v-if="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'error' ? 'bg-red-600' : toastType === 'success' ? 'bg-green-600' : 'bg-zinc-700'"><Loader2 v-if="toastType === 'loading'" class="size-4 animate-spin" /><Check v-else-if="toastType === 'success'" class="size-4" /><XCircle v-else class="size-4" />{{ toastMsg }}</div>
   </div>
-</template>
+</template>
