@@ -360,12 +360,16 @@ export async function reconcileDeployments(): Promise<number> {
           Timeout: 60, MemorySize: memorySize, ...(envConfig ? { Environment: envConfig } : {}),
         }));
       } catch {
-        // Doesn't exist, create it
+        try {
         await client.send(new CreateFunctionCommand({
           FunctionName: dep.functionName, Runtime: dep.runtime || "java21", Handler: dep.handler,
           Role: "arn:aws:iam::000000000000:role/lambda-role",
           Code: { ZipFile: jarBytes }, Timeout: 60, MemorySize: memorySize, Environment: envConfig,
         }));
+        } catch {
+          await client.send(new UpdateFunctionCodeCommand({ FunctionName: dep.functionName, ZipFile: jarBytes }));
+          await client.send(new UpdateFunctionConfigurationCommand({ FunctionName: dep.functionName, Runtime: dep.runtime || "java21", Handler: dep.handler, Timeout: 60, MemorySize: memorySize, ...(envConfig ? { Environment: envConfig } : {}) }));
+        }
       }
       kept.push(dep);
       redeployed++;
