@@ -18,6 +18,7 @@ import batchWorkflowsRoutes from "./routes/batch-workflows.js";
 import batchRunsRoutes from "./routes/batch-runs.js";
 import statsRoutes from "./routes/stats.js";
 import localstackRoutes from "./routes/localstack.js";
+import profileRoutes from "./routes/profile.js";
 import { watcher } from "./services/pipeline-watcher.js";
 import { initPipelineWs } from "./services/pipeline-ws.js";
 import { initShadowInfra, ensureBucketExists } from "./services/shadow-infra.js";
@@ -60,6 +61,7 @@ app.use("/api/ai", aiRoutes);
 app.use("/api/batch-builds", batchBuildsRoutes);
 app.use("/api/batch-workflows", batchWorkflowsRoutes);
 app.use("/api/batch-runs", batchRunsRoutes);
+app.use("/api/profile", profileRoutes);
 
 // Cleanup scheduler
 setInterval(cleanupBuilds, 30 * 60 * 1000);

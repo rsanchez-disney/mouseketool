@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import ParticleBurst from "@/components/ParticleBurst.vue";
 
+const _builderRoute = useRoute();
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") { showBrowser.value = false; } }
 onMounted(() => window.addEventListener("keydown", onKey));
 onUnmounted(() => window.removeEventListener("keydown", onKey));
@@ -275,10 +277,26 @@ const confirmDeleteBuild = ref(false);
 const pendingDeleteBuildId = ref("");
 
 onMounted(() => { loadBuilds(); loadTtl(); });
+
+// Auto-build from query param (Projects page "Rebuild" button)
+onMounted(async () => {
+  const autoPath = _builderRoute.query.path as string;
+  if (autoPath) {
+    selectedProject.value = autoPath;
+    await analyzeProject();
+    if (analysis.value && analysis.value.handlers.length) {
+      selectedHandler.value = analysis.value.handlers[0];
+      functionName.value = autoPath.split(/[\\/]/).pop() || "";
+      await nextTick();
+      startBuild();
+      setTimeout(() => { document.querySelector("[data-log-viewer]")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 500);
+    }
+  }
+});
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto space-y-6">
+  <div class="space-y-6">
     <div>
       <h1 class="text-2xl font-semibold tracking-tight">Lambda Builder</h1>
       <p class="text-sm text-muted-foreground mt-1">Build and deploy Java Lambda functions to LocalStack.</p>
@@ -370,7 +388,7 @@ onMounted(() => { loadBuilds(); loadTtl(); });
     </Card>
 
     <!-- Build Console -->
-    <Card v-if="buildLogs.length || building">
+    <Card v-if="buildLogs.length || building" data-log-viewer>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Package class="size-5" />
@@ -441,7 +459,7 @@ onMounted(() => { loadBuilds(); loadTtl(); });
                 </Badge>
               </div>
               <div class="text-xs text-muted-foreground truncate">
-                {{ b.handler || 'No handler set' }} · {{ timeAgo(b.createdAt) }}
+                {{ b.handler || 'No handler set' }} · {{ timeAgo(b.createdAt) }} · <span class="font-mono opacity-60">{{ b.id.substring(0, 8) }}</span>
               </div>
               <Tooltip>
                 <TooltipTrigger as-child>

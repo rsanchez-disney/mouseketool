@@ -30,9 +30,12 @@ router.post("/", async (req, res) => {
     const memorySize = settings.lambda?.memoryMB ?? 2048;
 
     // Load saved env vars if they exist
+    let envSource = "";
     let envConfig: { Variables: Record<string, string> } | undefined;
     try {
-      const saved: { key: string; value: string }[] = JSON.parse(await readFile(join(BUILDS_DIR, buildId, "envvars.json"), "utf-8"));
+      const raw = JSON.parse(await readFile(join(BUILDS_DIR, buildId, "envvars.json"), "utf-8"));
+      envSource = raw.source || "";
+      const saved: { key: string; value: string }[] = Array.isArray(raw) ? raw : raw.vars || [];
       const vars = Object.fromEntries(saved.filter(e => e.key).map(e => [e.key, e.value]));
       if (Object.keys(vars).length) envConfig = { Variables: vars };
     } catch {}
@@ -82,13 +85,15 @@ router.post("/", async (req, res) => {
       });
     } catch {}
 
+    // Read env source if available
+
     // Persist deployment metadata
     const deployments = await readFile(DEPLOYMENTS_FILE, "utf-8").then(d => JSON.parse(d)).catch(() => []);
     const existing = deployments.findIndex((d: any) => d.functionName === functionName);
     const deployment = {
       functionName, handler, runtime, action,
       buildId, projectName: meta.projectName, projectPath: meta.projectPath,
-      buildTool: meta.buildTool, buildTime: meta.createdAt, deployedAt: new Date().toISOString(), status: "active",
+      buildTool: meta.buildTool, buildTime: meta.createdAt, deployedAt: new Date().toISOString(), status: "active", envSource,
     };
     if (existing >= 0) deployments[existing] = deployment;
     else deployments.unshift(deployment);

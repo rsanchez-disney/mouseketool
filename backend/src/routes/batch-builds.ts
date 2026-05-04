@@ -224,6 +224,23 @@ router.get("/:id/env-scan", async (req, res) => {
       if (k && !vars.some(e => e.key === k)) vars.push({ key: k, value: v.join("="), source: "file:.env" });
     }
   } catch {}
+  // Lowest precedence: scan README for dotenv/env section
+
+    const readmeFiles = ["README.md", "readme.md", "Readme.md"];
+    for (const rmf of readmeFiles) {
+      try {
+        const readme = await readFile(join(p.projectPath, rmf), "utf-8");
+        const envSection = readme.match(/(?:#+[^\n]*(?:env|environment)[^\n]*\n[\s\S]*?```[^\n]*\n([\s\S]*?)```|```(?:dotenv|env)\n([\s\S]*?)```)/i);
+        if (envSection) {
+          for (const line of envSection[1].split(/\n/)) {
+            const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)/);
+            if (m && !vars.some(v => v.key === m[1])) vars.push({ key: m[1], value: m[2].replace(/^["\']+ |["\']+ $/g, ""), source: `readme:${rmf}` });
+          }
+          if (vars.length) break;
+        }
+      } catch {}
+    }
+
   res.json(vars);
 });
 

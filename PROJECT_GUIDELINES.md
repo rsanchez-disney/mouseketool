@@ -93,3 +93,20 @@ Every AWS resource created by Mouseketool on LocalStack must be recoverable afte
 - **Never use PowerShell `Set-Content` or `Get-Content | Set-Content` to edit source files.** These commands can corrupt UTF-8 encoding by writing UTF-16 BOM or mangling multi-byte characters (em dashes, arrows, etc.) into mojibake.
 - Always use the `write` tool (strReplace, insert, create) for all file modifications.
 - PowerShell is acceptable for reading files, running git commands, and executing build tools — just not for writing source files.
+
+## Workspace Safety
+
+The user's configured workspace folder is **read-only** from Mouseketool's perspective. This is a hard rule with no exceptions beyond what is listed below.
+
+### Allowed operations on the workspace:
+1. **Scan** — read folder names to detect existing projects
+2. **Clone** — add new project folders via `git clone` (only if not already present)
+3. **`mvn versions:update-parent`** — the sole modification exception; fixes parent POM resolution for freshly cloned Maven projects. Changes are NOT committed.
+
+### Forbidden:
+- Deleting, moving, or renaming any file or folder in the workspace
+- Writing to or modifying any file in the workspace (except the POM exception above)
+- Running any command that has destructive side effects on workspace contents
+- Committing, pushing, or performing any git operations beyond the initial clone
+
+This rule exists because the workspace contains the user's actual source code. Mouseketool is a build/deploy/observe tool — it must never alter source code.

@@ -6,6 +6,7 @@ const router = createRouter({
     { path: "/", component: () => import("./pages/HomePage.vue"), meta: { title: "Home" } },
     { path: "/builder", component: () => import("./pages/BuilderPage.vue"), meta: { title: "Builder" } },
     { path: "/deployments", component: () => import("./pages/DeploymentsPage.vue"), meta: { title: "Deployments" } },
+    { path: "/projects", component: () => import("./pages/ProjectsPage.vue"), meta: { title: "Projects" } },
     { path: "/triggers", component: () => import("./pages/TriggersPage.vue"), meta: { title: "Triggers" } },
     { path: "/triggers/:id/execute", component: () => import("./pages/ExecutionPage.vue"), meta: { title: "Execution" } },
     { path: "/triggers/:id/history", component: () => import("./pages/HistoryPage.vue"), meta: { title: "History" } },

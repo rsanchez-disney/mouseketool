@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick, computed, inject } from "vue";
+import { useRoute } from "vue-router";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import Toggle from "@/components/ui/Toggle.vue";
-import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container, Palette } from "lucide-vue-next";
+import FolderBrowser from "@/components/FolderBrowser.vue";
+import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, ChevronDown, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container, Palette, UserCircle, FolderOpen, Download } from "lucide-vue-next";
 
-const tab = ref<"connection" | "lambda" | "builds" | "pipelines" | "ai" | "workflows" | "ui">("connection");
+const tab = ref<"connection" | "lambda" | "builds" | "pipelines" | "ai" | "workflows" | "ui" | "profile">("connection");
+const _route = useRoute();
 const tabs = [
   { id: "connection" as const, label: "Connection", icon: Server },
   { id: "lambda" as const, label: "Lambda", icon: Cpu },
@@ -17,7 +20,9 @@ const tabs = [
   { id: "ai" as const, label: "AI", icon: Sparkles },
   { id: "workflows" as const, label: "Workflows", icon: Container },
   { id: "ui" as const, label: "UI", icon: Palette },
+  { id: "profile" as const, label: "Profile", icon: UserCircle },
 ];
+if (_route.query.tab && tabs.some(t => t.id === _route.query.tab)) tab.value = _route.query.tab as typeof tab.value;
 
 const settings = ref({
   localstack: { host: "localhost", port: 4566, protocol: "http" },
@@ -43,6 +48,24 @@ const dockerAvailable = ref(true);
 const portInUse = ref(false);
 const infraPanel = ref(0);
 const connMode = ref<'manual' | 'managed'>('manual');
+
+const profiles = ref<any[]>([]);
+const profileState = ref<any>(null);
+const selectedProfile = ref("");
+const workspacePath = ref("");
+const showProfileBrowser = ref(false);
+const workspaceValid = ref(false);
+const autoDownload = ref(false);
+const githubAvailable = ref(false);
+const profileLoading = ref(false);
+const showDestructiveModal = ref(false);
+const showUnloadModal = ref(false);
+const provisioningActive = ref(false);
+const provisioningSteps = ref<{ label: string; status: "pending" | "running" | "done" | "error"; detail?: string }[]>([]);
+const buildPanel = ref<{ name: string; status: "building" | "done" | "error" }[]>([]);
+const buildPanelOpen = ref(true);
+const lsHealthy = ref(false);
+
 const saved = ref(false);
 const toast = ref("");
 const dirty = ref(false);
@@ -55,6 +78,22 @@ onMounted(async () => {
   if (merged.localstackManaged) connMode.value = 'managed';
   checkDocker(); checkLsStatus();
   settings.value = merged;
+});
+
+
+onMounted(async () => {
+  const [pList, pState, ghStatus, health] = await Promise.all([
+    fetch("/api/profile").then(r => r.json()).catch(() => []),
+    fetch("/api/profile/state").then(r => r.json()).catch(() => null),
+    fetch("/api/profile/github-status").then(r => r.json()).catch(() => ({ available: false })),
+    fetch("/api/health").then(r => r.json()).catch(() => ({ localstack: false })),
+  ]);
+  profiles.value = pList;
+  profileState.value = pState;
+  githubAvailable.value = ghStatus.available;
+  lsHealthy.value = health.localstack;
+  if (!lsHealthy.value) checkProfileHealth();
+  if (pState) { selectedProfile.value = pState.activeProfile; workspacePath.value = pState.workspacePath; autoDownload.value = pState.autoDownload || false; }
 });
 
 onMounted(() => {
@@ -86,6 +125,154 @@ async function restoreDefaults() {
   settings.value = defaults;
   await save();
   toast.value = "Defaults applied successfully"; setTimeout(() => { toast.value = ""; }, 3000);
+}
+
+
+watch(tab, async (t) => { if (t === "profile") checkProfileHealth(); });
+
+let healthInterval: any = null;
+async function checkProfileHealth() {
+  lsHealthy.value = (await fetch("/api/health").then(r => r.json()).catch(() => ({ localstack: false }))).localstack;
+  if (!healthInterval && !lsHealthy.value) { healthInterval = setInterval(async () => { await checkProfileHealth(); if (lsHealthy.value && healthInterval) { clearInterval(healthInterval); healthInterval = null; } }, 5000); }
+}
+
+function selectWorkspace(path: string) {
+  workspacePath.value = path;
+  showProfileBrowser.value = false;
+  workspaceValid.value = true;
+}
+
+function requestLoadProfile() {
+  if (!selectedProfile.value || !workspacePath.value.trim() || !lsHealthy.value) return;
+  showDestructiveModal.value = true;
+}
+
+async function confirmLoadProfile() {
+  showDestructiveModal.value = false;
+  provisioningActive.value = true;
+  provisioningSteps.value = [
+    { label: "Cleaning up existing resources...", status: "running" },
+    { label: "Scanning workspace...", status: "pending" },
+    { label: "Building Lambda projects...", status: "pending" },
+    { label: "Deploying to LocalStack...", status: "pending" },
+    { label: "Registering batch projects...", status: "pending" },
+  ];
+
+  try {
+    // Step 1: Cleanup
+    await fetch("/api/profile/cleanup", { method: "POST" });
+    provisioningSteps.value[0].status = "done";
+
+    // Step 2: Load profile
+    await fetch("/api/profile/load", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: selectedProfile.value, workspacePath: workspacePath.value.trim(), autoDownload: autoDownload.value }) });
+
+    // Step 3: Scan
+    provisioningSteps.value[1].status = "running";
+    const scanRes = await fetch("/api/profile/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspacePath: workspacePath.value.trim(), profileId: selectedProfile.value }) });
+    const scanResults = await scanRes.json();
+    const foundLambdas = scanResults.filter((r: any) => r.type === "lambda" && r.found);
+    const foundBatches = scanResults.filter((r: any) => r.type === "batch" && r.found);
+    const notFound = scanResults.filter((r: any) => !r.found);
+    provisioningSteps.value[1].status = "done";
+    provisioningSteps.value[1].detail = foundLambdas.length + " Lambdas, " + foundBatches.length + " batches found" + (notFound.length ? ", " + notFound.length + " missing" : "");
+
+    const clonedRepos = new Set<string>();
+    // Step 3.5: Auto-download if enabled
+    if (autoDownload.value && notFound.length) {
+      provisioningSteps.value.splice(2, 0, { label: "Cloning missing projects...", status: "running" });
+      let cloned = 0;
+      for (const p of notFound) {
+        try {
+          const r = await fetch("/api/profile/clone-project", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repoName: p.repoName, workspacePath: workspacePath.value.trim(), org: profiles.value.find(pr => pr.id === selectedProfile.value)?.org }) });
+          if (r.ok) { cloned++; clonedRepos.add(p.repoName); p.found = true; p.path = workspacePath.value.trim() + "/" + p.repoName; }
+        } catch {}
+      }
+      provisioningSteps.value[2].status = "done";
+      provisioningSteps.value[2].detail = cloned + "/" + notFound.length + " cloned";
+      // Re-scan to update found lists
+      const reScan = await (await fetch("/api/profile/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspacePath: workspacePath.value.trim(), profileId: selectedProfile.value }) })).json();
+      foundLambdas.length = 0;
+      foundBatches.length = 0;
+      reScan.filter((r: any) => r.type === "lambda" && r.found).forEach((r: any) => foundLambdas.push(r));
+      reScan.filter((r: any) => r.type === "batch" && r.found).forEach((r: any) => foundBatches.push(r));
+    }
+
+    // Step 4: Build
+    const buildIdx = provisioningSteps.value.findIndex(s => s.label.includes("Building"));
+    provisioningSteps.value[buildIdx].status = "running";
+    const buildResults: any[] = [];
+    const CONCURRENCY = 3;
+    let buildsDone = 0;
+    const buildQueue = [...foundLambdas];
+    buildPanel.value = foundLambdas.map((l: any) => ({ name: l.repoName, status: "building" as const }));
+    async function runBuild(l: any) {
+      try {
+        const r = await fetch("/api/builds/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectPath: l.path, freshClone: clonedRepos?.has(l.repoName) || false }) });
+        const data = await r.json();
+        buildResults.push({ ...l, buildId: data.buildId, handler: data.handler, success: r.ok, parentUpdated: data.parentUpdated });
+        const bp = buildPanel.value.find(b => b.name === l.repoName); if (bp) bp.status = r.ok ? "done" : "error";
+      } catch { buildResults.push({ ...l, success: false }); const bp = buildPanel.value.find(b => b.name === l.repoName); if (bp) bp.status = "error"; }
+      buildsDone++;
+      provisioningSteps.value[buildIdx].detail = buildsDone + "/" + foundLambdas.length;
+    }
+    for (let i = 0; i < buildQueue.length; i += CONCURRENCY) {
+      await Promise.all(buildQueue.slice(i, i + CONCURRENCY).map(runBuild));
+    }
+    provisioningSteps.value[buildIdx].status = "done";
+    const pomUpdated = buildResults.filter(b => b.parentUpdated).length;
+    provisioningSteps.value[buildIdx].detail = buildResults.filter(b => b.success).length + "/" + foundLambdas.length + " built" + (pomUpdated ? ` (${pomUpdated} parent POM${pomUpdated > 1 ? "s" : ""} updated)` : "");
+
+    // Step 5: Deploy
+    const deployIdx = provisioningSteps.value.findIndex(s => s.label.includes("Deploying"));
+    provisioningSteps.value[deployIdx].status = "running";
+    let deployed = 0;
+    const deployable = buildResults.filter(x => x.success && x.buildId);
+    await Promise.all(deployable.map(async (b) => {
+      try {
+        const r = await fetch("/api/deploy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ buildId: b.buildId, handler: b.handler, functionName: b.repoName, runtime: "java21" }) });
+        if (r.ok) { deployed++; b.deployed = true; }
+      } catch {}
+    }));
+    provisioningSteps.value[deployIdx].status = "done";
+    provisioningSteps.value[deployIdx].detail = deployed + " deployed";
+
+    // Step 6: Register batches
+    const batchIdx = provisioningSteps.value.findIndex(s => s.label.includes("Registering"));
+    provisioningSteps.value[batchIdx].status = "running";
+    for (const b of foundBatches) {
+      try { await fetch("/api/batch-builds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectPath: b.path }) }); } catch {}
+    }
+    provisioningSteps.value[batchIdx].status = "done";
+    provisioningSteps.value[batchIdx].detail = foundBatches.length + " registered";
+
+    // Save results
+    await fetch("/api/profile/save-results", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lambdas: buildResults, batches: foundBatches, notFound: scanResults.filter((r: any) => !r.found) }) });
+    profileState.value = await (await fetch("/api/profile/state")).json();
+  } catch (e: any) {
+    const running = provisioningSteps.value.find(s => s.status === "running");
+    if (running) { running.status = "error"; running.detail = e.message; }
+  }
+  profileLoading.value = false;
+}
+
+function reloadApp() { window.location.reload(); }
+
+async function unloadProfile() {
+  if (!lsHealthy.value) { toast.value = "LocalStack must be running to unload"; setTimeout(() => { toast.value = ""; }, 3000); return; }
+  provisioningActive.value = true;
+  provisioningSteps.value = [
+    { label: "Deleting Lambda functions...", status: "running" },
+    { label: "Deleting DynamoDB tables...", status: "pending" },
+    { label: "Deleting SNS topics...", status: "pending" },
+    { label: "Deleting SQS queues...", status: "pending" },
+    { label: "Clearing pipelines and configs...", status: "pending" },
+  ];
+  await fetch("/api/profile/cleanup", { method: "POST" });
+  provisioningSteps.value.forEach(s => s.status = "done");
+  provisioningSteps.value.push({ label: "Unloading profile...", status: "running" });
+  await fetch("/api/profile/unload", { method: "POST" });
+  provisioningSteps.value[provisioningSteps.value.length - 1].status = "done";
+  setTimeout(() => window.location.reload(), 1000);
 }
 
 </script>
@@ -189,10 +376,10 @@ async function restoreDefaults() {
                 <div class="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/5 to-teal-500/5 p-5">
                   <div class="flex items-center justify-between mb-3">
                     <div>
-                      <h2 class="text-sm font-medium flex items-center gap-2">Managed MiniStack Instance <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming Soon</span></h2>
+                      <h2 class="text-sm font-medium flex items-center gap-2">Managed MiniStack Instance <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming soon</span></h2>
                       <p class="text-[11px] text-muted-foreground mt-0.5">MIT-licensed AWS emulator — free forever, no account required.</p>
                     </div>
-                    <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="false" disabled /></span></TooltipTrigger><TooltipContent>Coming in a future version</TooltipContent></Tooltip>
+                    <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="false" disabled /></span></TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
                   </div>
                   <div class="space-y-3 opacity-50">
                     <div class="flex items-center justify-between rounded-lg bg-white/[0.03] border border-white/5 px-4 py-3"><div class="flex items-center gap-3"><div class="size-2.5 rounded-full bg-zinc-600" /><div><p class="text-xs font-medium">Not Available</p><p class="text-[10px] text-muted-foreground font-mono">mouseketool-ministack · ministackorg/ministack:latest</p></div></div></div>
@@ -394,6 +581,142 @@ async function restoreDefaults() {
         <Toggle v-model="settings.themeAnimation" />
       </div>
     </div>
+    <!-- Profile Tab -->
+    <div v-show="tab === 'profile'" class="space-y-6">
+      <div>
+        <h2 class="text-sm font-medium">Workspace Directory</h2>
+        <p class="text-xs text-muted-foreground mt-0.5 mb-3">Root folder where your team's repositories are cloned.</p>
+        <div class="flex gap-2">
+          <Input v-model="workspacePath" placeholder="C:/repos/team" class="flex-1 text-sm" :disabled="!!profileState" />
+          <Button variant="outline" size="sm" @click="showProfileBrowser = true" :disabled="!!profileState" class="gap-1.5 cursor-pointer"><FolderOpen class="size-3.5" />Browse</Button>
+        </div>
+        <p v-if="workspaceValid" class="text-xs text-green-500 mt-1">✓ Valid workspace directory</p>
+      </div>
+
+      <div>
+        <h2 class="text-sm font-medium">Profile</h2>
+        <p class="text-xs text-muted-foreground mt-0.5 mb-3">Select a development profile to load.</p>
+        <Select v-model="selectedProfile" :disabled="!!profileState || !workspacePath.trim()">
+          <SelectTrigger class="w-full"><SelectValue placeholder="Select a profile..." /></SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</SelectItem>
+          </SelectContent>
+        </Select>
+        <p v-if="selectedProfile" class="text-xs text-muted-foreground mt-1.5">{{ profiles.find(p => p.id === selectedProfile)?.description }}</p>
+      </div>
+
+      <div class="flex items-center gap-2" :class="!githubAvailable && 'opacity-40 pointer-events-none'">
+        <input type="checkbox" v-model="autoDownload" :disabled="!!profileState || !githubAvailable" class="rounded size-3.5 accent-primary" id="auto-dl" />
+        <label for="auto-dl" class="text-xs cursor-pointer">Auto-download all projects I have access to</label>
+        <Tooltip v-if="!githubAvailable"><TooltipTrigger><span class="text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-500/10 text-zinc-400 font-medium">Requires Kiro + GitHub MCP</span></TooltipTrigger><TooltipContent><p class="text-xs">Install Kiro CLI and configure a GitHub MCP server to enable auto-cloning.</p></TooltipContent></Tooltip>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <Button v-if="!profileState" @click="requestLoadProfile" :disabled="!selectedProfile || !workspacePath.trim() || !lsHealthy" class="gap-2 cursor-pointer active:scale-95 transition-all">
+          <Download class="size-4" /> Load Profile
+        </Button>
+        <Button v-else variant="destructive" @click="showUnloadModal = true" class="gap-2 cursor-pointer active:scale-95 transition-all">
+          Unload Profile
+        </Button>
+        <span v-if="!lsHealthy" class="text-xs text-amber-500 flex items-center gap-1"><AlertTriangle class="size-3" />LocalStack must be running</span>
+      </div>
+
+      <div v-if="profileState" class="rounded-lg border p-4 bg-muted/30 space-y-2">
+        <p class="text-sm font-medium">Active: {{ profiles.find(p => p.id === profileState.activeProfile)?.name }}</p>
+        <p class="text-xs text-muted-foreground">Workspace: {{ profileState.workspacePath }}</p>
+        <p class="text-xs text-muted-foreground">Loaded: {{ new Date(profileState.loadedAt).toLocaleString() }}</p>
+      </div>
+    </div>
+
+    <!-- Destructive Load Modal -->
+    <div v-if="showDestructiveModal" class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 animate-in fade-in duration-200">
+      <div class="bg-background border rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 space-y-4 animate-in zoom-in-95 duration-200">
+        <h2 class="text-lg font-semibold">Load Profile — Clean Slate Required</h2>
+        <p class="text-sm text-muted-foreground">Loading a profile will delete all existing resources in LocalStack to ensure a clean workspace. This includes:</p>
+        <ul class="text-xs text-muted-foreground space-y-1 pl-4 list-disc">
+          <li>All deployed Lambda functions</li>
+          <li>All DynamoDB tables</li>
+          <li>All SNS topics and subscriptions</li>
+          <li>All SQS queues and event source mappings</li>
+          <li>All saved pipelines and their configurations</li>
+          <li>All vault add-on configurations</li>
+          <li>All cached builds</li>
+        </ul>
+        <p class="text-xs text-amber-500 font-medium">This action cannot be undone.</p>
+        <div class="flex justify-end gap-3 pt-2">
+          <Button variant="ghost" size="sm" @click="showDestructiveModal = false" class="cursor-pointer">Cancel</Button>
+          <Button variant="destructive" size="sm" @click="confirmLoadProfile" class="cursor-pointer">Continue and Wipe</Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unload Confirmation Modal -->
+    <div v-if="showUnloadModal" class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 animate-in fade-in duration-200">
+      <div class="bg-background border rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 space-y-4 animate-in zoom-in-95 duration-200">
+        <h2 class="text-lg font-semibold">Unload Profile</h2>
+        <p class="text-sm text-muted-foreground">Unloading the active profile will delete all resources from LocalStack and reset Mouseketool. This includes:</p>
+        <ul class="text-xs text-muted-foreground space-y-1 pl-4 list-disc">
+          <li>All deployed Lambda functions</li>
+          <li>All DynamoDB tables</li>
+          <li>All SNS topics and subscriptions</li>
+          <li>All SQS queues and event source mappings</li>
+          <li>All saved pipelines and their configurations</li>
+          <li>All vault add-on configurations</li>
+          <li>All registered batch projects</li>
+          <li>All cached builds</li>
+        </ul>
+        <p class="text-xs text-muted-foreground">Your workspace files will not be modified.</p>
+        <p class="text-xs text-amber-500 font-medium">The app will reload after unloading.</p>
+        <div class="flex justify-end gap-3 pt-2">
+          <Button variant="ghost" size="sm" @click="showUnloadModal = false" class="cursor-pointer">Cancel</Button>
+          <Button variant="destructive" size="sm" @click="showUnloadModal = false; unloadProfile()" class="cursor-pointer">Unload and Wipe</Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Provisioning Overlay -->
+    <div v-if="provisioningActive" class="fixed inset-0 z-[300] flex items-center justify-center bg-background/95 backdrop-blur-sm animate-in fade-in duration-300">
+      <div class="max-w-lg w-full mx-4 space-y-6">
+        <div class="text-center">
+          <h2 class="text-xl font-semibold">Loading Profile</h2>
+          <p class="text-sm text-muted-foreground mt-1">{{ profiles.find(p => p.id === selectedProfile)?.name }}</p>
+        </div>
+        <div class="space-y-3">
+          <div v-for="(step, i) in provisioningSteps" :key="i" class="flex items-center gap-3 text-sm">
+            <Loader2 v-if="step.status === 'running'" class="size-4 animate-spin text-primary shrink-0" />
+            <Check v-else-if="step.status === 'done'" class="size-4 text-green-500 shrink-0" />
+            <AlertTriangle v-else-if="step.status === 'error'" class="size-4 text-red-500 shrink-0" />
+            <div v-else class="size-4 rounded-full border-2 border-muted shrink-0" />
+            <div class="flex-1">
+              <span :class="step.status === 'pending' && 'text-muted-foreground'">{{ step.label }}</span>
+              <span v-if="step.detail" class="text-xs text-muted-foreground ml-2">{{ step.detail }}</span>
+            </div>
+          </div>
+        </div>
+        <!-- Build panel -->
+        <div v-if="buildPanel.length" class="rounded-lg border bg-muted/20 overflow-hidden">
+          <button class="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:bg-muted/30 transition-colors cursor-pointer" @click="buildPanelOpen = !buildPanelOpen">
+            <span>Build details</span>
+            <span class="flex items-center gap-1.5"><span class="font-mono">{{ buildPanel.filter(b => b.status === 'done').length }}/{{ buildPanel.length }}</span><ChevronDown class="size-3 transition-transform" :class="buildPanelOpen ? 'rotate-180' : ''"/></span>
+          </button>
+          <div v-if="buildPanelOpen" class="max-h-32 overflow-y-auto border-t px-3 py-1.5 space-y-1">
+            <div v-for="b in buildPanel" :key="b.name" class="flex items-center gap-2 text-xs">
+              <Check v-if="b.status === 'done'" class="size-3 text-green-500 shrink-0" />
+              <AlertTriangle v-else-if="b.status === 'error'" class="size-3 text-red-500 shrink-0" />
+              <Loader2 v-else class="size-3 animate-spin text-muted-foreground shrink-0" />
+              <span :class="b.status === 'building' ? 'text-foreground' : 'text-muted-foreground'">{{ b.name }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="provisioningSteps.every(s => s.status === 'done' || s.status === 'error')" class="text-center pt-4">
+          <Button @click="reloadApp" class="cursor-pointer">Done</Button>
+        </div>
+      </div>
+    </div>
+
+
+    <FolderBrowser v-model="showProfileBrowser" title="Select Workspace Directory" description="Navigate to the root folder where your team repositories are cloned." @select="selectWorkspace" />
     <div v-if="toast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg bg-green-600 animate-in fade-in slide-in-from-bottom-3 duration-300">{{ toast }}</div>
   </div>
 </template>

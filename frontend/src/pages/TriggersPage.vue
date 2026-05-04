@@ -16,7 +16,7 @@ import TargetLambdaSelector from "@/components/TargetLambdaSelector.vue";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import {
   Database, Loader2, Plus, Radio, CircleOff, ArrowRight, ArrowLeft, RefreshCw, AlertTriangle, Check,
-  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone, Search , Sparkles } from "lucide-vue-next";
+  HardDrive, Inbox, Zap, Cable, Trash2, RotateCcw, Play, Bell, Package, Settings2, Clock, Plug, CheckCircle2, XCircle, X, ShieldAlert, ChevronRight, ChevronDown, ListFilter, Pencil, Flame, Info, Save, Workflow, Megaphone, Search , Sparkles, Table2 } from "lucide-vue-next";
 
 interface PipelineTypeDef { id: string; name: string; description: string; icon: string; steps: string[]; triggerKind: string; requiresStreamHandler: boolean; requiresFilterPolicy: boolean; supportsHeavyLoad: boolean; heavyLoadLabel?: string; aiLearningSource: string; templateLambda?: string; disabled?: boolean; disabledReason?: string; }
 
@@ -38,8 +38,12 @@ function showToast(msg: string, isError = false) {
 // View + wizard state
 const view = ref<"list" | "type-select" | "wizard">("list");
 const pipelineTypes = ref<PipelineTypeDef[]>([]);
+const profileState = ref<any>(null);
+const basePipelineTypes = computed(() => pipelineTypes.value.filter(t => t.id !== "app-pipeline"));
+const profilePipelineTypes = computed(() => pipelineTypes.value.filter(t => t.id === "app-pipeline" && !!profileState.value));
+const visiblePipelineTypes = computed(() => [...basePipelineTypes.value, ...profilePipelineTypes.value]);
 const selectedPipelineType = ref<PipelineTypeDef | null>(null);
-const typeIcons: Record<string, any> = { Workflow, Zap, Inbox, Megaphone, HardDrive };
+const typeIcons: Record<string, any> = { Workflow, Zap, Inbox, Megaphone, HardDrive, Table2 };
 const stepIndex = ref(0);
 watch(stepIndex, () => window.scrollTo({ top: 0, behavior: "smooth" }));
 const selectedSource = ref<SourceType | null>(null);
@@ -557,14 +561,14 @@ function selectPipelineType(t: PipelineTypeDef) {
   if (firstKind === "lambda") { loadFunctions(); loadTemplates(); }
 }
 
-onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/triggers/pipelines/check-vault", { method: "POST" }).then(() => loadMappings()); });
+onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/triggers/pipelines/check-vault", { method: "POST" }).then(() => loadMappings()); profileState.value = await fetch("/api/profile/state").then(r => r.json()).catch(() => null); });
 </script>
 
 <template>
   <div class="space-y-3 overflow-hidden">
     <div class="flex items-center justify-between">
       <div><h1 class="text-2xl font-bold tracking-tight">Triggers</h1><p class="text-muted-foreground">Configure event source triggers for your Lambda functions.</p></div>
-      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><span class="inline-flex"><Button variant="ghost" size="sm" class="gap-1 text-xs opacity-50 cursor-not-allowed pointer-events-none"><Sparkles class="size-3" /> From Diagram</Button></span></TooltipTrigger><TooltipContent>Coming in a next release</TooltipContent></Tooltip><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
+      <div v-if="view === 'list'" class="flex items-center gap-2"><Tooltip><TooltipTrigger as-child><span class="inline-flex"><Button variant="ghost" size="sm" class="gap-1 text-xs opacity-50 cursor-not-allowed pointer-events-none"><Sparkles class="size-3" /> From Diagram</Button></span></TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip><Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="cursor-pointer active:scale-95 transition-transform" @click="loadMappings"><RefreshCw class="size-4" /></Button></TooltipTrigger><TooltipContent>Refresh</TooltipContent></Tooltip><Button class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showTypeSelect"><Plus class="size-4" /> New Pipeline</Button></div>
       <Button v-else variant="outline" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="startOver"><ArrowLeft class="size-4" /> Back to Pipelines</Button>
     </div>
     <template v-if="view === 'list'">
@@ -631,13 +635,13 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
       <div class="space-y-4">
         <div><h2 class="text-lg font-semibold">Choose a pipeline type</h2><p class="text-sm text-muted-foreground">Select the architecture pattern for your new pipeline.</p></div>
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          <Tooltip v-for="t in pipelineTypes" :key="t.id" :disabled="!t.disabled">
+          <Tooltip v-for="t in basePipelineTypes" :key="t.id" :disabled="!t.disabled">
             <TooltipTrigger as-child>
               <button class="rounded-xl border p-5 text-left transition-all space-y-2" :class="t.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:border-primary/50 hover:bg-muted/50 active:scale-[0.98]'" @click="!t.disabled && selectPipelineType(t)">
                 <component :is="typeIcons[t.icon] || Workflow" class="size-7 text-primary" />
                 <p class="text-sm font-semibold">{{ t.name }}</p>
                 <p class="text-xs text-muted-foreground leading-relaxed">{{ t.description }}</p>
-                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge><Badge v-if="t.disabled" class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium border-0">Coming soon</Badge></div>
+                <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge></div><p v-if="t.disabled" class="text-[10px] text-amber-400/70 mt-1.5">Coming soon</p>
               </button>
             </TooltipTrigger>
             <TooltipContent v-if="t.disabled">{{ t.disabledReason }}</TooltipContent>
@@ -647,9 +651,20 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
               <HardDrive class="size-7 text-muted-foreground" />
               <p class="text-sm font-semibold text-muted-foreground">S3 Event Processor</p>
               <p class="text-xs text-muted-foreground leading-relaxed">Trigger a Lambda from S3 bucket events (object created, deleted).</p>
-              <div class="flex flex-wrap gap-1 pt-1"><Badge variant="secondary" class="text-[10px]">s3</Badge><Badge variant="secondary" class="text-[10px]">lambda</Badge><Badge class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium border-0">Coming soon</Badge></div>
+              <div class="flex flex-wrap gap-1 pt-1"><Badge variant="secondary" class="text-[10px]">s3</Badge><Badge variant="secondary" class="text-[10px]">lambda</Badge></div><p class="text-[10px] text-amber-400/70 mt-1.5">Coming soon</p>
             </div>
           </TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
+        </div>
+        <div v-if="profilePipelineTypes.length" class="pt-4 border-t space-y-3">
+          <p class="text-xs text-muted-foreground font-medium">Imported from profile</p>
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            <button v-for="t in profilePipelineTypes" :key="t.id" class="rounded-xl border p-5 text-left transition-all space-y-2 cursor-pointer hover:border-primary/50 hover:bg-muted/50 active:scale-[0.98]" @click="selectPipelineType(t)">
+              <component :is="typeIcons[t.icon] || Workflow" class="size-7 text-primary" />
+              <p class="text-sm font-semibold">{{ t.name }}</p>
+              <p class="text-xs text-muted-foreground leading-relaxed">{{ t.description }}</p>
+              <div class="flex flex-wrap gap-1 pt-1"><Badge v-for="s in t.steps" :key="s" variant="secondary" class="text-[10px]">{{ s }}</Badge></div>
+            </button>
+          </div>
         </div>
       </div>
     </template>
@@ -901,14 +916,14 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
           </Card>
 
           <!-- Info banner -->
-          <!-- S3 Buckets Add-on (Coming Soon) -->
+          <!-- S3 Buckets Add-on (Coming soon) -->
           <Card class="!py-3 opacity-50 border-dashed pointer-events-none">
             <CardContent class="py-3">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
                   <div class="size-9 rounded-lg bg-muted flex items-center justify-center"><HardDrive class="size-4" /></div>
                   <div>
-                    <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming Soon</span></p>
+                    <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming soon</span></p>
                     <p class="text-xs text-muted-foreground">Ensure required buckets and seed files exist before execution</p>
                   </div>
                 </div>

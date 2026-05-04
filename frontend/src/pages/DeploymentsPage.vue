@@ -23,7 +23,7 @@ import Toggle from "@/components/ui/Toggle.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import {
   Rocket, Play, Clock, Loader2, CheckCircle2, XCircle, Copy, Check, ArrowLeft, ArrowRight,
-  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Upload, Square, RefreshCw, Search, ChevronDown, Sparkles, FolderOpen, FileJson, MessageSquare, AlertTriangle } from "lucide-vue-next";
+  Zap, Cpu, Timer, HardDrive, Feather, Diamond, Trash2, ShieldAlert, Plus, X, Plug, Bug, Upload, Square, RefreshCw, Search, ChevronDown, Sparkles, FolderOpen, FileJson, MessageSquare, AlertTriangle, Info } from "lucide-vue-next";
 import VaultIcon from "@/components/icons/VaultIcon.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
 import SkeletonCard from "@/components/SkeletonCard.vue";
@@ -70,6 +70,9 @@ const confettiEnabled = ref(true);
 const lsManaged = ref(false);
 onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onInvoke; lsManaged.value = !!s.localstackManaged; } catch {} });
 const selected = ref<Deployment | null>(null);
+const profileState = ref<any>(null);
+const profileName = ref("");
+
 const step = ref<"list" | "addons" | "invoke">("list");
 
 // Invoke state
@@ -399,7 +402,8 @@ function statusTip(s: string) {
   return "Function was removed from LocalStack";
 }
 
-onMounted(() => { loadDeployments(); loadVaultConfig(); });
+onMounted(async () => { loadDeployments(); loadVaultConfig(); profileState.value = await fetch("/api/profile/state").then(r => r.json()).catch(() => null);
+  if (profileState.value) { const ps = await fetch("/api/profile").then(r => r.json()).catch(() => []); profileName.value = ps.find((p: any) => p.id === profileState.value.activeProfile)?.name || ""; } });
 </script>
 
 <template>
@@ -455,6 +459,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                       <TooltipContent>{{ statusTip(d.status) }}</TooltipContent>
                     </Tooltip>
                     <Badge variant="secondary" class="text-[10px]">{{ d.runtime }}</Badge>
+                    <Tooltip v-if="profileState?.provisioningResults?.lambdas?.some((l: any) => l.repoName === d.projectName)"><TooltipTrigger as-child><span class="inline-flex items-center px-1.5 py-0.5 rounded-md border border-foreground/20 bg-foreground/5 text-[10px] font-medium text-foreground/80">{{ profileName || profileState.activeProfile }}</span></TooltipTrigger><TooltipContent>This Lambda was imported from the {{ profileName || profileState.activeProfile }} profile</TooltipContent></Tooltip>
                   </div>
                   <p class="text-xs text-muted-foreground truncate">{{ d.handler }}</p>
                 </div>
@@ -544,7 +549,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
             </Card>
 
 
-            <!-- S3 Buckets Add-on (Coming Soon) -->
+            <!-- S3 Buckets Add-on (Coming soon) -->
             <Card class="!py-3 opacity-50 border-dashed pointer-events-none">
               <CardContent class="py-3">
                 <div class="flex items-center justify-between">
@@ -553,7 +558,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                       <HardDrive class="size-4" />
                     </div>
                     <div>
-                      <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming Soon</span></p>
+                      <p class="text-sm font-medium flex items-center gap-2">S3 Buckets <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming soon</span></p>
                       <p class="text-xs text-muted-foreground">Ensure required buckets and seed files exist before invocation</p>
                     </div>
                   </div>
@@ -625,6 +630,7 @@ onMounted(() => { loadDeployments(); loadVaultConfig(); });
                   <label class="text-sm font-medium flex items-center gap-2 cursor-pointer">
                     Environment Variables
                     <Badge variant="outline" class="text-[10px]">{{ deployEnvVars.length }}</Badge>
+                    <Tooltip v-if="selected?.envSource"><TooltipTrigger as-child><Info class="size-3 text-muted-foreground" /></TooltipTrigger><TooltipContent>Detected from {{ selected.envSource }}</TooltipContent></Tooltip>
                     <ArrowRight class="size-3 transition-transform" :class="{ 'rotate-90': envVarsCollapsed }" />
                   </label>
                   <div class="flex gap-1" @click.stop>

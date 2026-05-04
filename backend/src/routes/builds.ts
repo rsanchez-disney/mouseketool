@@ -5,7 +5,7 @@ import { join } from "path";
 import { v4 as uuid } from "uuid";
 import { SETTINGS_DIR, BUILDS_DIR } from "../config/constants.js";
 import { loadSettings } from "../helpers/settings.js";
-import { findJar } from "../helpers/fs-utils.js";
+import { findJar, findJavaFiles } from "../helpers/fs-utils.js";
 import { stripAnsi } from "../helpers/ansi.js";
 
 const router = Router();
@@ -266,6 +266,169 @@ public class PluginMerger {
       finish();
     });
   })();
+});
+
+// POST /api/builds/sync — synchronous build for provisioning (blocks until complete)
+// POST /api/builds/sync — synchronous build for provisioning (blocks until complete)
+router.post("/sync", async (req, res) => {
+  const { projectPath, freshClone } = req.body;
+  if (!projectPath) return res.status(400).json({ error: "projectPath required" });
+
+  const { exec } = await import("child_process");
+  const run = (cmd: string, opts: any) => new Promise<void>((resolve, reject) => { exec(cmd, opts, (err: any) => err ? reject(err) : resolve()); });
+  const { existsSync: ex, readdirSync, mkdirSync, copyFileSync, writeFileSync, readFileSync } = await import("fs");
+  const { join: pjoin } = await import("path");
+
+  const isMaven = ex(pjoin(projectPath, "pom.xml"));
+  const isGradle = ex(pjoin(projectPath, "build.gradle")) || ex(pjoin(projectPath, "build.gradle.kts"));
+  if (!isMaven && !isGradle) return res.status(400).json({ error: "No pom.xml or build.gradle found" });
+
+  const tool = isMaven ? "maven" : "gradle";
+  const isWin = process.platform === "win32";
+  const cmd = tool === "maven" ? (isWin ? "mvn.cmd" : "mvn") : (isWin ? "gradle.bat" : "gradle");
+  const args = tool === "maven" ? "package -DskipTests -B -q" : "shadowJar --console=plain -q";
+
+  // EXCEPTION: mvn versions:update-parent is the ONLY allowed modification to workspace files.
+  let parentUpdated = false;
+  if (freshClone && isMaven) {
+    console.log(`[profile:build] Running versions:update-parent for freshly cloned project`);
+    try {
+      await run(`${cmd} versions:update-parent -DgenerateBackupPoms=false -B -q`, { cwd: projectPath, timeout: 60000, env: { ...process.env, TERM: "dumb", NO_COLOR: "1" } });
+      console.log(`[profile:build] ✓ Parent POM updated`); parentUpdated = true;
+    } catch { console.log(`[profile:build] ⚠ versions:update-parent failed, continuing anyway`); }
+  }
+
+  console.log(`[profile:build] Building ${projectPath} with ${tool}`);
+  try {
+    await run(`${cmd} ${args}`, { cwd: projectPath, timeout: 300000, env: { ...process.env, TERM: "dumb", NO_COLOR: "1" } });
+  } catch (e: any) {
+    console.log(`[profile:build] ✗ Build failed: ${e.message.substring(0, 100)}`);
+    return res.status(400).json({ error: "Build failed" });
+  }
+
+  // Find JAR
+  const targetDir = tool === "maven" ? pjoin(projectPath, "target") : pjoin(projectPath, "build", "libs");
+  try {
+    const jars = readdirSync(targetDir).filter((f: string) => f.endsWith(".jar") && !f.endsWith("-sources.jar") && !f.endsWith("-javadoc.jar") && !f.includes("original"));
+    if (!jars.length) return res.status(400).json({ error: "No JAR found after build" });
+
+    const { v4: uuid } = await import("uuid");
+    const buildId = uuid();
+    const buildDir = pjoin(BUILDS_DIR, buildId);
+    mkdirSync(buildDir, { recursive: true });
+    const jarName = jars[0]!;
+    copyFileSync(pjoin(targetDir, jarName), pjoin(buildDir, jarName));
+
+    // Detect handler: SAM template first
+    let handler = "";
+    try {
+      const samPaths = ["template-local.yml", "template.yaml", "template.yml", "sam-template.yaml"];
+      for (const sp of samPaths) {
+        const samPath = pjoin(projectPath, sp);
+        if (ex(samPath)) {
+          const sam = readFileSync(samPath, "utf-8");
+          const m = sam.match(/^\s*Handler:\s*(.+)/m);
+          if (m) { handler = m[1].trim(); break; }
+        }
+      }
+    } catch {}
+
+    // Fallback: scan Java source for handler classes
+    if (!handler) {
+      const srcDir = pjoin(projectPath, "src");
+      if (ex(srcDir)) {
+        const javaFiles = await findJavaFiles(srcDir);
+        console.log(`[profile:build] Scanning ${javaFiles.length} Java files for handlers`);
+        for (const jf of javaFiles) {
+          const src = readFileSync(jf, "utf-8");
+          if (/implements\s+(RequestHandler|RequestStreamHandler|SQSHandler)/.test(src) || /public\s+\S+\s+handleRequest\s*\(/.test(src)) {
+            const pkg = src.match(/^package\s+([\w.]+)\s*;/m);
+            const cls = src.match(/public\s+class\s+(\w+)/);
+            if (pkg && cls) { handler = `${pkg[1]}.${cls[1]}::handleRequest`; console.log(`[profile:build] ✓ Detected handler: ${handler}`); break; }
+          }
+        }
+        if (!handler) console.log(`[profile:build] ⚠ No handler found in ${javaFiles.length} source files`);
+      }
+    }
+
+    const projectName = projectPath.split(/[\\/]/).pop() || "unknown";
+
+    // Detect env vars from .env files or SAM template and save for deploy
+    try {
+      const envVars: { key: string; value: string }[] = [];
+      let envSource = "";
+      // Try .env files first
+      const envFiles = [".env", ".env.local", ".env.development", ".env.example", ".env.sample"];
+      for (const ef of envFiles) {
+        const envPath = pjoin(projectPath, ef);
+        if (ex(envPath)) {
+          const content = readFileSync(envPath, "utf-8");
+          for (const line of content.split(/\r?\n/)) {
+            const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)/);
+            if (m) envVars.push({ key: m[1], value: m[2].replace(/^["\']+|["\']+$/g, "") });
+          }
+          if (envVars.length) { envSource = ef; break; }
+        }
+      }
+      // Fallback: SAM template
+      if (!envVars.length) {
+        const samPaths2 = ["template-local.yml", "template.yaml", "template.yml", "sam-template.yaml"];
+        for (const sp of samPaths2) {
+          const samPath2 = pjoin(projectPath, sp);
+          if (ex(samPath2)) {
+            const sam2 = readFileSync(samPath2, "utf-8");
+            // Parse Variables section respecting YAML indentation
+            const samLines = sam2.split(/\r?\n/);
+            const varIdx = samLines.findIndex((l: string) => /^\s+Variables:\s*$/.test(l));
+            if (varIdx >= 0) {
+              const baseIndent = samLines[varIdx].match(/^(\s*)/)?.[1].length || 0;
+              for (let vi = varIdx + 1; vi < samLines.length; vi++) {
+                const line = samLines[vi];
+                if (!line.trim()) continue;
+                const lineIndent = line.match(/^(\s*)/)?.[1].length || 0;
+                if (lineIndent <= baseIndent) break;
+                const m = line.match(/^\s+(\w+):\s*(.*)/);
+                if (m && m[1] !== "Variables") envVars.push({ key: m[1], value: m[2].replace(/^["\']+ |["\']+ $/g, "").replace(/^!Ref\s+/, "") });
+              }
+            }
+            if (envVars.length) { envSource = sp; break; }
+          }
+        }
+      }
+      // Lowest precedence: scan README for dotenv/env section
+      if (!envVars.length) {
+        const readmeFiles = ["README.md", "readme.md", "Readme.md"];
+        for (const rf of readmeFiles) {
+          const rPath = pjoin(projectPath, rf);
+          if (ex(rPath)) {
+            const readme = readFileSync(rPath, "utf-8");
+            const envSection = readme.match(/(?:#+[^\n]*(?:env|environment)[^\n]*\n[\s\S]*?```[^\n]*\n([\s\S]*?)```|```(?:dotenv|env)\n([\s\S]*?)```)/i);
+            if (envSection) {
+              for (const line of envSection[1].split(/\n/)) {
+                const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)/);
+                if (m) envVars.push({ key: m[1], value: m[2].replace(/^["\']+ |["\']+ $/g, "") });
+              }
+              if (envVars.length) envSource = rf;
+            }
+            break;
+          }
+        }
+      }
+      if (envVars.length) {
+        writeFileSync(pjoin(buildDir, "envvars.json"), JSON.stringify({ vars: envVars, source: envSource }));
+        console.log(`[profile:build] ✓ Detected ${envVars.length} env vars from ${envSource}`);
+      }
+    } catch {}
+    writeFileSync(pjoin(buildDir, "meta.json"), JSON.stringify({
+      id: buildId, projectPath, buildTool: tool, handler, jarPath: pjoin(buildDir, jarName),
+      createdAt: new Date().toISOString(), projectName
+    }));
+
+    console.log(`[profile:build] ✓ Built ${projectName} → ${buildId} (handler: ${handler || "none"})`);
+    res.json({ buildId, handler, projectName, jarPath: pjoin(buildDir, jarName), parentUpdated });
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 router.get("/", async (_req, res) => {

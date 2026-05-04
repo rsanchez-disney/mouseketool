@@ -66,7 +66,7 @@ export const PIPELINE_TYPES: PipelineTypeDefinition[] = [
     id: "direct-stream",
     name: "Direct Stream Processor",
     description: "DynamoDB stream triggers a Lambda directly. No SNS or SQS in the middle.",
-    icon: "Zap",
+    icon: "Table2",
     steps: ["dynamodb", "lambda"],
     triggerKind: "dynamodb-insert",
     requiresStreamHandler: false,
