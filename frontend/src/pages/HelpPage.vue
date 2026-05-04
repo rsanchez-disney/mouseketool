@@ -8,7 +8,7 @@ import {
   Rocket, Hammer, CloudCog, Zap, AlertTriangle, Terminal, Shield,
   Database, Bell, Clock, Keyboard, Sparkles, RefreshCw,
   Container, Play, Home, Settings, ChevronDown, ChevronRight, Search,
-  Layers, MonitorPlay, Workflow, Inbox, Radio, ChevronsDownUp, ChevronsUpDown
+  Layers, MonitorPlay, Workflow, Inbox, Radio, ChevronsDownUp, ChevronsUpDown, UserCircle
 } from "lucide-vue-next";
 
 const tabs = [
@@ -16,6 +16,7 @@ const tabs = [
   { id: "lambda", label: "Lambda Workflow", icon: Hammer, accent: "blue" },
   { id: "pipelines", label: "Pipelines", icon: Database, accent: "purple" },
   { id: "batch", label: "Batch Jobs", icon: Container, accent: "amber" },
+  { id: "profiles", label: "Profiles", icon: UserCircle, accent: "amber" },
   { id: "tools", label: "Tools & Add-ons", icon: Terminal, accent: "zinc" },
   { id: "ai", label: "AI & Automation", icon: Sparkles, accent: "violet" },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard, accent: "zinc" },
@@ -68,6 +69,9 @@ const sectionContent: Record<string, { tab: string; text: string }> = {
   "bj-registry": { tab: "batch", text: "project registry docker compose dockerfile file watcher" },
   "bj-run": { tab: "batch", text: "simple run environment variable presets port conflict detection container visualization" },
   "bj-workflow": { tab: "batch", text: "workflow editor canvas vueflow compose studio ai generate execution infrastructure" },
+  "pf-overview": { tab: "profiles", text: "profiles workspace load unload clone github auto-download parallel build deploy register" },
+  "pf-loading": { tab: "profiles", text: "loading profile destructive cleanup wipe localstack resources confirmation modal" },
+  "pf-projects": { tab: "profiles", text: "projects page cards found missing clone rebuild handler detection" },
   "tl-log": { tab: "tools", text: "log viewer auto-scroll search copy root cause kiro explain color coding" },
   "tl-vault": { tab: "tools", text: "vault add-on secrets hashicorp docker networking host.docker.internal" },
   "tl-heavy": { tab: "tools", text: "heavy load debug mode batch size window jvm flags verbose class" },
@@ -565,6 +569,70 @@ watch(searchQuery, (q) => {
       </div>
     </div>
 
+
+
+
+    <!-- PROFILES -->
+    <div v-if="active === 'profiles'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="flex items-center gap-2 text-base font-semibold"><UserCircle class="size-4 text-muted-foreground" /> Profiles</h3>
+        <div class="flex gap-1">
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="openAll(['pf-overview','pf-loading','pf-projects'])" title="Open all"><ChevronsUpDown class="size-3.5" /></Button>
+          <Button variant="ghost" size="sm" class="h-6 w-6 cursor-pointer opacity-40 hover:opacity-100" @click="closeAll(['pf-overview','pf-loading','pf-projects'])" title="Close all"><ChevronsDownUp class="size-3.5" /></Button>
+        </div>
+      </div>
+      <div class="space-y-2">
+        <!-- Overview -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pf-overview')">
+            <component :is="isOpen('pf-overview') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <UserCircle class="size-3.5 text-muted-foreground" /> Overview
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pf-overview') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>Profiles let you load a pre-configured development environment with one click. A profile defines which Lambda projects and batch projects belong to your team's workflow.</p>
+                <p>Configure profiles from <strong>Settings → Profile</strong> tab. Select a workspace directory, choose a profile, and click Load.</p>
+                <p>When a profile is active, a badge appears in the navbar showing the profile name. The Projects page becomes available in the sidebar showing all Lambda projects managed by the profile.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Loading & Unloading -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pf-loading')">
+            <component :is="isOpen('pf-loading') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <RefreshCw class="size-3.5 text-muted-foreground" /> Loading & Unloading
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pf-loading') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p><strong>Loading</strong> a profile is a destructive action. All existing LocalStack resources (Lambdas, DynamoDB tables, SNS topics, SQS queues), pipelines, batch registrations, workflows, and cached builds are deleted before provisioning begins.</p>
+                <p>If "Auto-download" is checked and Kiro + GitHub MCP is configured, missing projects are cloned automatically from GitHub.</p>
+                <p>Builds run 3 at a time in parallel. A collapsible panel shows real-time progress for each project.</p>
+                <p><strong>Unloading</strong> performs the same cleanup and reloads the app. LocalStack must be running for both operations.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Projects Page -->
+        <div class="border rounded-lg overflow-hidden transition-all duration-300 hover:border-zinc-500/30 hover:shadow-sm">
+          <button class="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left cursor-pointer hover:bg-muted/50 transition-colors" @click="toggle('pf-projects')">
+            <component :is="isOpen('pf-projects') ? ChevronDown : ChevronRight" class="size-3.5 text-muted-foreground transition-transform duration-200" />
+            <Layers class="size-3.5 text-muted-foreground" /> Projects Page
+          </button>
+          <div class="grid transition-all duration-300 ease-in-out" :class="isOpen('pf-projects') ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'">
+            <div class="overflow-hidden">
+              <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
+                <p>The Projects page shows all Lambda projects from the active profile. Each card displays the project name, detected handler class, build tool (Maven/Gradle), and language version.</p>
+                <p>Cards have three states: <strong>Deployed</strong> (green), <strong>Built — not deployed</strong> (blue), or <strong>Not found</strong> (dashed border). Missing projects can be cloned individually.</p>
+                <p>Click <strong>Rebuild</strong> to navigate to the Builder page with the project pre-loaded and build auto-started.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- TOOLS & ADD-ONS -->
     <div v-if="active === 'tools'" class="animate-in fade-in slide-in-from-bottom-2 duration-300">
