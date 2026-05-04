@@ -139,6 +139,14 @@ amount). Changes to heavy load settings are applied retroactively to all pipelin
 runs on startup and is accessible from the Settings page. AI learned data storage (local or S3) is configurable.
 Pipeline self-healing automatically recreates resources after LocalStack restarts.
 
+### Profiles
+Load pre-configured development environments with one click. A profile defines which Lambda projects and
+batch projects belong to a team's workflow. On load, Mouseketool scans a workspace directory, optionally
+clones missing projects via GitHub, auto-builds and deploys Lambdas, and registers batch projects.
+Loading a profile is a destructive action that wipes all existing LocalStack resources for a clean slate.
+Profiles support parallel builds (3 concurrent), automatic handler detection from Java source, and
+environment variable detection from SAM templates, .env files, and README dotenv sections.
+
 ### Batch Projects
 Register Docker-based projects with auto-detection of Dockerfiles and compose files. Manage multiple
 compose file variants per project, edit detected paths, and receive live file change notifications
