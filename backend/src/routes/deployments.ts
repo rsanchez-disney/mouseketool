@@ -375,8 +375,18 @@ export async function reconcileDeployments(): Promise<number> {
       redeployed++;
       console.log("[reconcile] Redeployed Lambda:", dep.functionName);
     } catch (e: any) {
-      console.error("[reconcile] Failed to redeploy", dep.functionName, e.message);
-      kept.push(dep); // keep it, might work next time
+      if (e.message?.includes("update is in progress")) {
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          const m = JSON.parse(await readFile(metaPath, "utf-8"));
+          const jar = await readFile(m.jarPath);
+          await client.send(new UpdateFunctionCodeCommand({ FunctionName: dep.functionName, ZipFile: jar }));
+          await client.send(new UpdateFunctionConfigurationCommand({ FunctionName: dep.functionName, Runtime: dep.runtime || "java21", Handler: dep.handler, Timeout: 60, MemorySize: memorySize }));
+          redeployed++;
+          console.log("[reconcile] Redeployed Lambda (retry):", dep.functionName);
+        } catch {}
+      } else { console.error("[reconcile] Failed to redeploy", dep.functionName, e.message); }
+      kept.push(dep);
     }
   }
 
