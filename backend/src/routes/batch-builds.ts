@@ -225,6 +225,7 @@ router.get("/:id/env-scan", async (req, res) => {
     }
   } catch {}
   // Lowest precedence: scan README for dotenv/env section
+  if (!vars.some(v => v.source.startsWith("file:"))) {
 
     const readmeFiles = ["README.md", "readme.md", "Readme.md"];
     for (const rmf of readmeFiles) {
@@ -241,6 +242,7 @@ router.get("/:id/env-scan", async (req, res) => {
       } catch {}
     }
 
+  }
   res.json(vars);
 });
 

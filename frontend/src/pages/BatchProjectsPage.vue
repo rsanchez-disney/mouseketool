@@ -16,6 +16,7 @@ interface BatchProject { id: string; name: string; projectPath: string; dockerfi
 
 function onKey(e: KeyboardEvent) { if (e.key === "Escape") showBrowser.value = false; }
 onMounted(async () => {
+  loadWorkflows();
   window.addEventListener("keydown", onKey);
   await loadProjects();
   const [pState, pList] = await Promise.all([
@@ -120,6 +121,8 @@ async function rescan(p: BatchProject) {
 const exportTarget = ref<BatchProject | null>(null);
 const exportCompose = ref("");
 const exporting = ref(false);
+const workflows = ref<any[]>([]);
+async function loadWorkflows() { try { workflows.value = await (await fetch("/api/batch-workflows")).json(); } catch {} }
 
 async function exportToLaunchpad(p: BatchProject, compose?: string) {
   const filePath = p.projectPath + "/" + (compose || p.composeFiles?.[0] || p.composefile);
@@ -134,6 +137,7 @@ async function exportToLaunchpad(p: BatchProject, compose?: string) {
   exporting.value = false;
 }
 
+function hasWorkflow(p: BatchProject) { return workflows.value.some(w => w.name === p.name); }
 function handleExport(p: BatchProject) {
   if (p.composeFiles?.length > 1) { exportTarget.value = p; exportCompose.value = p.composeFiles[0]; }
   else exportToLaunchpad(p);
@@ -193,7 +197,7 @@ function handleExport(p: BatchProject) {
         </div>
         <div class="flex items-center gap-1 shrink-0">
           <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-emerald-500 cursor-pointer" @click="router.push(`/batch-projects/${p.id}/run`)"><Play class="size-4" /></Button></TooltipTrigger><TooltipContent>Run project</TooltipContent></Tooltip>
-          <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-blue-500 cursor-pointer" :disabled="exporting" @click="handleExport(p)"><Rocket class="size-4" /></Button></TooltipTrigger><TooltipContent>Export to Launchpad</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 text-muted-foreground hover:text-blue-500 cursor-pointer" :disabled="exporting || hasWorkflow(p)" @click="handleExport(p)"><Rocket class="size-4" /></Button></TooltipTrigger><TooltipContent>{{ hasWorkflow(p) ? "Workflow already exists for this project" : "Export to Launchpad" }}</TooltipContent></Tooltip>
         </div>
       </div>
     </div>

@@ -1,3 +1,4 @@
+// batch-runs: image rebuild + auto-teardown
 import { Router } from "express";
 import { exec, execSync, spawn, ChildProcess } from "child_process";
 import { readFile, writeFile, mkdir } from "fs/promises";
@@ -229,7 +230,7 @@ function dockerDown(projectPath: string, composeFile: string): Promise<void> {
 }
 
 router.post("/simple", async (req, res) => {
-  const { projectId, projectPath, composefile, envOverrides } = req.body;
+  const { projectId, projectPath, composefile, envOverrides, rebuild = true, portRemap = true } = req.body;
   if (!projectPath) { res.status(400).json({ error: "projectPath required" }); return; }
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
@@ -280,7 +281,7 @@ router.post("/simple", async (req, res) => {
     // Analyze ports and generate modified compose
     let remaps: any[] = [];
     let effectiveCompose = cf;
-    try {
+    if (portRemap) { try {
       console.log("[batch-run] starting port analysis");
       const result = await buildEffectiveCompose(projectPath, cf);
       console.log("[batch-run] port analysis done, remaps:", result.remaps.length);
@@ -289,7 +290,7 @@ router.post("/simple", async (req, res) => {
     } catch (e: any) {
       console.error("[batch-run] port analysis error:", e);
       send("log", { line: `⚠ Port scan skipped: ${e.message}` });
-    }
+    } }
     console.log("[batch-run] proceeding with compose:", effectiveCompose);
 
     if (remaps.length) {
@@ -302,6 +303,17 @@ router.post("/simple", async (req, res) => {
 
     const composeFile = effectiveCompose || cf;
     lastRunContext = { projectPath, composeFile };
+
+    // Identify app containers (services with build: directive) for exit detection
+    const appContainerNames = new Set<string>();
+    try {
+      const compDoc = yaml.load(await readFile(composeFile, "utf-8")) as any;
+      if (compDoc?.services) {
+        for (const [svcName, svc] of Object.entries(compDoc.services) as [string, any][]) {
+          if (svc.build || svc.image?.includes("mouseketool-batch")) appContainerNames.add(svcName.toLowerCase());
+        }
+      }
+    } catch {}
     const env = { ...process.env };
     if (envOverrides) {
       for (const e of envOverrides) {
@@ -321,8 +333,131 @@ router.post("/simple", async (req, res) => {
       spawnCmd = "bash";
       spawnArgs = ["-c", `cd "${projectPath}" && docker compose -f "${composeFile}" up --build --force-recreate`];
     }
+
+    // Image rebuild logic: build tagged image, replace build: with image: in effective compose
+    let imageTag = "";
+    let dockerfile = "";
+    if (projectId) {
+      try {
+        const projects = JSON.parse(await readFile(join(process.cwd(), ".data", "batch-projects.json"), "utf-8"));
+        const proj = projects.find((p: any) => p.id === projectId);
+        if (proj) { imageTag = proj.imageTag || ""; dockerfile = proj.dockerfile || ""; }
+      } catch {}
+    }
+    if (imageTag && dockerfile) {
+      // Replace build: directives with image: in the effective compose
+      try {
+        let composeContent = await readFile(composeFile, "utf-8");
+        // Remove build: lines (both "build: ." and multi-line build: context/dockerfile)
+        composeContent = composeContent.replace(/^(\s*)build:.*$/gm, `$1image: ${imageTag}`);
+        composeContent = composeContent.replace(/^\s*context:.*$\n?/gm, "");
+        composeContent = composeContent.replace(/^\s*dockerfile:.*$\n?/gm, "");
+        // Inject env overrides into app service
+        if (envOverrides?.length) {
+          const doc = yaml.load(composeContent) as any;
+          if (doc?.services) {
+            for (const [, svc] of Object.entries(doc.services) as [string, any][]) {
+              if (svc.image?.includes("mouseketool-batch") || svc.build) {
+                if (!svc.environment) svc.environment = {};
+                if (Array.isArray(svc.environment)) { for (const e of envOverrides) { if (e.key) svc.environment.push(`${e.key}=${e.value || ""}`); } }
+                else { for (const e of envOverrides) { if (e.key) svc.environment[e.key] = e.value || ""; } }
+              }
+            }
+            composeContent = yaml.dump(doc, { lineWidth: -1, noRefs: true });
+          }
+        }
+        await writeFile(composeFile, composeContent);
+      } catch (e: any) { send("log", { line: `⚠ Could not patch compose: ${e.message}` }); }
+
+      if (rebuild) {
+        // Build JAR first (Maven/Gradle)
+        const hasPom = existsSync(join(projectPath, "pom.xml"));
+        const hasGradle = existsSync(join(projectPath, "build.gradle")) || existsSync(join(projectPath, "build.gradle.kts"));
+        if (hasPom || hasGradle) {
+          const buildTool = hasPom ? (process.platform === "win32" ? "mvn.cmd" : "mvn") : (process.platform === "win32" ? "gradle.bat" : "gradle");
+          const buildArgs = hasPom ? "clean install -DskipTests=true -B" : "clean build -x test --console=plain";
+          send("log", { line: `$ ${buildTool} ${buildArgs}` });
+          const buildSuccess = await new Promise<boolean>((resolve) => {
+            const mvnProc = spawn(buildTool, buildArgs.split(" "), { cwd: projectPath, env: { ...process.env, TERM: "dumb", NO_COLOR: "1" }, shell: true });
+            mvnProc.stdout?.on("data", (chunk: Buffer) => { for (const line of stripAnsi(chunk.toString()).split("\n")) { if (line.trim()) send("log", { line: line.trimEnd() }); } });
+            mvnProc.stderr?.on("data", (chunk: Buffer) => { for (const line of stripAnsi(chunk.toString()).split("\n")) { if (line.trim()) send("log", { line: line.trimEnd() }); } });
+            mvnProc.on("close", (code) => resolve(code === 0));
+            mvnProc.on("error", () => resolve(false));
+          });
+          if (!buildSuccess) {
+            send("log", { line: `✗ Build failed` });
+            send("error", { message: "Maven/Gradle build failed" });
+            finish("build-failed");
+            return;
+          }
+          send("log", { line: `✓ JAR built successfully` });
+        }
+        send("log", { line: `Rebuilding image: ${imageTag}` });
+        // Remove old image
+        const rmCmd = process.platform === "win32"
+          ? `wsl docker rmi ${imageTag} 2>/dev/null; true`
+          : `docker rmi ${imageTag} 2>/dev/null; true`;
+        try { execSync(rmCmd, { timeout: 15000 }); } catch {}
+        // Build new image
+        const dfPath = join(projectPath, dockerfile).replace(/\\/g, "/");
+        const ctxPath = projectPath.replace(/\\/g, "/");
+        const buildCmd = process.platform === "win32"
+          ? `wsl docker build -t ${imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
+          : `docker build -t ${imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
+        send("log", { line: `$ docker build -t ${imageTag} ...` });
+        try {
+          execSync(buildCmd, { timeout: 300000, encoding: "utf-8" });
+          send("log", { line: `✓ Image built: ${imageTag}` });
+        } catch (e: any) {
+          send("log", { line: `✗ Image build failed: ${e.message?.substring(0, 200)}` });
+          send("error", { message: "Image build failed" });
+          finish("image-build-failed");
+          return;
+        }
+      } else {
+        // Check if image exists, build if not
+        const checkCmd = process.platform === "win32" ? `wsl docker image inspect ${imageTag} > /dev/null 2>&1` : `docker image inspect ${imageTag} > /dev/null 2>&1`;
+        try { execSync(checkCmd, { timeout: 5000 }); send("log", { line: `Using existing image: ${imageTag}` }); }
+        catch {
+          send("log", { line: `Image not found, building: ${imageTag}` });
+          const dfPath = join(projectPath, dockerfile).replace(/\\/g, "/");
+          const ctxPath = projectPath.replace(/\\/g, "/");
+          const buildCmd = process.platform === "win32"
+            ? `wsl docker build -t ${imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
+            : `docker build -t ${imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
+          try { execSync(buildCmd, { timeout: 300000, encoding: "utf-8" }); send("log", { line: `✓ Image built: ${imageTag}` }); }
+          catch (e: any) { send("log", { line: `✗ Image build failed: ${e.message?.substring(0, 200)}` }); send("error", { message: "Image build failed" }); finish("image-build-failed"); return; }
+        }
+      }
+    }
+
+    // Tear down previous run containers
+    if (lastRunContext) {
+      send("log", { line: "Stopping previous run..." });
+      try { await dockerDown(lastRunContext.projectPath, lastRunContext.composeFile); } catch {}
+    }
+
     send("log", { line: `$ cd ${basename(projectPath)}` });
     send("log", { line: `$ docker compose -f "${basename(composeFile)}" up --build ...` });
+
+
+    // Inject env overrides into effective compose (for cases without image rebuild)
+    if (envOverrides?.length && !(imageTag && dockerfile)) {
+      try {
+        const compRaw = await readFile(composeFile, "utf-8");
+        const doc = yaml.load(compRaw) as any;
+        if (doc?.services) {
+          for (const [, svc] of Object.entries(doc.services) as [string, any][]) {
+            if (svc.build || svc.image?.includes("mouseketool-batch")) {
+              if (!svc.environment) svc.environment = {};
+              if (Array.isArray(svc.environment)) { for (const e of envOverrides) { if (e.key) svc.environment.push(`${e.key}=${e.value || ""}`); } }
+              else { for (const e of envOverrides) { if (e.key) svc.environment[e.key] = e.value || ""; } }
+            }
+          }
+          await writeFile(composeFile, yaml.dump(doc, { lineWidth: -1, noRefs: true }));
+        }
+      } catch {}
+    }
 
     // Remove existing containers to prevent name conflicts
     const containerNames = getContainerNames(composeFile);
@@ -330,17 +465,53 @@ router.post("/simple", async (req, res) => {
 
     await mkdir(RUNS_DIR, { recursive: true });
 
-    activeRun = spawn(spawnCmd, spawnArgs, { env });
+    // Retry spawn if path not immediately available (antivirus/filesystem race)
+    const trySpawn = () => spawn(spawnCmd, spawnArgs, { env });
+    let spawnAttempt = 0;
+    const startSpawn = (): ChildProcess => {
+      const proc = trySpawn();
+      proc.on("error", (e) => {
+        if (spawnAttempt < 2) { spawnAttempt++; send("log", { line: `⚠ Retrying (${spawnAttempt}/2)...` }); setTimeout(() => { activeRun = startSpawn(); }, 1500); }
+        else { send("error", { message: e.message }); finish("spawn-error"); }
+      });
+      return proc;
+    };
+
+    activeRun = startSpawn();
     console.log("[batch-run] spawn:", spawnCmd, spawnArgs[spawnArgs.length - 1].slice(0, 200));
-    activeRun.on("error", (e) => { console.error("[batch-run] spawn error:", e); send("error", { message: e.message }); finish("spawn-error"); });
 
     let logLines: string[] = [];
+    let batchExited = false;
     const onData = (chunk: Buffer) => {
       const text = stripAnsi(chunk.toString());
       console.log("[batch-run] chunk:", text.slice(0, 100));
       for (const line of text.split("\n")) {
         const trimmed = line.trimEnd();
         if (trimmed) { send("log", { line: trimmed }); logLines.push(trimmed); }
+        // Detect batch container exit
+        if (appContainerNames.size && trimmed.match(/exited with code/i)) {
+          const containerMatch = trimmed.match(/^(\S+).*exited with code (\d+)/i) || trimmed.match(/(\S+)\s+\|.*exited with code (\d+)/i);
+          if (containerMatch) {
+            const name = containerMatch[1].toLowerCase().replace(/-\d+$/, "");
+            if ([...appContainerNames].some(n => name.includes(n))) {
+              appContainerNames.delete([...appContainerNames].find(n => name.includes(n))!);
+              if (appContainerNames.size === 0) {
+                send("log", { line: "" });
+                send("log", { line: "Batch container(s) finished. Tearing down..." });
+                batchExited = true;
+                setTimeout(async () => {
+                  if (activeRun?.pid) {
+                    try { if (process.platform === "win32") execSync(`taskkill /PID ${activeRun.pid} /T /F`, { stdio: "ignore" }); else process.kill(-activeRun.pid, "SIGKILL"); } catch { activeRun?.kill("SIGKILL"); }
+                    activeRun = null;
+                  }
+                  if (lastRunContext) { try { await dockerDown(lastRunContext.projectPath, lastRunContext.composeFile); } catch {} }
+                  send("complete", { runId, exitCode: parseInt(containerMatch![2]) || 0, duration: Date.now() - startTime });
+                  finish("batch-exit");
+                }, 1000);
+              }
+            }
+          }
+        }
       }
     };
     activeRun.stdout?.on("data", onData);
@@ -348,6 +519,7 @@ router.post("/simple", async (req, res) => {
 
     activeRun.on("close", async (code) => {
       activeRun = null;
+      if (batchExited) return; // Already handled by batch-exit detection
       const duration = Date.now() - startTime;
       const exitCode = code ?? 0;
 
@@ -458,7 +630,7 @@ router.delete("/", async (_req, res) => {
 
 
 router.post("/workflow", async (req, res) => {
-  const { workflowId, composePath, envOverrides, originalProjectPath } = req.body;
+  const { workflowId, composePath, envOverrides, originalProjectPath, rebuild = true } = req.body;
   if (!composePath) { res.status(400).json({ error: "composePath required" }); return; }
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" });
@@ -545,6 +717,51 @@ router.post("/workflow", async (req, res) => {
     }
 
     // Start containers in detached mode and stream logs simultaneously
+
+    // Rebuild images for batch nodes in the workflow
+    if (batchNodeNames.size) {
+      try {
+        const projects = JSON.parse(await readFile(join(process.cwd(), ".data", "batch-projects.json"), "utf-8"));
+        for (const proj of projects.filter((p: any) => batchNodeNames.has(p.name))) {
+          if (!proj.imageTag || !proj.dockerfile) continue;
+          // Patch effective compose: replace build: with image:
+          let compContent = await readFile(effectiveCompose, "utf-8");
+          if (compContent.includes("build:")) {
+            compContent = compContent.replace(/^(\s*)build:.*$/gm, `$1image: ${proj.imageTag}`);
+            compContent = compContent.replace(/^\s*context:.*$\n?/gm, "");
+            compContent = compContent.replace(/^\s*dockerfile:.*$\n?/gm, "");
+            await writeFile(effectiveCompose, compContent);
+          }
+          if (rebuild) {
+            send("log", { line: `Rebuilding image: ${proj.imageTag}` });
+            const rmCmd = process.platform === "win32" ? `wsl bash -c "docker rm -f \$(docker ps -aq --filter ancestor=${proj.imageTag}) 2>/dev/null; docker rmi -f ${proj.imageTag} 2>/dev/null; true"` : `bash -c 'docker rm -f $(docker ps -aq --filter ancestor=${proj.imageTag}) 2>/dev/null; docker rmi -f ${proj.imageTag} 2>/dev/null; true'`;
+            try { execSync(rmCmd, { timeout: 15000 }); } catch {}
+            const dfPath = join(proj.projectPath, proj.dockerfile).replace(/\\/g, "/");
+            const ctxPath = proj.projectPath.replace(/\\/g, "/");
+            const buildCmd = process.platform === "win32"
+              ? `wsl docker build -t ${proj.imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
+              : `docker build -t ${proj.imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
+            send("log", { line: `$ docker build -t ${proj.imageTag} ...` });
+            try { execSync(buildCmd, { timeout: 300000, encoding: "utf-8" }); send("log", { line: `✓ Image built: ${proj.imageTag}` }); }
+            catch (e: any) { send("log", { line: `✗ Image build failed for ${proj.name}: ${e.message?.substring(0, 200)}` }); }
+          } else {
+            const checkCmd = process.platform === "win32" ? `wsl docker image inspect ${proj.imageTag} > /dev/null 2>&1` : `docker image inspect ${proj.imageTag} > /dev/null 2>&1`;
+            try { execSync(checkCmd, { timeout: 5000 }); }
+            catch {
+              send("log", { line: `Image not found, building: ${proj.imageTag}` });
+              const dfPath = join(proj.projectPath, proj.dockerfile).replace(/\\/g, "/");
+              const ctxPath = proj.projectPath.replace(/\\/g, "/");
+              const buildCmd = process.platform === "win32"
+                ? `wsl docker build -t ${proj.imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
+                : `docker build -t ${proj.imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
+              try { execSync(buildCmd, { timeout: 300000, encoding: "utf-8" }); send("log", { line: `✓ Image built: ${proj.imageTag}` }); }
+              catch (e: any) { send("log", { line: `✗ Image build failed for ${proj.name}: ${e.message?.substring(0, 200)}` }); }
+            }
+          }
+        }
+      } catch {}
+    }
+
     send("log", { line: `$ docker compose up --build ...` });
     const wslCompose = process.platform === "win32" ? effectiveCompose.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`) : effectiveCompose;
     let spawnCmd: string;
