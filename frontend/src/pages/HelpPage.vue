@@ -67,7 +67,7 @@ const sectionContent: Record<string, { tab: string; text: string }> = {
   "pl-exec": { tab: "pipelines", text: "running execution steps dynamodb insert stream handler sns sqs target lambda stop" },
   "pl-history": { tab: "pipelines", text: "history runs dlq detection live watch filtering state time range source" },
   "bj-registry": { tab: "batch", text: "project registry docker compose dockerfile file watcher" },
-  "bj-run": { tab: "batch", text: "simple run environment variable presets port conflict detection container visualization" },
+  "bj-run": { tab: "batch", text: "simple run environment variable presets port conflict detection container visualization rebuild image run settings log filtering auto-teardown maven docker" },
   "bj-workflow": { tab: "batch", text: "workflow editor canvas vueflow compose studio ai generate execution infrastructure" },
   "pf-overview": { tab: "profiles", text: "profiles workspace load unload clone github auto-download parallel build deploy register" },
   "pf-loading": { tab: "profiles", text: "loading profile destructive cleanup wipe localstack resources confirmation modal" },
@@ -539,6 +539,14 @@ watch(searchQuery, (q) => {
                 <p>Before starting, Mouseketool checks host ports in use. Conflicts are automatically remapped to the next available port. A badge shows remap count, and you can view the effective docker-compose config.</p>
                 <p class="font-medium text-foreground">Container visualization</p>
                 <p>The project info panel lists all services with volumes, env vars, image, and port mappings. Volume entries pointing to <code class="text-xs bg-muted px-1 rounded">.sh</code> files have a view button for syntax-highlighted content.</p>
+                <p class="font-medium text-foreground">Run Settings</p>
+                <p>A settings panel below the project info lets you toggle <strong>Rebuild image</strong> (rebuilds the JAR and Docker image from scratch before each run) and <strong>Port remapping</strong> (auto-remaps conflicting host ports). Both are enabled by default.</p>
+                <p class="font-medium text-foreground">Image rebuild flow</p>
+                <p>When rebuild is enabled, Mouseketool runs the full pipeline: <code class="text-xs bg-muted px-1 rounded">mvn clean install</code> → remove old Docker image → <code class="text-xs bg-muted px-1 rounded">docker build</code> with the project's tagged image name. The effective compose file always uses <code class="text-xs bg-muted px-1 rounded">image:</code> instead of <code class="text-xs bg-muted px-1 rounded">build:</code> for consistency.</p>
+                <p class="font-medium text-foreground">Log filtering</p>
+                <p>The log viewer has Build and Run tabs when rebuild is enabled. The Run tab shows only your batch container's logs by default — infrastructure services (redis, localstack, etc.) are filtered out. Toggle "All logs" to see everything.</p>
+                <p class="font-medium text-foreground">Auto-teardown</p>
+                <p>When the batch container exits, Mouseketool automatically stops all remaining containers and runs <code class="text-xs bg-muted px-1 rounded">docker compose down</code>. The Run button resets so you can start again immediately.</p>
               </div>
             </div>
           </div>
