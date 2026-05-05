@@ -154,14 +154,19 @@ via a background watcher. Environment variables are scanned from compose files a
 
 ### Launchpad
 Run docker-compose projects directly from the UI with automatic port conflict detection and remapping.
-Create and manage environment variable presets to customize runs without modifying source files. The
-Workflow tab provides a visual canvas for building job dependency graphs with per-node configuration,
+Create and manage environment variable presets to customize runs without modifying source files.
+Mouseketool manages Docker images with a consistent tagging scheme — before each run it can
+rebuild the JAR (Maven/Gradle), remove the old image, and build a fresh one from the Dockerfile.
+Run Settings (rebuild image, port remapping) are configurable per run. The log viewer separates
+build output from container output in tabs, with a toggle to filter infrastructure container logs.
+Batch containers are auto-detected on exit, triggering automatic teardown of all compose services.
+The Workflow tab provides a visual canvas for building job dependency graphs with per-node configuration,
 common env vars, and import from existing compose services. Compose Studio offers an AI-powered
 compose builder with a Monaco editor and structured actions (Generate, Add Batch Project, Add Service,
 Add Healthchecks). Workflows can be executed in foreground docker compose mode with per-node status
 tracking. Imported workflows auto-register batch projects from their compose files. The canvas includes
 an infrastructure services panel for managing supporting containers. Workflows support search, filters,
-and completion state tracking.
+multi-select deletion, and completion state tracking.
 
 ### Help & Guides
 In-app documentation covering every feature with detailed explanations, code examples, and troubleshooting tips.

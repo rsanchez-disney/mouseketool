@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import Toggle from "@/components/ui/Toggle.vue";
 import { Plus, Trash2, Save, Play, Square, ChevronRight, ChevronLeft, HardDrive, KeyRound, FolderOpen, Container, Loader2, AlertTriangle, Info, Eye, GitFork, ArrowUpAZ, ArrowDownAZ, ListOrdered, Check, X, FileText, Settings2 } from "lucide-vue-next";
 
 const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
@@ -87,13 +88,13 @@ async function loadPresets() {
 }
 
 function sortedVars(vars: EnvVar[], sort: "default" | "az" | "za", original?: EnvVar[]) {
-  if (sort === "default") return original ? [...original] : vars;
+  if (sort === "default") return vars;
   const sorted = [...vars].sort((a, b) => a.key.localeCompare(b.key));
   return sort === "za" ? sorted.reverse() : sorted;
 }
 function cycleSort(c: "default" | "az" | "za"): "default" | "az" | "za" { return c === "default" ? "az" : c === "az" ? "za" : "default"; }
 function markPresetDirty(id: string) { presetDirty.value[id] = true; }
-function addPresetVar(id: string, si: number) { presetSections.value[id][si].vars.push({ key: "", value: "" }); markPresetDirty(id); }
+function addPresetVar(id: string, si: number) { presetSections.value[id][si].collapsed = false; presetSections.value[id][si].vars.push({ key: "", value: "" }); markPresetDirty(id); nextTick(() => { const els = document.querySelectorAll('.max-h-72.overflow-y-auto'); els.forEach(el => { if (el.scrollHeight > el.clientHeight) el.scrollTop = el.scrollHeight; }); }); }
 function removePresetVar(id: string, si: number, vi: number) { presetSections.value[id][si].vars.splice(vi, 1); markPresetDirty(id); }
 
 const scannedModal = ref(false);
@@ -133,17 +134,55 @@ async function savePreset(presetId: string) {
 
 // Run
 const simpleRunning = ref(false);
+const rebuildImage = ref(true);
+const portRemapEnabled = ref(true);
 const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
 const confettiEnabled = ref(true);
 onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onBatch; } catch {} });
 const simpleLogs = ref<{ line: string }[]>([]);
+const showAllLogs = ref(false);
+const activeLogTab = ref<"build" | "run">("build");
+const buildPhaseComplete = ref(false);
 const simpleResult = ref<any>(null);
 const simpleError = ref("");
 const portRemaps = ref<any[]>([]);
 const tearing = ref(false);
 const logSection = ref<HTMLElement | null>(null);
 
-const rootCauseLines = computed(() => simpleLogs.value.filter(l => /Caused by[:.]/.test(l.line) || /Exception/.test(l.line) || /Error response from daemon/.test(l.line)).map(l => l.line));
+const buildLogs = computed(() => {
+  const logs: string[] = [];
+  for (const l of simpleLogs.value) {
+    if (l.line.startsWith("$ cd ") || l.line.startsWith("$ docker compose")) { break; }
+    logs.push(l.line);
+  }
+  return logs;
+});
+const runLogs = computed(() => {
+  let started = false;
+  const logs: string[] = [];
+  for (const l of simpleLogs.value) {
+    if (!started && (l.line.startsWith("$ cd ") || l.line.startsWith("$ docker compose"))) started = true;
+    if (started) logs.push(l.line);
+  }
+  return logs;
+});
+const filteredRunLogs = computed(() => {
+  if (showAllLogs.value || !project.value) return runLogs.value;
+  const infraNames = new Set<string>();
+  for (const s of (project.value.services || []) as any[]) {
+    if (!s.build) {
+      infraNames.add(s.name.toLowerCase());
+      if (s.image) infraNames.add(s.image.split(":")[0].split("/").pop()!.toLowerCase());
+    }
+  }
+  if (!infraNames.size) return runLogs.value;
+  return runLogs.value.filter(line => {
+    const m = line.match(/^(\S+)\s+\|/);
+    if (!m) return true;
+    return ![...infraNames].some(n => m[1].toLowerCase().includes(n));
+  });
+});
+const rootCauseLines = computed(() => runLogs.value.filter(l => /Caused by[:.]/.test(l) || /Exception/.test(l) || /Error response from daemon/.test(l) || /"Level"\s*:\s*"ERROR"/.test(l)));
 const aiExplaining = ref(false);
 const aiExplanation = ref("");
 
@@ -160,13 +199,13 @@ async function explainBatchError() {
 
 async function runSimple() {
   if (!project.value) return;
-  simpleRunning.value = true; simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; portRemaps.value = [];
+  simpleRunning.value = true; simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; portRemaps.value = []; buildPhaseComplete.value = false; activeLogTab.value = rebuildImage.value ? "build" : "run";
   await nextTick();
   logSection.value?.scrollIntoView({ behavior: "smooth" });
   try {
     const res = await fetch("/api/batch-runs/simple", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: project.value.id, projectPath: project.value.projectPath, composefile: selectedCompose.value, envOverrides: activePreset.value ? presetSections.value[activePreset.value.id]?.flatMap(s => s.vars).filter(e => e.key) || [] : [] }),
+      body: JSON.stringify({ projectId: project.value.id, projectPath: project.value.projectPath, composefile: selectedCompose.value, rebuild: rebuildImage.value, portRemap: portRemapEnabled.value, envOverrides: activePreset.value ? presetSections.value[activePreset.value.id]?.flatMap(s => s.vars).filter(e => e.key) || [] : [] }),
     });
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
@@ -182,7 +221,7 @@ async function runSimple() {
         if (line.startsWith("event: ")) event = line.slice(7);
         else if (line.startsWith("data: ")) {
           const data = JSON.parse(line.slice(6));
-          if (event === "log") simpleLogs.value.push(data);
+          if (event === "log") { simpleLogs.value.push(data); if (!buildPhaseComplete.value && (data.line?.startsWith("$ cd ") || data.line?.startsWith("$ docker compose"))) { buildPhaseComplete.value = true; activeLogTab.value = "run"; } }
           else if (event === "remaps") portRemaps.value = data;
           else if (event === "complete") simpleResult.value = data;
           else if (event === "error") { simpleError.value = data.message || `Exit code: ${data.exitCode}`; simpleResult.value = data; }
@@ -285,7 +324,7 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
 
 
 <template>
-  <div class="max-w-5xl mx-auto space-y-4">
+  <div class="space-y-4">
     <!-- Header -->
     <div class="flex items-center gap-3">
       <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 cursor-pointer" @click="router.push('/batch-projects')"><ChevronLeft class="size-4" /></Button></TooltipTrigger><TooltipContent>Back to projects</TooltipContent></Tooltip>
@@ -361,6 +400,21 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
         </div>
       </div>
 
+      <!-- Run Settings -->
+      <div class="rounded-lg border p-3 space-y-3">
+        <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Run Settings</p>
+        <div class="space-y-2.5">
+          <div class="flex items-center justify-between">
+            <div><p class="text-xs font-medium">Rebuild image</p><p class="text-[10px] text-muted-foreground">Remove and rebuild the Docker image from Dockerfile before running</p></div>
+            <Toggle v-model="rebuildImage" />
+          </div>
+          <div class="flex items-center justify-between">
+            <div><p class="text-xs font-medium">Port remapping</p><p class="text-[10px] text-muted-foreground">Remap host ports that are already in use to avoid conflicts</p></div>
+            <Toggle v-model="portRemapEnabled" />
+          </div>
+        </div>
+      </div>
+
       <!-- Presets Panel -->
       <div class="rounded-lg border p-3 space-y-3">
         <div class="flex items-center justify-between">
@@ -384,7 +438,8 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
             <Button v-if="presetDirty[preset.id]" variant="outline" size="sm" class="h-7 text-xs gap-1 cursor-pointer" @click="savePreset(preset.id)"><Save class="size-3" /> Save</Button>
             <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-red-500 cursor-pointer" @click="deletePreset(preset.id)"><Trash2 class="size-3.5" /></Button></TooltipTrigger><TooltipContent>Delete preset</TooltipContent></Tooltip>
           </div>
-          <div v-if="!presetCollapsed[preset.id] && presetSections[preset.id]" class="px-3 pb-3 space-y-2 border-t pt-3">
+
+          <div v-if="!presetCollapsed[preset.id] && presetSections[preset.id]" class="px-3 pb-3 space-y-2 border-t pt-3 transition-all duration-200">
             <div class="grid gap-2 items-start" :class="presetSections[preset.id].length > 1 ? 'md:grid-cols-2' : ''">
               <div v-for="(section, si) in presetSections[preset.id]" :key="section.source" class="rounded-md border">
                 <div class="flex items-center gap-2 px-2.5 py-1.5 bg-muted/30">
@@ -406,7 +461,7 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
                   </div>
                 </div>
               </div>
-            </div>
+          </div>
           </div>
         </div>
       </div>
@@ -414,15 +469,19 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
       <!-- Log Console -->
       <div v-if="simpleLogs.length || simpleRunning" ref="logSection" class="space-y-1 min-w-0 overflow-hidden">
         <div class="flex items-center gap-2">
-          <span class="text-xs text-muted-foreground">Output ({{ simpleLogs.length }} lines)</span>
+          <div v-if="rebuildImage" class="flex items-center gap-0.5 mr-2">
+            <button class="px-2 py-0.5 rounded text-xs cursor-pointer" :class="activeLogTab === 'build' ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'" @click="activeLogTab = 'build'">Build</button>
+            <button class="px-2 py-0.5 rounded text-xs cursor-pointer" :class="activeLogTab === 'run' ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'" @click="activeLogTab = 'run'">Run</button>
+          </div>
+          <span class="text-xs text-muted-foreground">({{ (activeLogTab === "run" || !rebuildImage) ? filteredRunLogs.length : buildLogs.length }} lines)</span>
           <Tooltip v-if="activePreset"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px] text-emerald-500 border-emerald-500/30 gap-1"><Settings2 class="size-2.5" /> {{ activePreset.name }}</Badge></TooltipTrigger><TooltipContent>Running with preset "{{ activePreset.name }}"</TooltipContent></Tooltip>
-          <Badge v-else variant="outline" class="text-[10px] text-muted-foreground gap-1">scanned defaults</Badge>
           <Tooltip v-if="portRemaps.length"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px] text-amber-500 border-amber-500/30 gap-1">{{ portRemaps.length }} port(s) remapped</Badge></TooltipTrigger><TooltipContent>Some ports were in use and were automatically remapped</TooltipContent></Tooltip>
-          <Tooltip v-if="portRemaps.length"><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-6 cursor-pointer text-muted-foreground hover:text-foreground" @click="loadEffectiveConfig"><FileText class="size-3.5" /></Button></TooltipTrigger><TooltipContent>View effective docker-compose config</TooltipContent></Tooltip>
+          <div v-if="activeLogTab === 'run' || !rebuildImage" class="ml-auto flex items-center gap-1.5"><span class="text-[10px] text-muted-foreground">All logs</span><Toggle v-model="showAllLogs" /></div>
         </div>
-        <LogViewer :logs="simpleLogs.map(l => l.line)" :loading="simpleRunning" loading-text="Starting containers..." empty-text="Run output will appear here" :root-cause-lines="rootCauseLines" :kiro-available="kiroAvailable" :ai-explaining="aiExplaining" :ai-explanation="aiExplanation" @explain="explainBatchError">
+        <LogViewer v-if="!rebuildImage || activeLogTab === 'run'" :logs="filteredRunLogs" :loading="simpleRunning && buildPhaseComplete" loading-text="Starting containers..." empty-text="Run output will appear here" :root-cause-lines="rootCauseLines" :kiro-available="kiroAvailable" :ai-explaining="aiExplaining" :ai-explanation="aiExplanation" @explain="explainBatchError">
           <template #after-root-cause-mini><p v-if="kiroAvailable" class="mt-2 text-[10px] text-violet-400/60 italic">Expand log to explain with Kiro</p></template>
         </LogViewer>
+        <LogViewer v-if="rebuildImage && activeLogTab === 'build'" :logs="buildLogs" :loading="simpleRunning && !buildPhaseComplete" loading-text="Building project..." empty-text="Build output will appear here" />
         <div v-if="simpleResult && !simpleError" class="flex items-center gap-2 text-sm text-green-500"><Check class="size-4" /> Completed successfully</div>
         <div v-if="simpleError" class="flex items-center gap-2 text-sm text-red-500"><X class="size-4" /> {{ simpleError }}</div>
       </div>

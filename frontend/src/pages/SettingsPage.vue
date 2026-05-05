@@ -8,15 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import Toggle from "@/components/ui/Toggle.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
-import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, ChevronDown, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container, Palette, UserCircle, FolderOpen, Download } from "lucide-vue-next";
+import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, ChevronDown, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container, Palette, UserCircle, FolderOpen, Download, Hammer, Workflow } from "lucide-vue-next";
 
 const tab = ref<"connection" | "lambda" | "builds" | "pipelines" | "ai" | "workflows" | "ui" | "profile">("connection");
 const _route = useRoute();
 const tabs = [
   { id: "connection" as const, label: "Connection", icon: Server },
   { id: "lambda" as const, label: "Lambda", icon: Cpu },
-  { id: "builds" as const, label: "Builds", icon: Trash2 },
-  { id: "pipelines" as const, label: "Pipelines", icon: Clock },
+  { id: "builds" as const, label: "Builds", icon: Hammer },
+  { id: "pipelines" as const, label: "Pipelines", icon: Workflow },
   { id: "ai" as const, label: "AI", icon: Sparkles },
   { id: "workflows" as const, label: "Workflows", icon: Container },
   { id: "ui" as const, label: "UI", icon: Palette },
@@ -278,7 +278,7 @@ async function unloadProfile() {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto">
+  <div>
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-2xl font-semibold tracking-tight">Settings</h1>
@@ -448,8 +448,8 @@ async function unloadProfile() {
 
 
     <!-- Lambda Tab -->
-    <div v-show="tab === 'lambda'" class="space-y-6">
-      <div>
+    <div v-show="tab === 'lambda'" class="grid grid-cols-2 gap-4 items-start">
+      <div class="rounded-lg border p-4">
         <h2 class="text-sm font-medium mb-1">Default Memory</h2>
         <p class="text-xs text-muted-foreground mb-4">Applied to every Lambda deployed from the Builder page.</p>
         <select v-model.number="settings.lambda.memoryMB" class="h-9 text-sm bg-background border rounded-md px-3 outline-none max-w-48">
@@ -460,8 +460,8 @@ async function unloadProfile() {
     </div>
 
     <!-- Builds Tab -->
-    <div v-show="tab === 'builds'" class="space-y-6">
-      <div>
+    <div v-show="tab === 'builds'" class="grid grid-cols-2 gap-4 items-start">
+      <div class="rounded-lg border p-4">
         <h2 class="text-sm font-medium mb-1">Auto-Cleanup</h2>
         <p class="text-xs text-muted-foreground mb-4">Cached builds older than this threshold are automatically deleted.</p>
         <div class="space-y-2">
@@ -471,7 +471,7 @@ async function unloadProfile() {
         </div>
       </div>
 
-      <div class="border-t pt-6">
+      <div class="rounded-lg border p-4">
         <div class="flex items-center justify-between">
           <div>
             <h2 class="text-sm font-medium">Delete on startup</h2>
@@ -483,32 +483,22 @@ async function unloadProfile() {
     </div>
 
     <!-- Pipelines Tab -->
-    <div v-show="tab === 'pipelines'" class="space-y-6">
-      <div>
+    <div v-show="tab === 'pipelines'" class="grid grid-cols-2 gap-4 items-start">
+      <div class="rounded-lg border p-4">
         <h2 class="text-sm font-medium mb-1">History Retention</h2>
         <p class="text-xs text-muted-foreground mb-4">Control how long pipeline invocation history is kept.</p>
         <div class="space-y-4">
           <div class="flex items-center gap-4">
             <Label class="text-sm shrink-0">Mode:</Label>
-            <select v-model="settings.historyRetention.mode" class="bg-background border rounded-md px-3 py-1.5 text-sm">
-              <option value="age">By age</option>
-              <option value="amount">By amount</option>
-            </select>
-          </div>
-          <div v-if="settings.historyRetention.mode === 'age'" class="space-y-1">
-            <Label>Max age (days)</Label>
-            <Input v-model.number="settings.historyRetention.maxDays" type="number" min="1" max="10" class="max-w-48" />
-            <p class="text-xs text-muted-foreground">Runs older than this are removed. Min: 1, Max: 10, Default: 2.</p>
-          </div>
-          <div v-if="settings.historyRetention.mode === 'amount'" class="space-y-1">
-            <Label>Max runs per pipeline</Label>
-            <Input v-model.number="settings.historyRetention.maxRuns" type="number" min="5" max="500" class="max-w-48" />
-            <p class="text-xs text-muted-foreground">Oldest runs removed to keep at most this many. Default: 50.</p>
+            <Select v-model="settings.historyRetention.mode"><SelectTrigger class="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="age">By age</SelectItem><SelectItem value="amount">By amount</SelectItem></SelectContent></Select>
+            <Input v-if="settings.historyRetention.mode === 'age'" v-model.number="settings.historyRetention.maxDays" type="number" min="1" max="10" class="max-w-24" />
+            <Input v-if="settings.historyRetention.mode === 'amount'" v-model.number="settings.historyRetention.maxRuns" type="number" min="5" max="500" class="max-w-24" />
+            <span class="text-xs text-muted-foreground">{{ settings.historyRetention.mode === "age" ? "days" : "runs per pipeline" }}</span>
           </div>
         </div>
       </div>
 
-      <div class="border-t pt-6">
+      <div class="rounded-lg border p-4">
         <h2 class="text-sm font-medium mb-1">Heavy Load</h2>
         <p class="text-xs text-muted-foreground mb-4">Batch settings for pipelines with heavy load enabled.</p>
         <div class="grid grid-cols-2 gap-4">
@@ -528,8 +518,8 @@ async function unloadProfile() {
     </div>
 
     <!-- AI Tab -->
-    <div v-show="tab === 'ai'" class="space-y-6">
-      <div>
+    <div v-show="tab === 'ai'" class="grid grid-cols-2 gap-4 items-start">
+      <div class="rounded-lg border p-4">
         <h2 class="text-sm font-medium mb-1">Learned Data Storage</h2>
         <p class="text-xs text-muted-foreground mb-4">Where Kiro stores learned data from pipeline runs and evaluations.</p>
         <div class="flex items-center gap-3">
@@ -547,8 +537,8 @@ async function unloadProfile() {
     </div>
 
     <!-- Workflows Tab -->
-    <div v-show="tab === 'workflows'" class="space-y-6">
-      <div class="flex items-center justify-between">
+    <div v-show="tab === 'workflows'" class="grid grid-cols-2 gap-4 items-start">
+      <div class="rounded-lg border p-4"><div class="flex items-center justify-between">
         <div>
           <h2 class="text-sm font-medium">Auto-bump healthchecks</h2>
           <p class="text-xs text-muted-foreground mt-0.5 max-w-md">Automatically increase healthcheck intervals, timeouts, start periods, and retries when importing a docker-compose file. Also auto-adds healthchecks for MySQL, Postgres, and Redis containers.</p>
@@ -556,10 +546,10 @@ async function unloadProfile() {
         <button class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer shrink-0" :class="settings.workflow.autoBumpHealthchecks ? 'bg-primary' : 'bg-muted'" @click="settings.workflow.autoBumpHealthchecks = !settings.workflow.autoBumpHealthchecks">
           <span class="inline-block size-3.5 transform rounded-full bg-white transition-transform" :class="settings.workflow.autoBumpHealthchecks ? 'translate-x-4.5' : 'translate-x-0.5'" />
         </button>
-      </div>
+      </div></div>
     </div>
-    <div v-show="tab === 'ui'" class="space-y-6">
-      <div class="flex items-center justify-between">
+    <div v-show="tab === 'ui'" class="grid grid-cols-2 gap-4 items-start">
+      <div class="rounded-lg border p-4 space-y-4"><div class="flex items-center justify-between">
         <div>
           <h2 class="text-sm font-medium">Confetti celebrations</h2>
           <p class="text-xs text-muted-foreground mt-0.5 max-w-md">Show a confetti burst when actions complete successfully.</p>
@@ -572,14 +562,14 @@ async function unloadProfile() {
         <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onPipeline" class="rounded size-3.5 accent-primary" /> When a pipeline execution completes successfully</label>
         <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onBatch" class="rounded size-3.5 accent-primary" /> When a batch run finishes without errors</label>
         <label class="flex items-center gap-2 text-xs cursor-pointer"><input type="checkbox" v-model="settings.confetti.onWorkflow" class="rounded size-3.5 accent-primary" /> When a workflow completes with all nodes healthy</label>
-      </div>
-      <div class="flex items-center justify-between">
+      </div></div>
+      <div class="rounded-lg border p-4"><div class="flex items-center justify-between">
         <div>
           <h2 class="text-sm font-medium">Theme transition animation</h2>
           <p class="text-xs text-muted-foreground mt-0.5 max-w-md">Circular reveal animation when switching between dark and light mode.</p>
         </div>
         <Toggle v-model="settings.themeAnimation" />
-      </div>
+      </div></div>
     </div>
     <!-- Profile Tab -->
     <div v-show="tab === 'profile'" class="space-y-6">

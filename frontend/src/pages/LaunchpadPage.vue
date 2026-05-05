@@ -22,7 +22,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useRoute } from "vue-router";
 import ComposeStudio from "@/components/ComposeStudio.vue";
-import { Plus, Trash2, Variable, Save, Container, Server, Loader2, Info, ChevronRight, ChevronDown, ChevronLeft, FolderOpen, Check, ArrowRight, ArrowLeft, FileCode2, FileDown, Import, Play, RotateCcw, Square, X, Code2, CircleAlert, Search } from "lucide-vue-next";
+import Toggle from "@/components/ui/Toggle.vue";
+import { Plus, Trash2, Settings2, MoreVertical, Variable, Save, Container, Server, Loader2, Info, ChevronRight, ChevronDown, ChevronLeft, FolderOpen, Check, ArrowRight, ArrowLeft, FileCode2, FileDown, Import, Play, RotateCcw, Square, X, Code2, CircleAlert, Search } from "lucide-vue-next";
 
 // Toast
 const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(false));
@@ -55,6 +56,7 @@ const wizardStep = ref(0); // 0 = landing, 1 = name, 2 = source, 3 = configure
 const editorMode = ref(false);
 const deleteTarget = ref<{ id: string; name: string } | null>(null);
 const wizardName = ref("");
+const wizardNameValid = computed(() => wizardName.value.trim().length >= 3 && /^[a-zA-Z]/.test(wizardName.value.trim()));
 const wizardSource = ref<"import" | "scratch" | "">("");
 const wizardComposePath = ref("");
 const showFileBrowser = ref(false);
@@ -62,6 +64,7 @@ const importing = ref(false);
 
 // Compose Studio
 const composeStudioMode = ref(false);
+const composeStudioFromCode = ref(false);
 const showAuxPanel = ref(false);
 const composeYaml = ref("");
 const composeStudioRef = ref<InstanceType<typeof ComposeStudio> | null>(null);
@@ -79,6 +82,9 @@ const selectedWorkflowId = ref("");
 const wfSearch = ref("");
 const wfFilter = ref<"all" | "imported" | "scratch" | "incomplete">("all");
 const wfProjectFilter = ref("");
+const selectedWorkflows = ref<Set<string>>(new Set());
+const showBulkDeleteModal = ref(false);
+function toggleWfSelect(id: string) { selectedWorkflows.value.has(id) ? selectedWorkflows.value.delete(id) : selectedWorkflows.value.add(id); selectedWorkflows.value = new Set(selectedWorkflows.value); }
 const showProjectDropdown = ref(false);
 function closeProjectDropdown(e: MouseEvent) { if (showProjectDropdown.value && !(e.target as HTMLElement)?.closest?.(".project-dropdown")) showProjectDropdown.value = false; }
 const filteredWorkflows = computed(() => {
@@ -130,20 +136,33 @@ async function editWorkflow(wf: BatchWorkflow) {
   syncFlowFromWorkflow();
 }
 
-async function createAndProceed() {
+function createAndProceed() {
   if (workflows.value.some(w => w.name.toLowerCase() === wizardName.value.trim().toLowerCase())) { showToast("A workflow with that name already exists", "warning"); return; }
-  const r = await fetch("/api/batch-workflows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: wizardName.value }) });
-  const wf = await r.json();
-  workflows.value.push(wf);
-  selectedWorkflowId.value = wf.id;
   wizardStep.value = 2;
 }
 
+const importConflict = computed(() => {
+  if (!wizardComposePath.value) return "";
+  const dir = wizardComposePath.value.replace(/[\\/][^\\/]+$/, "");
+  const existing = workflows.value.find(w => (w as any).originalComposePath?.replace(/[\\/][^\\/]+$/, "") === dir && w.id !== selectedWorkflow.value?.id);
+  return existing ? existing.name : "";
+});
 async function importCompose() {
-  if (!selectedWorkflow.value || !wizardComposePath.value) return;
+  if (!wizardComposePath.value) return;
   importing.value = true;
+  // Create workflow first
+  let wfId = selectedWorkflow.value?.id;
+  if (!wfId) {
+    try {
+      const cr = await fetch("/api/batch-workflows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: wizardName.value }) });
+      const created = await cr.json();
+      workflows.value.push(created);
+      selectedWorkflowId.value = created.id;
+      wfId = created.id;
+    } catch { showToast("Failed to create workflow", "warning"); importing.value = false; return; }
+  }
   try {
-    const r = await fetch(`/api/batch-workflows/${selectedWorkflow.value.id}/import-file`, {
+    const r = await fetch(`/api/batch-workflows/${wfId}/import-file`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filePath: wizardComposePath.value }),
     });
@@ -163,8 +182,17 @@ async function importCompose() {
   importing.value = false;
 }
 
-function skipToConfigureEmpty() {
+async function skipToConfigureEmpty() {
   if (!builds.value.length) { showToast('Register at least one batch project before creating a scratch workflow', 'warning'); return; }
+  // Create workflow
+  if (!selectedWorkflow.value?.id) {
+    try {
+      const cr = await fetch("/api/batch-workflows", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: wizardName.value }) });
+      const created = await cr.json();
+      workflows.value.push(created);
+      selectedWorkflowId.value = created.id;
+    } catch { showToast("Failed to create workflow", "warning"); return; }
+  }
   composeStudioMode.value = true;
   composeYaml.value = "";
   wizardStep.value = 3;
@@ -209,7 +237,20 @@ async function saveWorkflow() {
   editorMode.value = true;
 }
 
+async function deleteSelectedWorkflows() {
+  for (const id of selectedWorkflows.value) {
+    try { await fetch(`/api/batch-workflows/${id}`, { method: "DELETE" }); } catch {}
+  }
+  workflows.value = workflows.value.filter(w => !selectedWorkflows.value.has(w.id));
+  selectedWorkflows.value = new Set();
+}
+function exitComposeStudio() {
+  composeStudioMode.value = false;
+  if (!composeStudioFromCode.value) { wizardStep.value = 0; selectedWorkflowId.value = ""; }
+  composeStudioFromCode.value = false;
+}
 async function switchToCodeMode() {
+  composeStudioFromCode.value = true;
   if (selectedWorkflow.value?.composePath) {
     try {
       const r = await fetch(`/api/batch-workflows/${selectedWorkflow.value.id}/effective-compose`);
@@ -412,6 +453,10 @@ function closeConsoleTab(name: string) {
 
 // Workflow execution
 const workflowRunning = ref(false);
+const rebuildImages = ref(true);
+const wfPortRemap = ref(true);
+const showRunSettings = ref(false);
+const showMoreMenu = ref(false);
 const workflowLogSection = ref<HTMLElement | null>(null);
 const workflowStopping = ref(false);
 const workflowLogs = ref<{ line: string; container?: string }[]>([]);
@@ -429,7 +474,7 @@ async function runWorkflow() {
   try {
     const res = await fetch("/api/batch-runs/workflow", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workflowId: selectedWorkflow.value.id, composePath: (selectedWorkflow.value as any).composePath, originalProjectPath: (selectedWorkflow.value as any).originalComposePath ? (selectedWorkflow.value as any).originalComposePath.replace(/[/\\][^/\\]+$/, '') : undefined }),
+      body: JSON.stringify({ workflowId: selectedWorkflow.value.id, composePath: (selectedWorkflow.value as any).composePath, originalProjectPath: (selectedWorkflow.value as any).originalComposePath ? (selectedWorkflow.value as any).originalComposePath.replace(/[/\\][^/\\]+$/, '') : undefined, rebuild: rebuildImages.value, portRemap: wfPortRemap.value }),
     });
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
@@ -532,6 +577,7 @@ onMounted(async () => {
             <span v-else>{{ i + 1 }}</span>
           </div>
           {{ step.label }}
+
         </button>
       </template>
     </div>
@@ -568,10 +614,13 @@ onMounted(async () => {
             <button v-for="b in builds" :key="b.name" class="w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted cursor-pointer transition-colors truncate" :class="wfProjectFilter === b.name ? 'text-emerald-400 font-medium' : 'text-muted-foreground'" @click="wfProjectFilter = b.name; showProjectDropdown = false">{{ b.name }}</button>
           </div>
         </div>
-        <span class="ml-auto text-[11px] text-muted-foreground font-mono tabular-nums">{{ filteredWorkflows.length }}<span class="text-muted-foreground/40">/{{ workflows.length }}</span></span>
+        <div v-if="selectedWorkflows.size" class="flex items-center gap-2 ml-auto"><Button variant="outline" size="sm" class="text-xs cursor-pointer text-red-500 hover:text-red-400 gap-1" @click="showBulkDeleteModal = true"><Trash2 class="size-3" /> Delete ({{ selectedWorkflows.size }})</Button><Button variant="ghost" size="sm" class="text-xs cursor-pointer" @click="selectedWorkflows = new Set()">Clear</Button></div>
+        <span v-else class="ml-auto text-[11px] text-muted-foreground font-mono tabular-nums">{{ filteredWorkflows.length }}<span class="text-muted-foreground/40">/{{ workflows.length }}</span></span>
       </div>
       <div v-if="filteredWorkflows.length" class="space-y-2">
-        <button v-for="wf in filteredWorkflows" :key="wf.id" class="w-full flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50 transition-colors text-left" @click="editWorkflow(wf)">
+        <div v-for="wf in filteredWorkflows" :key="wf.id" class="flex items-center gap-2 rounded-lg border p-3 hover:bg-muted/50 transition-colors">
+          <input type="checkbox" :checked="selectedWorkflows.has(wf.id)" @change="toggleWfSelect(wf.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
+          <button class="flex-1 flex items-center gap-3 cursor-pointer text-left" @click="editWorkflow(wf)">
           <Container class="size-4 shrink-0 text-muted-foreground" />
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium">{{ wf.name }}</p>
@@ -584,8 +633,9 @@ onMounted(async () => {
             </div>
           </div>
           <ChevronRight class="size-4 text-muted-foreground" />
+          </button>
           <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-7 text-muted-foreground hover:text-red-500 cursor-pointer shrink-0" @click.stop="confirmDeleteById(wf)"><Trash2 class="size-3.5" /></Button></TooltipTrigger><TooltipContent>Delete workflow</TooltipContent></Tooltip>
-        </button>
+        </div>
       </div>
       <div v-else-if="!filteredWorkflows.length && workflows.length" class="rounded-lg border bg-background py-6 text-center">
         <p class="text-sm text-muted-foreground">No workflows match your filters.</p>
@@ -604,10 +654,11 @@ onMounted(async () => {
       </div>
       <div class="space-y-2">
         <Label class="text-xs">Workflow Name</Label>
-        <Input v-model="wizardName" placeholder="e.g. contract-submission-pipeline" class="text-sm" autofocus @keydown.enter="wizardName.trim() && createAndProceed()" />
+        <Input v-model="wizardName" placeholder="e.g. contract-submission-pipeline" class="text-sm" autofocus @keydown.enter="wizardNameValid && createAndProceed()" />
+        <p v-if="wizardName.trim() && !wizardNameValid" class="text-[11px] text-red-500">Must be at least 3 characters and start with a letter</p>
       </div>
       <div class="flex justify-end">
-        <Button size="sm" class="gap-1.5 cursor-pointer" :disabled="!wizardName.trim()" @click="createAndProceed">Next <ArrowRight class="size-3.5" /></Button>
+        <Button size="sm" class="gap-1.5 cursor-pointer" :disabled="!wizardNameValid" @click="createAndProceed">Next <ArrowRight class="size-3.5" /></Button>
       </div>
     </div>
 
@@ -627,7 +678,7 @@ onMounted(async () => {
           <TooltipTrigger as-child>
             <button class="rounded-lg border p-4 text-left transition-colors" :class="!kiroAvailable ? 'opacity-50 cursor-not-allowed' : wizardSource === 'scratch' ? 'border-primary bg-primary/5 cursor-pointer' : 'cursor-pointer hover:bg-muted/50'" :disabled="!kiroAvailable" @click="kiroAvailable && (wizardSource = 'scratch')">
               <FileCode2 class="size-5 mb-2 text-primary" />
-              <p class="text-sm font-medium">Start from scratch <Tooltip><TooltipTrigger as-child><span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-violet-500/10 text-violet-400 cursor-help">Beta</span></TooltipTrigger><TooltipContent>This feature uses AI and may produce inaccurate results</TooltipContent></Tooltip></p>
+              <p class="text-sm font-medium">Start from scratch <Tooltip><TooltipTrigger as-child><span class="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-medium bg-violet-500/30 text-violet-700 dark:text-violet-200 cursor-help align-middle translate-y-[-1px]">Beta</span></TooltipTrigger><TooltipContent>This feature uses AI and may produce inaccurate results</TooltipContent></Tooltip></p>
               <p class="text-xs text-muted-foreground mt-1">Use Compose Studio with AI to build your compose file.</p>
             </button>
           </TooltipTrigger>
@@ -649,15 +700,18 @@ onMounted(async () => {
 
       <div class="flex justify-between">
         <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="wizardStep = 1"><ChevronLeft class="size-3.5" /> Back</Button>
-        <Button v-if="wizardSource === 'import'" size="sm" class="gap-1.5 cursor-pointer" :disabled="!wizardComposePath || importing" @click="importCompose">
+        <Tooltip v-if="wizardSource === 'import'" :disabled="!importConflict"><TooltipTrigger as-child><span class="inline-flex"><Button size="sm" class="gap-1.5 cursor-pointer" :disabled="!wizardComposePath || importing || !!importConflict" @click="importCompose">
           <Loader2 v-if="importing" class="size-3.5 animate-spin" /><ArrowRight v-else class="size-3.5" /> Import &amp; Configure
-        </Button>
+        </Button></span></TooltipTrigger><TooltipContent>A workflow already exists for this project ({{ importConflict }})</TooltipContent></Tooltip>
         <Button v-else-if="wizardSource === 'scratch'" size="sm" class="gap-1.5 cursor-pointer" @click="skipToConfigureEmpty">Next <ArrowRight class="size-3.5" /></Button>
       </div>
     </div>
 
     <!-- Compose Studio Mode -->
     <div v-if="wizardStep === 3 && composeStudioMode && selectedWorkflow" class="space-y-0" style="height: calc(100vh - 140px)">
+      <div class="flex items-center gap-2 mb-2">
+        <Button variant="ghost" size="sm" class="gap-1.5 cursor-pointer text-muted-foreground" @click="exitComposeStudio"><ChevronLeft class="size-3.5" /> Back</Button>
+      </div>
       <ComposeStudio
         ref="composeStudioRef"
         v-model="composeYaml"
@@ -671,20 +725,28 @@ onMounted(async () => {
         <!-- Step 3: Configure (VueFlow) -->
     <div v-if="wizardStep === 3 && !composeStudioMode && selectedWorkflow" class="space-y-4">
       <!-- Editor toolbar -->
-      <div v-if="editorMode" class="flex items-center gap-2 flex-wrap">
+      <div v-if="editorMode" class="flex items-center gap-2">
         <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8 cursor-pointer" @click="editorMode = false; wizardStep = 0"><ArrowLeft class="size-4" /></Button></TooltipTrigger><TooltipContent>Back to workflows</TooltipContent></Tooltip>
-        <span class="text-lg font-semibold">{{ selectedWorkflow.name }}</span>
-        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning" @click="addNode"><Container class="size-3.5" /> Add Job</Button>
-        <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning" @click="commonSheet = true">
-          <Variable class="size-3.5" /> Common Env Vars
-          <Badge v-if="selectedWorkflow.commonEnvVars.length" variant="secondary" class="ml-1 text-[10px]">{{ selectedWorkflow.commonEnvVars.length }}</Badge>
-        </Button>
+        <span class="text-lg font-semibold truncate">{{ selectedWorkflow.name }}</span>
         <div class="ml-auto flex items-center gap-1.5">
           <Button size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning || !selectedWorkflow?.composePath" @click="runWorkflow"><Loader2 v-if="workflowRunning" class="size-3.5 animate-spin" /><RotateCcw v-else-if="workflowLogs.length" class="size-3.5" /><Play v-else class="size-3.5" /> {{ workflowRunning ? "Running..." : workflowLogs.length ? "Re-run" : "Run" }}</Button>
-          <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer text-red-500 hover:text-red-400" :disabled="!workflowRunning || workflowStopping" @click="stopWorkflow"><Loader2 v-if="workflowStopping" class="size-3.5 animate-spin" /><Square v-else class="size-3.5" /> Stop</Button></TooltipTrigger><TooltipContent>Stop all containers and clean up</TooltipContent></Tooltip>
-          <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning || !selectedWorkflow?.composePath" @click="downloadCompose"><FileDown class="size-3.5" /> Download Compose</Button></TooltipTrigger><TooltipContent>Download the effective docker-compose file used for execution</TooltipContent></Tooltip>
-          <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="workflowRunning" @click="switchToCodeMode()"><Code2 class="size-3.5" /> Code</Button></TooltipTrigger><TooltipContent>Switch to YAML editor with AI assistant</TooltipContent></Tooltip>
-          <Button variant="ghost" size="sm" class="gap-1.5 text-red-500 cursor-pointer" :disabled="workflowRunning" @click="confirmDeleteWorkflow"><Trash2 class="size-3.5" /> Delete</Button>
+          <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer text-red-500 hover:text-red-400" :disabled="!workflowRunning || workflowStopping" @click="stopWorkflow"><Loader2 v-if="workflowStopping" class="size-3.5 animate-spin" /><Square v-else class="size-3.5" /> Stop</Button></TooltipTrigger><TooltipContent>Stop all containers</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger as-child><Button variant="outline" size="icon" class="size-8 cursor-pointer" :disabled="workflowRunning" @click="switchToCodeMode()"><Code2 class="size-3.5" /></Button></TooltipTrigger><TooltipContent>YAML editor</TooltipContent></Tooltip>
+          <div class="relative">
+            <Tooltip><TooltipTrigger as-child><Button variant="outline" size="icon" class="size-8 cursor-pointer" @click="showMoreMenu = !showMoreMenu"><MoreVertical class="size-3.5" /></Button></TooltipTrigger><TooltipContent>More actions</TooltipContent></Tooltip>
+            <div v-if="showMoreMenu" class="fixed inset-0 z-40" @click="showMoreMenu = false" />
+            <div v-if="showMoreMenu" class="absolute top-10 right-0 z-50 w-56 rounded-lg border bg-background shadow-lg py-1">
+              <button class="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted cursor-pointer" :disabled="workflowRunning" @click="showMoreMenu = false; addNode()"><Container class="size-3.5" /> Add Job</button>
+              <button class="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted cursor-pointer" :disabled="workflowRunning" @click="showMoreMenu = false; commonSheet = true"><Variable class="size-3.5" /> Common Env Vars <Badge v-if="selectedWorkflow.commonEnvVars.length" variant="secondary" class="ml-auto text-[9px]">{{ selectedWorkflow.commonEnvVars.length }}</Badge></button>
+              <button class="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted cursor-pointer" :disabled="workflowRunning || !selectedWorkflow?.composePath" @click="showMoreMenu = false; downloadCompose()"><FileDown class="size-3.5" /> Download Compose</button>
+              <div class="border-t my-1" />
+              <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Settings</p>
+              <div class="flex items-center justify-between px-3 py-1.5"><span class="text-xs">Rebuild images</span><Toggle v-model="rebuildImages" /></div>
+              <div class="flex items-center justify-between px-3 py-1.5"><span class="text-xs">Port remapping</span><Toggle v-model="wfPortRemap" /></div>
+              <div class="border-t my-1" />
+              <button class="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-500 hover:bg-muted cursor-pointer" :disabled="workflowRunning" @click="showMoreMenu = false; confirmDeleteWorkflow()"><Trash2 class="size-3.5" /> Delete Workflow</button>
+            </div>
+          </div>
         </div>
       </div>
       <!-- Wizard toolbar -->
@@ -707,16 +769,11 @@ onMounted(async () => {
           <Controls />
           <!-- Auxiliary Services Panel -->
           <div v-if="selectedWorkflow?.auxiliaryServices?.length" class="absolute top-2 right-2 z-10">
-            <Tooltip>
-              <TooltipTrigger as-child>
                 <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer bg-background/90 backdrop-blur-sm shadow-sm" @click="showAuxPanel = !showAuxPanel">
                   <Server class="size-3.5" /> Infrastructure
                   <Badge variant="secondary" class="ml-0.5 text-[10px]">{{ selectedWorkflow.auxiliaryServices.length }}</Badge>
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent>Show auxiliary/infrastructure services</TooltipContent>
-            </Tooltip>
-            <div v-if="showAuxPanel" class="mt-1.5 w-64 bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg p-2 space-y-1 max-h-48 overflow-y-auto">
+            <div v-if="showAuxPanel" class="absolute top-full right-0 mt-1.5 w-64 bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg p-2 space-y-1 max-h-48 overflow-y-auto">
               <p class="text-[10px] font-medium text-muted-foreground px-2 py-1">Infrastructure services (not shown on canvas)</p>
               <div v-for="svc in selectedWorkflow.auxiliaryServices" :key="typeof svc === 'string' ? svc : svc.name" class="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 text-xs">
                 <Server class="size-3.5 text-muted-foreground shrink-0" />
@@ -843,12 +900,14 @@ onMounted(async () => {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <Dialog v-model:open="showBulkDeleteModal"><DialogContent class="sm:max-w-sm"><DialogHeader><DialogTitle>Delete {{ selectedWorkflows.size }} workflow(s)?</DialogTitle><DialogDescription>This will permanently delete the selected workflows and their associated files.</DialogDescription></DialogHeader><DialogFooter class="gap-2"><Button variant="outline" class="cursor-pointer" @click="showBulkDeleteModal = false">Cancel</Button><Button variant="destructive" class="cursor-pointer" @click="showBulkDeleteModal = false; deleteSelectedWorkflows()">Delete</Button></DialogFooter></DialogContent></Dialog>
 
     <!-- Toast -->
     <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
       {{ toastMsg }}
     </div>
   </div>
+
 </template>
 
 <style>

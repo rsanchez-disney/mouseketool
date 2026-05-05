@@ -135,6 +135,10 @@ router.post("/cleanup", async (req, res) => {
     await writeFile(PIPELINES_FILE, "[]");
     await writeFile(join(process.cwd(), ".data", "batch-projects.json"), "[]");
     await writeFile(join(process.cwd(), ".data", "batch-workflows.json"), "[]");
+    // Delete workflow folders
+    try { const wfDir = join(process.cwd(), ".data", "batch-workflows"); const { readdirSync, rmSync } = await import("fs"); for (const d of readdirSync(wfDir, { withFileTypes: true })) { if (d.isDirectory()) rmSync(join(wfDir, d.name), { recursive: true, force: true }); } } catch {}
+    // Delete effective compose cache
+    try { const compDir = join(process.cwd(), ".data", "batch-compose"); const { rmSync } = await import("fs"); rmSync(compDir, { recursive: true, force: true }); } catch {}
 
     res.json({ ok: true });
   } catch (e: any) {

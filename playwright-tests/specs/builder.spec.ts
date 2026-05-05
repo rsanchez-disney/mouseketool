@@ -9,7 +9,7 @@ test.describe("Builder Page", () => {
   });
 
   test("shows page title and description", async ({ page }) => {
-    await expect(page.getByText("Lambda Builder")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Lambda Builder" })).toBeVisible();
     await expect(page.getByText(/Build and deploy/i)).toBeVisible();
   });
 

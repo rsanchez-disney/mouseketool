@@ -172,7 +172,7 @@ router.get("/lambda-env/:name", async (req, res) => {
     try {
       const deployments = await loadDeployments();
       const dep = deployments.find((d: any) => d.functionName === req.params.name);
-      if (dep?.buildId) cached = JSON.parse(await readFile(envVarsPath(dep.buildId), "utf-8"));
+      if (dep?.buildId) { const raw = JSON.parse(await readFile(envVarsPath(dep.buildId), "utf-8")); cached = Array.isArray(raw) ? raw : raw.vars || []; }
     } catch {}
     if (!cached.length) {
       try {
