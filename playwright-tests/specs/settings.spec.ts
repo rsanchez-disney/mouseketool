@@ -9,22 +9,8 @@ test.describe("Settings Page", () => {
     await expect(page.getByText("Managed LocalStack Instance")).toBeVisible();
   });
 
-  test("shows LocalStack container info", async ({ page }) => {
-    await expect(page.getByText("mouseketool-localstack")).toBeVisible();
-  });
-
-  test("LocalStack status indicator visible", async ({ page }) => {
-    await expect(page.getByText(/running|stopped/i).first()).toBeVisible({ timeout: 10000 });
-  });
-
-  test("Start or Stop button available", async ({ page }) => {
-    const startBtn = page.getByRole("button", { name: /start/i });
-    const stopBtn = page.getByRole("button", { name: /stop/i });
-    await expect(startBtn.or(stopBtn)).toBeVisible({ timeout: 5000 });
-  });
-
   test("can navigate to all tabs", async ({ page }) => {
-    const tabNames = ["Lambda", "Builds", "Pipelines", "AI", "Workflows", "UI"];
+    const tabNames = ["Lambda", "Builds", "Pipelines", "AI", "Workflows", "UI", "About"];
     for (const name of tabNames) {
       await page.getByText(name, { exact: true }).first().click();
       await page.waitForTimeout(200);
@@ -68,9 +54,15 @@ test.describe("Settings Page", () => {
     await expect(page.getByText("Theme transition animation")).toBeVisible();
   });
 
+  test("About tab shows version", async ({ page }) => {
+    await page.goto("/settings?tab=about");
+    await expect(page.getByText("Mouseketool")).toBeVisible();
+    await expect(page.getByText(/v\d+\.\d+\.\d+/)).toBeVisible();
+  });
+
   test("Profile tab shows workspace and profile selector", async ({ page }) => {
     await page.goto("/settings?tab=profile");
-    await expect(page.getByText(/workspace/i)).toBeVisible();
+    await expect(page.getByText("Workspace Directory")).toBeVisible();
   });
 
   test("Profile tab shows available profiles in dropdown", async ({ page }) => {

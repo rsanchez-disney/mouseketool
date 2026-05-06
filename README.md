@@ -1,238 +1,219 @@
-# Mouseketool
+<p align="center">
+  <img src="docs/banner.svg" alt="Mouseketool" width="600" />
+</p>
 
-A developer workbench for building, deploying, and testing Java Lambda functions on LocalStack — all from a single
-web UI. It also lets you create and observe full event-driven pipelines (DynamoDB → SNS → SQS → Lambda) with
-step-by-step execution tracking and invocation history.
+<p align="center">
+  <strong>The developer workbench that makes LocalStack feel like production.</strong><br/>
+  Build, deploy, wire, invoke, and observe Java Lambda microservices — all from one UI.
+</p>
+
+<p align="center">
+  <a href="#-getting-started">Getting Started</a> •
+  <a href="#-features">Features</a> •
+  <a href="#-how-it-compares">Comparison</a> •
+  <a href="#-ai-powered">AI</a> •
+  <a href="#-coming-soon">Coming Soon</a>
+</p>
+
+---
 
 ## Why Mouseketool?
 
-If you work on Java Lambda microservices and test locally against LocalStack, you've probably experienced the pain of
-jumping between 4-5 different tools just to build, deploy, configure, and invoke a single function. Mouseketool
-consolidates that entire workflow into one place.
+If you work on Java Lambda microservices and test locally against LocalStack, you know the pain. Build the JAR. Deploy it. Configure env vars. Set up DynamoDB tables. Wire SNS topics. Create SQS queues. Map event sources. Invoke. Read logs. Fix. Repeat.
 
-| Capability | Serverless/SAM | LocalStack UI | Mouseketool |
-|---|---|---|---|
-| Build Java project with live console | ✗ | ✗ | ✓ |
-| Deploy to LocalStack | ✓ | ✗ | ✓ |
-| Invoke Lambda with payload editor | CLI only | ✓ | ✓ |
-| Env var management per build | ✗ | ✗ | ✓ |
-| Auto-carry env vars on rebuild | ✗ | ✗ | ✓ |
-| Exclude env vars without deleting them | ✗ | ✗ | ✓ |
-| Configurable Lambda memory per invocation | ✗ | ✗ | ✓ |
-| Vault secret setup in invoke flow | ✗ | ✗ | ✓ |
-| Debug mode (JVM flags on the fly) | ✗ | ✗ | ✓ |
-| Root cause extraction from error logs | ✗ | ✗ | ✓ |
-| SNS filter policies on subscriptions | YAML config | ✗ | Visual wizard |
-| Create DynamoDB → SNS → SQS → Lambda pipelines | YAML config | ✗ | Visual wizard |
-| Shadow infrastructure for diagnostic replay | ✗ | ✗ | ✓ |
-| AI error explanation from stack traces | ✗ | ✗ | ✓ (Kiro) |
-| AI payload generation from samples | ✗ | ✗ | ✓ (Kiro) |
-| Pipeline self-healing after LocalStack restart | ✗ | ✗ | ✓ |
-| Docker-compose batch execution | ✗ | ✗ | ✓ |
-| Port conflict auto-detection and remapping | ✗ | ✗ | ✓ |
-| Env var presets for batch runs | ✗ | ✗ | ✓ |
-| Visual workflow editor for batch jobs | ✗ | ✗ | ✓ |
-| Log isolation between concurrent workflows | ✗ | ✗ | ✓ |
-| Container lifecycle management (orphan cleanup) | ✗ | ✗ | ✓ |
-| In-app update notifications | ✗ | ✗ | ✓ |
-| Full build -> deploy -> configure -> wire -> test loop | Across 4-5 tools | Partial | Single UI |
+That's 4-5 different tools, a dozen terminal tabs, and a lot of context switching — just to test one function.
 
-## Prerequisites
+**Mouseketool was built to fix that.** It's a single desktop application that consolidates the entire local development loop into a visual, interactive experience. The goal: become the complementary tool for every backend developer working at Disney, offering capabilities that aid them run projects and visualize resources much more efficiently than a CLI ever could.
 
-Before running Mouseketool, make sure you have the following installed:
+---
 
-- **Node.js** 20.19+ or 22.12+ — required for both the frontend and backend
-- **Docker** — required for LocalStack and any supporting containers (Vault, Mockoon, etc.)
-- **LocalStack** — the free Community Edition works. Mouseketool has been tested with LocalStack 3.x running in Docker.
-- **JDK 21** — required on the host machine for building Java Lambda projects and for the local class diagnostic feature
-- **Maven or Gradle** — whichever your Java project uses, it must be available on your `PATH`
+## 🚀 Getting Started
 
-## Getting Started
+### Desktop App (Recommended)
 
-### Step 1: Clone and install dependencies
+Download the latest installer from [GitHub Releases](https://github.com/manjm010/mouseketool/releases):
+
+| Platform | File | Notes |
+|---|---|---|
+| Windows | `mouseketool_v<version>.exe` | NSIS installer |
+| macOS | `mouseketool_v<version>.dmg` | Universal binary (Intel + Apple Silicon) |
+
+The app bundles everything — just install and run. No Node.js setup required.
+
+### From Source
 
 ```bash
 git clone https://github.com/manjm010/mouseketool.git
 cd mouseketool
 
-# Install backend dependencies
-cd backend
-npm install
+# Backend
+cd backend && npm install && npm run dev
 
-# Install frontend dependencies
-cd ../frontend
-npm install
+# Frontend (separate terminal)
+cd frontend && npm install && npm run dev
 ```
 
-### Step 2: Start the backend
+Open `http://localhost:5173`, configure your LocalStack connection in Settings, and you're ready.
 
-```bash
-cd backend
-npm run dev
-```
+### Prerequisites
 
-The backend starts on `http://localhost:3001` by default. It connects to LocalStack using the settings you configure
-in the app (default: `http://localhost:4566`).
+- **Docker** — for LocalStack and supporting containers
+- **LocalStack 3.x** — Community Edition works perfectly
+- **JDK 21** — for building Java Lambda projects
+- **Maven or Gradle** — whichever your project uses
 
-### Step 3: Start the frontend
+---
 
-```bash
-cd frontend
-npm run dev
-```
+## ✨ Features
 
-The frontend starts on `http://localhost:5173` and proxies API requests to the backend.
+### Lambda Workflow
 
-### Step 4: Configure LocalStack connection
+The full build-deploy-configure-invoke loop in one flow:
 
-Open the app in your browser and go to **Settings**. Verify the protocol, host, and port match your LocalStack
-instance. The default credentials (`test/test`) work fine — LocalStack accepts any value.
+- **Live build console** — Stream Maven/Gradle output in real-time with auto-scroll, search, and copy
+- **One-click deploy** — Push artifacts to LocalStack with automatic memory configuration
+- **Unified env vars** — Detected from SAM templates, `.env` files, and README sections. Carried across rebuilds automatically
+- **Payload editor** — JSON editor with file upload, `Ctrl+Enter` invoke, and AI-generated test payloads
+- **Root cause extraction** — Automatically pulls `Caused by` chains from stack traces
+- **Local class diagnostic** — Runs your handler class locally when `ExceptionInInitializerError` occurs to capture the full trace
+- **Debug mode** — Injects JVM flags for verbose class-loading and exception traces on demand
 
-## Features
+### Event-Driven Pipelines
 
-Mouseketool is organized into several pages, each focused on a specific part of the development workflow:
+Create and observe full AWS event pipelines through a visual wizard:
 
-### Home
-The default landing page. Shows quick stats (deployed Lambdas, cached builds, pipelines, batch projects,
-workflows), pipeline activity with status count badges, a recent invocation feed, quick action shortcuts,
-and feature highlights. A weighted hint panel shows tips and shortcuts on each visit. Click any stat card to navigate directly to that section.
+- **APP Pipeline** — DynamoDB → Stream Handler → SNS → SQS → Lambda (with filter policies)
+- **Direct Stream** — DynamoDB → Lambda (minimal, lowest latency)
+- **Queue Consumer** — SQS → Lambda (decoupled microservices)
 
-### [Builder](docs/builder.md)
-Build Java Lambda projects with a live streaming console. Supports Maven and Gradle with auto-detection. Manage
-cached builds, rebuild, or deploy directly to LocalStack. Each cached build shows a TTL indicator based on the
-cleanup interval configured in Settings.
+Each pipeline includes:
+- **Self-healing** — Automatically recreates all resources after LocalStack restarts. No manual setup, ever.
+- **Real-time execution** — Watch each step complete via Server-Sent Events
+- **Invocation history** — Every run tracked with step-by-step logs, DLQ detection, and diagnostic invoke
+- **SNS filter policies** — 9 operator types with visual configuration
 
-### [Deployments](docs/deployments.md)
-Deploy artifacts to LocalStack. Search and filter deployed functions by name or runtime. Manage environment variables, configure Vault secrets, invoke functions with a
-payload editor, and inspect results with root cause extraction and local class diagnostics. AI-powered payload
-generation creates test payloads from sample files and handler source code. Vault configuration syncs automatically
-to pipelines using the same Lambda. A deploy override modal
-lets you confirm or skip redeployment, with a preference to remember your choice.
+### Batch Jobs & Workflows
 
-### Triggers (Pipelines)
-Create event-driven pipelines through a visual wizard. Search pipelines by name and filter by type
-(App Pipeline, Direct Stream, Queue Consumer). Three pipeline types are supported:
-- **APP Pipeline** (DynamoDB -> SNS -> SQS -> Lambda): Full event-driven chain with stream handler, SNS filter policies, and SQS delivery.
-- **Direct Stream Processor** (DynamoDB -> Lambda): DynamoDB stream triggers a Lambda directly.
-- **Queue Consumer** (SQS -> Lambda): SQS queue triggers a Lambda function.
+Run Docker Compose projects with superpowers:
 
-Each pipeline type has per-pipeline shadow infrastructure that captures events to a shared S3 bucket for
-observation, diagnostic replay, and filter detection. Shadow Lambdas are deployed automatically at wire time
-and reconciled on LocalStack restart. A dedicated pipeline edit page lets you modify filter policies, toggle
-heavy load mode, configure vault add-ons, manage env vars, and inspect each resource metadata. Table schemas
-can be saved and restored after LocalStack restarts.
-
-### Execution
-Run a pipeline and watch each step execute in real-time via Server-Sent Events. The execute page validates
-payloads (must be non-empty JSON), blocks execution when heavy load mode is active, and shows step-by-step
-progress. Diagnostic invoke runs automatically when the target Lambda fails to produce CloudWatch logs,
-providing the same detailed error output as the Deployments page.
-
-### History
-Track every pipeline invocation with real-time WebSocket updates. Runs are detected via S3 shadow captures
-(for Direct Stream and Queue Consumer) or CloudWatch logs (for APP Pipeline stream handler). Each run shows
-step-by-step status with expandable logs. Filter runs by status (success/error/filtered/diagnosing), time
-range, or source (manual/external). History retention is configurable by age or amount in Settings.
-Diagnostic invoke with container kill provides full error details when Lambdas fail during initialization.
-
-### Settings
-Configure the LocalStack connection (protocol, host, port, credentials), build cleanup TTL,
-Lambda memory, heavy load batch settings (batch size and window), and history retention (by age or
-amount). Changes to heavy load settings are applied retroactively to all pipelines with heavy load
-runs on startup and is accessible from the Settings page. AI learned data storage (local or S3) is configurable.
-Pipeline self-healing automatically recreates resources after LocalStack restarts. The About tab
-displays the current app version and checks for updates from GitHub Releases.
+- **Visual workflow editor** — Drag-and-drop canvas for building job dependency graphs
+- **Compose Studio** — AI-powered compose file builder with Generate, Add Service, and Evaluate actions
+- **Port conflict detection** — Automatically remaps conflicting ports before starting
+- **Image rebuild pipeline** — Maven build → Docker image → Compose up, all in one click
+- **Log isolation** — Each workflow run gets a unique ID. Switching workflows never leaks logs.
+- **Container watchdog** — Orphaned containers are automatically killed when no workflow is running
+- **Auto-teardown** — When your batch container exits, everything else stops cleanly
 
 ### Profiles
-Load pre-configured development environments with one click. A profile defines which Lambda projects and
-batch projects belong to a team's workflow. On load, Mouseketool scans a workspace directory, optionally
-clones missing projects via GitHub, auto-builds and deploys Lambdas, and registers batch projects.
-Loading a profile is a destructive action that wipes all existing LocalStack resources for a clean slate.
-Profiles support parallel builds (3 concurrent), automatic handler detection from Java source, and
-environment variable detection from SAM templates, .env files, and README dotenv sections.
 
-### Batch Projects
-Register Docker-based projects with auto-detection of Dockerfiles and compose files. Manage multiple
-compose file variants per project, edit detected paths, and receive live file change notifications
-via a background watcher. Environment variables are scanned from compose files and .env files.
+Load entire team environments with one click:
 
-### Launchpad
-Run docker-compose projects directly from the UI with automatic port conflict detection and remapping.
-Create and manage environment variable presets to customize runs without modifying source files.
-Mouseketool manages Docker images with a consistent tagging scheme - before each run it can
-rebuild the JAR (Maven/Gradle), remove the old image, and build a fresh one from the Dockerfile.
-Run Settings (rebuild image, port remapping) are configurable per run. The log viewer separates
-build output from container output in tabs, with a toggle to filter infrastructure container logs.
-Batch containers are auto-detected on exit, triggering automatic teardown of all compose services.
-The Workflow tab provides a visual canvas for building job dependency graphs with per-node configuration,
-common env vars, and import from existing compose services. Compose Studio offers an AI-powered
-compose builder with a Monaco editor and structured actions (Generate, Add Batch Project, Add Service,
-Add Healthchecks). Workflows can be executed in foreground docker compose mode with per-node status
-tracking. Imported workflows auto-register batch projects from their compose files. The canvas includes
-an infrastructure services panel for managing supporting containers. Workflows support search, filters,
-multi-select deletion, and completion state tracking. Logs are fully isolated between workflows using
-unique run IDs - switching workflows never leaks logs from another run. A container watchdog
-automatically kills orphaned containers (labeled MK_CREATED_BY) when no workflow is running.
+- **Workspace scanning** — Detects Lambda and batch projects in a directory
+- **Auto-provisioning** — Clones missing repos, builds in parallel (3 concurrent), deploys, and registers
+- **Clean slate** — Loading a profile wipes all existing resources for a fresh start
+- **Handler detection** — Finds `RequestHandler` implementations in Java source automatically
 
-### Help & Guides
-In-app documentation covering every feature with detailed explanations, code examples, and troubleshooting tips.
+### Command Palette
 
-## Keyboard Shortcuts
+Press `Ctrl + .` anywhere to open a fuzzy-search command palette. Navigate to any page, trigger any action — keyboard-first workflow for power users.
 
-| Shortcut | Action | Where |
-|---|---|---|
-| `Ctrl+Enter` | Invoke the selected Lambda | Deployments page |
-| `Ctrl+.` | Open command palette | All pages |
-| `Escape` | Close expanded log modal | All pages |
+---
 
-## Tech Stack
+## 📊 How It Compares
 
-- **Frontend**: Vue 3 + TypeScript, Tailwind CSS 4, shadcn-vue (Reka UI), Lucide icons
-- **Backend**: Node.js + Express 5 + TypeScript, AWS SDK v3
-- **Infrastructure**: LocalStack (Lambda, DynamoDB, DynamoDB Streams, SNS, SQS, CloudWatch Logs, S3), HashiCorp Vault
-- **Target**: Java Lambda functions (Maven/Gradle, JDK 21)
+Mouseketool isn't trying to replace SAM or Serverless — those are deployment frameworks. Mouseketool is the **development companion** that sits alongside them, focused on the local iteration loop.
 
-## Desktop App
+| Capability | SAM CLI | Serverless | LocalStack UI | Mouseketool |
+|---|---|---|---|---|
+| Build with live streaming console | ✗ | ✗ | ✗ | ✓ |
+| Deploy to LocalStack | ✓ (via sam local) | ✓ (via plugin) | ✗ | ✓ |
+| Invoke with payload editor | CLI only | CLI only | Basic | Full editor + history |
+| Env var management per function | YAML config | YAML config | ✗ | Visual UI + auto-detect |
+| Carry env vars across rebuilds | ✗ | ✗ | ✗ | ✓ (automatic) |
+| Exclude env vars without deleting | ✗ | ✗ | ✗ | ✓ |
+| Root cause extraction from logs | ✗ | ✗ | ✗ | ✓ (automatic) |
+| Create event pipelines visually | ✗ | ✗ | ✗ | ✓ (3 types) |
+| Pipeline execution tracking | ✗ | ✗ | ✗ | ✓ (real-time SSE) |
+| Invocation history with replay | ✗ | ✗ | ✗ | ✓ |
+| Self-healing after restart | ✗ | ✗ | ✗ | ✓ (automatic) |
+| SNS filter policy editor | YAML | YAML | ✗ | Visual (9 operators) |
+| Docker Compose orchestration | ✗ | ✗ | ✗ | ✓ |
+| Visual workflow editor | ✗ | ✗ | ✗ | ✓ |
+| AI-powered error explanation | ✗ | ✗ | ✗ | ✓ |
+| AI payload generation | ✗ | ✗ | ✗ | ✓ |
+| Profile-based team environments | ✗ | ✗ | ✗ | ✓ |
 
-Mouseketool is distributed as an Electron desktop application. Download the latest installer from
-[GitHub Releases](https://github.com/manjm010/mouseketool/releases):
+The key difference: SAM and Serverless require you to define everything in YAML and work through the terminal. Mouseketool gives you the same capabilities through a visual interface with real-time feedback, plus features that simply don't exist in CLI tools — like pipeline observation, invocation history, and self-healing infrastructure.
 
-- **Windows**: `mouseketool_v<version>.exe` (NSIS installer)
-- **macOS**: `mouseketool_v<version>.dmg` (universal binary - Intel + Apple Silicon)
+---
 
-The app bundles its own backend server and serves the frontend locally. No separate Node.js setup required
-for end users - just install and run.
+## 🤖 AI-Powered
 
-## Testing
+Mouseketool integrates with [Kiro CLI](https://kiro.dev) to bring AI assistance directly into your development workflow:
+
+- **Error Explanation** — When a Lambda fails, send the stack trace to Kiro for a plain-English explanation and fix suggestion
+- **Payload Generation** — Generate realistic test payloads from your handler source code and sample files. Supports Successful, Filtered, and Failure variants
+- **Pipeline Item Generation** — Create DynamoDB items that match your pipeline's expected input, respecting key schemas and filter policies
+- **Learning** — Kiro learns from successful executions (up to 50 items per pipeline) and improves payload quality over time
+- **Compose Studio** — Generate entire docker-compose files from natural language prompts, add services, inject healthchecks, and evaluate configurations for issues
+
+AI features are optional and gated behind Kiro CLI availability. When detected, a purple badge appears in the navigation bar.
+
+---
+
+## 🔮 Coming Soon
+
+Features actively planned for upcoming releases:
+
+| Feature | Description |
+|---|---|
+| **S3 Buckets Add-on** | Declare bucket dependencies per Lambda. Auto-create and seed with files before invocation |
+| **Pipeline from Diagram** | Paste an architecture diagram and let AI create the pipeline configuration |
+| **PR-Triggered Rebuild** | Detect merged PRs in profile repos and prompt to pull & rebuild |
+| **Branch Switching** | Switch git branches and rebuild directly from the Projects page |
+| **Env Var Diff from PRs** | Detect new env vars added in merged PRs and offer to add them |
+| **Build Progress Estimation** | Show estimated time remaining based on historical build durations |
+| **Export Pipeline as Diagram** | Generate shareable PNG/SVG with official AWS architecture icons |
+
+---
+
+## 🎹 Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl + .` | Open command palette |
+| `Ctrl + Enter` | Invoke Lambda (Deployments page) |
+| `Escape` | Close expanded log viewer or modal |
+
+---
+
+## 🐛 Known Limitations
+
+These are LocalStack-specific behaviors that don't affect real AWS deployments:
+
+- **DynamoDB Stream batch window** — `MaximumBatchingWindowInSeconds` is accepted but not reliably honored
+- **Event source mapping delays** — ESM pollers can be slow (30s-2min+). Mouseketool uses diagnostic invoke as a workaround
+- **Warm container stale logs** — Mitigated by killing warm containers before invoke
+- **Java cold start timeouts** — Under CPU contention, Java Lambdas may timeout. The 2048 MB default helps
+
+---
+
+## 🧪 Testing
 
 ```bash
-# Unit/fast tests (mocked, runs in seconds)
 cd playwright-tests
+
+# Fast tests (mocked backend, runs in seconds)
 npx playwright test
 
 # Integration tests (spins up isolated LocalStack + backend)
 npx playwright test --config=playwright.integration.config.ts
 ```
 
-Integration tests are fully isolated - they start their own LocalStack instance (port 4577) and backend
-(port 3099) with a temporary data directory. They never interfere with a running Mouseketool instance.
+Integration tests are fully isolated — they start their own LocalStack (port 4577) and backend (port 3099) with a temporary data directory. They never interfere with a running Mouseketool instance.
 
-## Known Limitations
+---
 
-These are LocalStack-specific behaviors that don't affect real AWS deployments:
-
-- **DynamoDB Stream batch window** — `MaximumBatchingWindowInSeconds` is accepted but not reliably honored. Records
-  may arrive individually instead of batched.
-- **Event source mapping polling delays** — ESM pollers can be slow (30s–2min+) or stop polling after the initial
-  invocation. Restarting LocalStack resets them.
-- **Diagnostic invoke for target Lambda** — The observer uses a diagnostic invoke (direct Lambda invocation with
-  the captured SQS/DynamoDB event) instead of waiting for LocalStack ESM polling. This provides faster and more
-  reliable results. A warm container warning appears when INIT logs are not available.
-- **Warm container stale logs** — LocalStack reuses Lambda containers. Mouseketool mitigates this by killing warm
-  containers before invoke and skipping stale log sources on errors.
-- **Java cold start timeouts** — Under CPU contention, Java Lambdas may timeout during initialization. The 2048 MB
-  default memory helps, but it can still happen.
-
-## License
+## 📄 License
 
 Internal tool — not for public distribution.

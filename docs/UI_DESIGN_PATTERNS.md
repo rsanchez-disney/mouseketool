@@ -424,3 +424,50 @@ const kiroAvailable = inject<Ref<boolean>>("kiroAvailable", ref(false));
 
 - When available: show AI buttons, purple navbar badge
 - When unavailable: hide AI buttons entirely, show gray navbar badge with install tooltip
+
+---
+
+## Update Check Badge
+
+The navbar shows a green update badge when a newer version is available on GitHub Releases.
+
+```typescript
+const updateInfo = inject<{ updateAvailable: any; updateLatest: any; updateUrl: any }>("updateInfo", {
+  updateAvailable: ref(false), updateLatest: ref(""), updateUrl: ref("")
+});
+```
+
+- Badge appears before the profile badge in the navbar header
+- Clicking navigates to Settings > About tab
+- Color: `border-emerald-500/40 bg-emerald-500/10 text-emerald-500`
+
+---
+
+## Help Page (Markdown-Driven)
+
+The Help page loads content from `docs/help/` at build time. No hardcoded documentation in Vue templates.
+
+### Adding a new section
+1. Create a `.md` file in the appropriate `docs/help/<category>/` folder
+2. Add YAML frontmatter:
+```yaml
+---
+id: unique-section-id
+tab: tab-id
+title: Section Title
+icon: LucideIconName
+group: Optional Group Label
+order: 1
+---
+```
+3. Write content in standard markdown (headings, lists, code blocks, tables)
+4. For animated diagrams, add `<!-- diagram:name -->` where the diagram should appear
+
+### Diagram convention
+Diagrams are defined in `HelpPage.vue` in the `diagrams` map. They render as static HTML with animated CSS dashes.
+
+### Tab configuration
+Tabs are defined in `docs/help/_meta.json`. Add new tabs there.
+
+### Search
+Search is auto-generated from raw markdown content. No manual index maintenance needed.

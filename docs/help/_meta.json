@@ -1,0 +1,13 @@
+{
+  "tabs": [
+    { "id": "start", "label": "Getting Started", "icon": "Home", "accent": "emerald" },
+    { "id": "lambda", "label": "Lambda Workflow", "icon": "Hammer", "accent": "blue" },
+    { "id": "pipelines", "label": "Pipelines", "icon": "Database", "accent": "purple" },
+    { "id": "batch", "label": "Batch Jobs", "icon": "Container", "accent": "amber" },
+    { "id": "profiles", "label": "Profiles", "icon": "UserCircle", "accent": "amber" },
+    { "id": "tools", "label": "Tools & Add-ons", "icon": "Terminal", "accent": "zinc" },
+    { "id": "ai", "label": "AI & Automation", "icon": "Sparkles", "accent": "violet" },
+    { "id": "shortcuts", "label": "Shortcuts", "icon": "Keyboard", "accent": "zinc" },
+    { "id": "troubleshooting", "label": "Troubleshooting", "icon": "AlertTriangle", "accent": "red" }
+  ]
+}
