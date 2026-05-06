@@ -3,4 +3,3 @@ node_modules
 *.log
 *.tsbuildinfo
 dist
-package-lock.json
