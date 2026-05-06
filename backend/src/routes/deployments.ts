@@ -118,17 +118,17 @@ export async function invokeFunction(client: any, functionName: string, payload:
   // Diagnostics
   if (result.FunctionError) {
     // Always include raw payload for debugging
-    if (parsed) logs.push("", "── Raw Error Payload ──", JSON.stringify(parsed, null, 2));
+    if (parsed) logs.push("", "-- Raw Error Payload --", JSON.stringify(parsed, null, 2));
 
     const fnConfig = await client.send(new GetFunctionCommand({ FunctionName: functionName }));
     const envVars = fnConfig.Configuration?.Environment?.Variables || {};
     const hints = diagnoseError(parsed, envVars);
-    if (hints.length) logs.push("", "── Diagnostics ──", ...hints);
+    if (hints.length) logs.push("", "-- Diagnostics --", ...hints);
 
     // If no meaningful logs, try local class loading diagnostic
     if (buildId && handler) {
       const diagLogs = await localClassDiagnose(buildId, handler, envVars);
-      if (diagLogs.length) logs.push("", "── Local Class Diagnostic ──", ...diagLogs);
+      if (diagLogs.length) logs.push("", "-- Local Class Diagnostic --", ...diagLogs);
     }
   }
 
@@ -159,7 +159,7 @@ router.put("/env/:buildId", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// GET /api/deployments/lambda-env/:name — read env vars from Lambda config (source of truth)
+// GET /api/deployments/lambda-env/:name - read env vars from Lambda config (source of truth)
 router.get("/lambda-env/:name", async (req, res) => {
   try {
     const client = await getLambdaClient();
@@ -189,7 +189,7 @@ router.get("/lambda-env/:name", async (req, res) => {
   } catch { res.json([]); }
 });
 
-// PUT /api/deployments/lambda-env/:name — write env vars to Lambda config + local cache
+// PUT /api/deployments/lambda-env/:name - write env vars to Lambda config + local cache
 router.put("/lambda-env/:name", async (req, res) => {
   try {
     const envVars: { key: string; value: string; isNull?: boolean }[] = req.body.envVars ?? [];
@@ -300,7 +300,7 @@ router.put("/:name/sample-path", async (req, res) => {
 });
 
 
-// GET /api/deployments/:name/sample-files — list JSON files from samplePath
+// GET /api/deployments/:name/sample-files - list JSON files from samplePath
 router.get("/:name/sample-files", async (req, res) => {
   const deps = await loadDeployments();
   const dep = deps.find(d => d.functionName === req.params.name);
@@ -313,7 +313,7 @@ router.get("/:name/sample-files", async (req, res) => {
   } catch { res.json([]); }
 });
 
-// GET /api/deployments/:name/sample-files/:filename — read a specific sample file
+// GET /api/deployments/:name/sample-files/:filename - read a specific sample file
 router.get("/:name/sample-files/:filename", async (req, res) => {
   const deps = await loadDeployments();
   const dep = deps.find(d => d.functionName === req.params.name);
@@ -396,7 +396,7 @@ export async function reconcileDeployments(): Promise<number> {
 
 export default router;
 
-// PUT /api/deployments/:name/vault-config — save vault config and sync to pipelines using this Lambda
+// PUT /api/deployments/:name/vault-config - save vault config and sync to pipelines using this Lambda
 router.put("/:name/vault-config", async (req, res) => {
   const { url, token, secrets, cleanup } = req.body;
   // Save on deployment

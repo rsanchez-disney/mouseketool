@@ -12,7 +12,7 @@ import { SCHEMAS_DIR } from "../config/constants.js";
 
 const router = Router();
 
-// GET /api/dynamodb/tables — list all tables with stream info
+// GET /api/dynamodb/tables - list all tables with stream info
 router.get("/tables", async (_req, res) => {
   try {
     const client = await getDynamoClient();
@@ -43,7 +43,7 @@ router.get("/tables", async (_req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// POST /api/dynamodb/tables — create a new table with streams enabled
+// POST /api/dynamodb/tables - create a new table with streams enabled
 router.post("/tables", async (req, res) => {
   const { tableName, partitionKey, partitionKeyType = "S", sortKey, sortKeyType = "S" } = req.body;
   if (!tableName || !partitionKey) return res.status(400).json({ error: "tableName and partitionKey are required" });
@@ -78,7 +78,7 @@ router.post("/tables", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// POST /api/dynamodb/tables/:name/enable-stream — enable streams on existing table
+// POST /api/dynamodb/tables/:name/enable-stream - enable streams on existing table
 router.post("/tables/:name/enable-stream", async (req, res) => {
   try {
     const client = await getDynamoClient();
@@ -93,7 +93,7 @@ router.post("/tables/:name/enable-stream", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// GET /api/dynamodb/tables/:name/describe — get key schema + attribute definitions
+// GET /api/dynamodb/tables/:name/describe - get key schema + attribute definitions
 router.get("/tables/:name/describe", async (req, res) => {
   try {
     const client = await getDynamoClient();
@@ -106,8 +106,8 @@ router.get("/tables/:name/describe", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// POST /api/dynamodb/tables/:name/put-item — insert item (accepts plain JSON, converts to DynamoDB format)
-// GET /api/dynamodb/tables/:name/count — live item count
+// POST /api/dynamodb/tables/:name/put-item - insert item (accepts plain JSON, converts to DynamoDB format)
+// GET /api/dynamodb/tables/:name/count - live item count
 router.get("/tables/:name/count", async (req, res) => {
   try {
     const client = await getDynamoClient();
@@ -144,7 +144,7 @@ router.post("/tables/:name/put-item", async (req, res) => {
 
 export default router;
 
-// POST /api/dynamodb/tables/:name/save-schema — save table schema + optional seed item
+// POST /api/dynamodb/tables/:name/save-schema - save table schema + optional seed item
 router.post("/tables/:name/save-schema", async (req, res) => {
   try {
     const client = await getDynamoClient();
@@ -174,7 +174,7 @@ router.post("/tables/:name/save-schema", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// GET /api/dynamodb/schemas — list saved schemas
+// GET /api/dynamodb/schemas - list saved schemas
 router.get("/schemas", (_req, res) => {
   mkdirSync(SCHEMAS_DIR, { recursive: true });
   const files = readdirSync(SCHEMAS_DIR).filter(f => f.endsWith(".json"));
@@ -185,14 +185,14 @@ router.get("/schemas", (_req, res) => {
   res.json(schemas);
 });
 
-// GET /api/dynamodb/schemas/:name — get a saved schema
+// GET /api/dynamodb/schemas/:name - get a saved schema
 router.get("/schemas/:name", (req, res) => {
   const file = join(SCHEMAS_DIR, `${req.params.name}.json`);
   if (!existsSync(file)) return res.status(404).json({ error: "Schema not found" });
   res.json(JSON.parse(readFileSync(file, "utf-8")));
 });
 
-// POST /api/dynamodb/schemas/:name/restore — create table from saved schema + optional seed
+// POST /api/dynamodb/schemas/:name/restore - create table from saved schema + optional seed
 router.post("/schemas/:name/restore", async (req, res) => {
   const file = join(SCHEMAS_DIR, `${req.params.name}.json`);
   if (!existsSync(file)) return res.status(404).json({ error: "Schema not found" });
@@ -219,7 +219,7 @@ router.post("/schemas/:name/restore", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// PUT /api/dynamodb/schemas/:name/seed — update seed item for a saved schema
+// PUT /api/dynamodb/schemas/:name/seed - update seed item for a saved schema
 router.put("/schemas/:name/seed", (req, res) => {
   const file = join(SCHEMAS_DIR, `${req.params.name}.json`);
   if (!existsSync(file)) return res.status(404).json({ error: "Schema not found" });

@@ -9,7 +9,7 @@ import { getLambdaClient } from "../helpers/lambda-client.js";
 import { getDynamoClient } from "../helpers/dynamo-client.js";
 import { getSqsClient } from "../helpers/sqs-client.js";
 import { getSnsClient } from "../helpers/sns-client.js";
-import { BUILDS_DIR, DEPLOYMENTS_FILE, SCHEMAS_DIR } from "../config/constants.js";
+import { BUILDS_DIR, DEPLOYMENTS_FILE, SCHEMAS_DIR, SETTINGS_DIR } from "../config/constants.js";
 import {
   GetFunctionCommand, CreateFunctionCommand, CreateEventSourceMappingCommand,
   ListEventSourceMappingsCommand, UpdateFunctionCodeCommand, UpdateFunctionConfigurationCommand,
@@ -60,7 +60,18 @@ export async function reconcilePipelines(): Promise<ReconcileResult[]> {
   // Shadow infrastructure reconciliation for ALL pipeline types
   const allPipelines = loadPipelines();
   for (const p of allPipelines) {
-    if (!p.type || !p.shadow) continue;
+    if (!p.type) continue;
+    if (!p.shadow) {
+      try {
+        const { deployShadowForPipeline } = await import("./shadow-deploy.js");
+        const shadow = await deployShadowForPipeline(p);
+        const pps = loadPipelines();
+        const pp = pps.find(x => x.id === p.id);
+        if (pp) { pp.shadow = shadow; savePipelines(pps); }
+        console.log("[reconcile] Shadow deployed for missing pipeline:", p.name);
+      } catch (e: any) { console.error("[reconcile] Shadow deploy failed:", e.message); }
+      continue;
+    }
     try {
       const { reconcileShadow } = await import("./shadow-deploy.js");
       const updated = await reconcileShadow(p);
@@ -74,7 +85,7 @@ export async function reconcilePipelines(): Promise<ReconcileResult[]> {
   }
 
   savePipelines(pipelines);
-  console.log(`[reconcile] Done — ${results.length} pipeline(s) needed changes`);
+  console.log(`[reconcile] Done - ${results.length} pipeline(s) needed changes`);
   return results;
 }
 
@@ -113,7 +124,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
       streamArn = Table?.LatestStreamArn || "";
       r.actions.push(`Restored table ${p.tableName} from saved schema`);
     } else {
-      r.warnings.push(`Table ${p.tableName} recreated with generic schema (pk/sk) — no saved schema found`);
+      r.warnings.push(`Table ${p.tableName} recreated with generic schema (pk/sk) - no saved schema found`);
       await ddb.send(new CreateTableCommand({
         TableName: p.tableName,
         KeySchema: [{ AttributeName: "pk", KeyType: "HASH" }, { AttributeName: "sk", KeyType: "RANGE" }],
@@ -168,8 +179,8 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     await lambda.send(new GetFunctionCommand({ FunctionName: p.glueFunctionName }));
   } catch {
     try {
-      const srcPath = join(__dirname, "..", "..", "src", "templates", "dynamodb-to-sns.js");
-      const tmpDir = join(__dirname, "..", "..", ".data", "tmp");
+      const srcPath = join(__dirname, "..", "..", "templates", "dynamodb-to-sns.js");
+      const tmpDir = join(SETTINGS_DIR, "tmp");
       mkdirSync(tmpDir, { recursive: true });
       const zipPath = join(tmpDir, `reconcile-${p.id}.zip`);
       await createZip([{ name: "index.js", content: readFileSync(srcPath) }], zipPath);
@@ -189,7 +200,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
     } catch (e: any) { r.warnings.push(`Stream handler: ${e.message}`); }
   }
 
-  // 5. Target Lambda — redeploy from cached build
+  // 5. Target Lambda - redeploy from cached build
   try {
     await lambda.send(new GetFunctionCommand({ FunctionName: p.targetFunctionName }));
   } catch {
@@ -203,7 +214,7 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
   }
 
   // 6. Event source mappings
-  // DynamoDB Stream → Stream Handler
+  // DynamoDB Stream -> Stream Handler
   if (streamArn) {
     try {
       const { EventSourceMappings = [] } = await lambda.send(new ListEventSourceMappingsCommand({ EventSourceArn: streamArn, FunctionName: p.glueFunctionName }));
@@ -215,12 +226,12 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
           BatchSize: p.heavyLoad ? hlBatch : 10, MaximumBatchingWindowInSeconds: p.heavyLoad ? hlWindow : 5,
           StartingPosition: "LATEST", Enabled: true,
         }));
-        if (esm.UUID) { p.uuids[0] = esm.UUID; r.actions.push("Recreated DynamoDB Stream → Stream Handler ESM"); }
+        if (esm.UUID) { p.uuids[0] = esm.UUID; r.actions.push("Recreated DynamoDB Stream -> Stream Handler ESM"); }
       }
     } catch (e: any) { r.warnings.push(`Stream ESM: ${e.message}`); }
   }
 
-  // SQS → Target Lambda (skip for queue-consumer — target uses relay queue)
+  // SQS -> Target Lambda (skip for queue-consumer - target uses relay queue)
   if (queueArn && !r.targetMissing && p.type !== "queue-consumer") {
     try {
       const { EventSourceMappings = [] } = await lambda.send(new ListEventSourceMappingsCommand({ EventSourceArn: queueArn, FunctionName: p.targetFunctionName }));
@@ -229,18 +240,18 @@ async function reconcileOne(p: Pipeline, r: ReconcileResult) {
           EventSourceArn: queueArn, FunctionName: p.targetFunctionName,
           BatchSize: 10, Enabled: true,
         }));
-        if (esm.UUID) { if (p.uuids.length > 1) p.uuids[1] = esm.UUID; else p.uuids.push(esm.UUID); r.actions.push("Recreated SQS → Target Lambda ESM"); }
+        if (esm.UUID) { if (p.uuids.length > 1) p.uuids[1] = esm.UUID; else p.uuids.push(esm.UUID); r.actions.push("Recreated SQS -> Target Lambda ESM"); }
       }
     } catch (e: any) { r.warnings.push(`SQS ESM: ${e.message}`); }
   }
 
-  // 7. SNS → SQS subscription
+  // 7. SNS -> SQS subscription
   if (queueArn) {
     try {
       const { SubscriptionArn } = await sns.send(new SubscribeCommand({ TopicArn: p.topicArn, Protocol: "sqs", Endpoint: queueArn }));
       if (SubscriptionArn && SubscriptionArn !== p.subscriptionArn) {
         p.subscriptionArn = SubscriptionArn;
-        r.actions.push("Recreated SNS → SQS subscription");
+        r.actions.push("Recreated SNS -> SQS subscription");
       }
       // Reapply filter policy
       if (p.filterPolicy && Object.keys(p.filterPolicy).length && p.subscriptionArn) {

@@ -233,7 +233,7 @@ async function execute() {
 function stopExecution() {
   execAbort?.abort();
   stopBatchPoll();
-  steps.value.forEach(s => { if (s.status === "running" || s.status === "pending") { s.status = "timeout"; s.logs = [...s.logs, "Monitoring stopped — pipeline may still be running in the background"]; } });
+  steps.value.forEach(s => { if (s.status === "running" || s.status === "pending") { s.status = "timeout"; s.logs = [...s.logs, "Monitoring stopped - pipeline may still be running in the background"]; } });
   executing.value = false;
   execAbort = null;
 }

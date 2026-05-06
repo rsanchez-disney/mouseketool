@@ -28,7 +28,7 @@ router.post("/topics", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// POST /api/sns/subscribe — subscribe SQS queue to SNS topic
+// POST /api/sns/subscribe - subscribe SQS queue to SNS topic
 router.post("/subscribe", async (req, res) => {
   const { topicArn, queueArn } = req.body;
   if (!topicArn || !queueArn) return res.status(400).json({ error: "topicArn and queueArn are required" });

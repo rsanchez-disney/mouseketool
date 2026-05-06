@@ -33,7 +33,7 @@ function parseEnvVars(templateContent: string): Record<string, string> {
     }
 
     if (inVariables) {
-      // Empty or comment lines — skip
+      // Empty or comment lines - skip
       if (!trimmed || trimmed.startsWith("#")) continue;
       // If indent is <= the Variables key, we've left the section
       if (indent <= variablesIndent) { inVariables = false; continue; }
@@ -41,8 +41,9 @@ function parseEnvVars(templateContent: string): Record<string, string> {
       const m = trimmed.match(/^(\w+):\s*(.+?)\s*$/);
       if (m) {
         const [, key, val] = m;
-        if (!val.startsWith("!") && !val.includes("Fn::") && !val.includes("Ref")) {
-          vars[key] = val;
+        const cleanVal = val.replace(/\s+#.*$/, "").trim();
+        if (!cleanVal.startsWith("!") && !cleanVal.includes("Fn::") && !cleanVal.includes("Ref")) {
+          vars[key] = cleanVal;
         }
       }
     }
@@ -66,6 +67,8 @@ function parseEnvFile(content: string): Record<string, string> {
     if (eq < 1) continue;
     const key = stripped.slice(0, eq).trim();
     let val = stripped.slice(eq + 1).trim();
+    // Remove inline comments (space + #)
+    val = val.replace(/\s+#.*$/, "");
     // Remove surrounding quotes
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watchEffect, onMounted, onUnmounted, provide } from "vue";
+import { ref, computed, watchEffect, watch, onMounted, onUnmounted, provide, onErrorCaptured } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent,
@@ -10,14 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import CommandPalette from "@/components/CommandPalette.vue";
-import { Home, Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play, FolderKanban } from "lucide-vue-next";
+import { Home, Rocket, Settings, Sun, Moon, CloudCog, CircleHelp, Workflow, WifiOff, Loader2, Container, Play, FolderKanban, ArrowUpCircle } from "lucide-vue-next";
 
 const route = useRoute();
 const router = useRouter();
 function navTo(path: string) { if (route.path === path || route.path.startsWith(path + "/")) { router.replace({ path, query: { _t: Date.now().toString() } }); } else { router.push(path); } }
-const dark = ref(localStorage.getItem("mk:theme") === "dark");
+const dark = ref(localStorage.getItem("mk:theme") !== "light");
 const themeAnimation = ref(true);
-onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); themeAnimation.value = s.themeAnimation !== false; } catch {} });
+onMounted(async () => { if ((window as any).electronAPI) document.body.classList.add("electron-app"); try { const s = await (await fetch("/api/settings")).json(); themeAnimation.value = s.themeAnimation !== false; if (s.theme) { dark.value = s.theme === "dark"; } } catch {} });
 function toggleTheme(e: MouseEvent) {
   if (!themeAnimation.value || !(document as any).startViewTransition) { dark.value = !dark.value; return; }
   const x = e.clientX; const y = e.clientY;
@@ -31,21 +31,24 @@ function toggleTheme(e: MouseEvent) {
 watchEffect(() => {
   document.documentElement.classList.toggle("dark", dark.value);
   localStorage.setItem("mk:theme", dark.value ? "dark" : "light");
+  fetch("/api/settings/theme", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ theme: dark.value ? "dark" : "light" }) }).catch(() => {});
 });
 
 // LocalStack health check
 const localstackDown = ref(false);
-const isReconciling = ref(false);
+const showReconciling = ref(false);
+const reconcilingMinTime = Date.now() + 1500;
 let healthInterval: ReturnType<typeof setInterval> | null = null;
 async function checkHealth() {
   try {
     const r = await fetch("/api/health");
     const data = await r.json();
     localstackDown.value = !data.localstack;
-    isReconciling.value = !!data.reconciling;
-  } catch { localstackDown.value = true; }
+    if (data.localstack && data.reconciling) showReconciling.value = true;
+    if (!data.reconciling && data.localstack && Date.now() >= reconcilingMinTime) showReconciling.value = false;
+  } catch { localstackDown.value = true; showReconciling.value = false; }
 }
-onMounted(() => { checkHealth(); healthInterval = setInterval(checkHealth, 5000); checkKiro(); loadProfileState(); });
+onMounted(() => { checkHealth(); healthInterval = setInterval(checkHealth, 5000); checkKiro(); checkUpdate(); loadProfileState(); });
 onUnmounted(() => { if (healthInterval) clearInterval(healthInterval); });
 
 // Active profile badge
@@ -68,6 +71,11 @@ const kiroAvailable = ref(false);
 provide("kiroAvailable", kiroAvailable);
 provide("themeAnimation", themeAnimation);
 async function checkKiro() { try { const r = await fetch("/api/ai/status"); const d = await r.json(); kiroAvailable.value = d.available; } catch {} }
+const updateAvailable = ref(false);
+const updateLatest = ref("");
+const updateUrl = ref("");
+async function checkUpdate() { try { const r = await fetch("/api/update-check"); const d = await r.json(); updateAvailable.value = d.available; updateLatest.value = d.latest || ""; updateUrl.value = d.url || ""; } catch {} }
+provide("updateInfo", { updateAvailable, updateLatest, updateUrl });
 const serverlessNav = computed(() => {
   const items: any[] = [
     { label: "Lambda Builder", path: "/builder", icon: Rocket },
@@ -85,10 +93,20 @@ const otherNav = [
   { label: "Settings", path: "/settings", icon: Settings },
 ];
 const allNav = computed(() => [{ label: "Home", path: "/", icon: Home }, ...serverlessNav.value, ...batchNav, ...otherNav]);
+const pageError = ref("");
+onErrorCaptured((err) => { pageError.value = String(err); console.error("[PAGE ERROR]", err); return false; });
+watch(() => route.fullPath, () => { pageError.value = ""; });
 </script>
 
 <template>
   <TooltipProvider :delay-duration="300">
+    <div v-if="showReconciling" class="fixed inset-0 z-[99999] flex items-center justify-center bg-background/90 backdrop-blur-sm">
+      <div class="text-center space-y-3 max-w-sm">
+        <Loader2 class="size-12 mx-auto text-primary animate-spin" />
+        <h2 class="text-lg font-semibold">Restoring AWS Resources</h2>
+        <p class="text-sm text-muted-foreground">Mouseketool detected a LocalStack restart and is recreating Lambda functions and pipeline resources. This may take a moment.</p>
+      </div>
+    </div>
     <SidebarProvider>
       <Sidebar collapsible="icon" class="border-r">
         <SidebarHeader>
@@ -175,13 +193,14 @@ const allNav = computed(() => [{ label: "Home", path: "/", icon: Home }, ...serv
       </Sidebar>
 
       <SidebarInset>
-        <header class="flex h-14 items-center gap-2 border-b px-4">
+        <header class="sticky top-0 z-50 flex h-14 items-center gap-2 border-b px-4 bg-background">
           <SidebarTrigger class="-ml-1 cursor-pointer" />
           <Separator orientation="vertical" class="mr-2 h-4" />
           <span class="text-sm font-medium text-muted-foreground">
             {{ allNav.find(n => n.path === route.path || route.path.startsWith(n.path + '/'))?.label ?? 'Mouseketool' }}
           </span>
           <div class="ml-auto flex items-center gap-2">
+            <Tooltip v-if="updateAvailable"><TooltipTrigger as-child><div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 cursor-pointer hover:bg-emerald-500/20 transition-colors" @click="navTo('/settings?tab=about')"><ArrowUpCircle class="size-3 text-emerald-500" /><span class="text-[11px] font-medium text-emerald-500">v{{ updateLatest }}</span></div></TooltipTrigger><TooltipContent side="bottom">Update available - click to view</TooltipContent></Tooltip>
             <Tooltip v-if="activeProfileName"><TooltipTrigger as-child><div class="flex items-center px-2.5 py-1 rounded-md border border-foreground/20 bg-foreground/5 cursor-pointer hover:bg-foreground/10 transition-colors" @click="navTo('/settings?tab=profile')"><span class="text-[11px] font-medium text-foreground/80">{{ activeProfileName }}</span></div></TooltipTrigger><TooltipContent side="bottom">Active profile</TooltipContent></Tooltip>
             <Tooltip v-if="kiroAvailable">
               <TooltipTrigger as-child>
@@ -221,18 +240,10 @@ const allNav = computed(() => [{ label: "Home", path: "/", icon: Home }, ...serv
               <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" @click="$router.push('/settings')"><Settings class="size-3.5" /> Check Settings</Button>
             </div>
           </div>
-          <div v-else-if="isReconciling && route.path !== '/settings' && route.path !== '/help'" class="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-            <div class="text-center space-y-3 max-w-sm">
-              <Loader2 class="size-12 mx-auto text-primary animate-spin" />
-              <h2 class="text-lg font-semibold">Restoring AWS Resources</h2>
-              <p class="text-sm text-muted-foreground">Mouseketool detected a LocalStack restart and is recreating Lambda functions and pipeline resources. This may take a moment.</p>
-            </div>
-          </div>
 
+          <div v-if="pageError" class="p-4 bg-red-500/20 border border-red-500 rounded text-red-300 text-sm font-mono whitespace-pre-wrap mb-4">{{ pageError }}</div>
           <router-view v-slot="{ Component }">
-            <transition name="fade" mode="out-in">
-              <component :is="Component" :key="route.fullPath" />
-            </transition>
+            <component :is="Component" :key="route.fullPath" />
           </router-view>
         </main>
       </SidebarInset>
@@ -241,13 +252,4 @@ const allNav = computed(() => [{ label: "Home", path: "/", icon: Home }, ...serv
   <CommandPalette />
 </template>
 
-<style>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>
+

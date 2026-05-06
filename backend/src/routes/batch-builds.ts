@@ -5,7 +5,7 @@ import { join } from "path";
 import { v4 as uuid } from "uuid";
 import yaml from "js-yaml";
 
-const BATCH_PROJECTS_FILE = join(process.cwd(), ".data", "batch-projects.json");
+const BATCH_PROJECTS_FILE = join(SETTINGS_DIR, "batch-projects.json");
 const router = Router();
 
 interface EnvPreset {
@@ -13,7 +13,7 @@ interface EnvPreset {
   sections: { source: string; vars: { key: string; value: string }[] }[];
 }
 
-const PRESETS_FILE = join(process.cwd(), ".data", "batch-presets.json");
+const PRESETS_FILE = join(SETTINGS_DIR, "batch-presets.json");
 async function loadPresets(): Promise<EnvPreset[]> { try { return JSON.parse(await readFile(PRESETS_FILE, "utf-8")); } catch { return []; } }
 async function savePresets(p: EnvPreset[]) { await writeFile(PRESETS_FILE, JSON.stringify(p, null, 2)); }
 
@@ -27,7 +27,7 @@ async function loadProjects(): Promise<BatchProject[]> {
 }
 
 async function saveProjects(projects: BatchProject[]) {
-  await mkdir(join(process.cwd(), ".data"), { recursive: true });
+  await mkdir(SETTINGS_DIR, { recursive: true });
   await writeFile(BATCH_PROJECTS_FILE, JSON.stringify(projects, null, 2));
 }
 
@@ -103,7 +103,7 @@ function scanProjectFiles(projectPath: string): { detectedDockerfile: string; co
       const df = files.find(f => f.toLowerCase().startsWith("dockerfile"));
       if (df) detectedDockerfile = df;
     }
-    // Compose file detection — find ALL matching files
+    // Compose file detection - find ALL matching files
     const composePatterns = [/^docker-compose[\w.-]*\.ya?ml$/i, /^compose[\w.-]*\.ya?ml$/i];
     for (const f of files) {
       if (composePatterns.some(p => p.test(f)) && !composeFiles.includes(f)) composeFiles.push(f);
@@ -247,6 +247,7 @@ router.get("/:id/env-scan", async (req, res) => {
 });
 
 import { watchProject, unwatchProject, onProjectChange } from "../services/batch-watcher.js";
+import { SETTINGS_DIR } from "../config/constants.js";
 
 // Preset CRUD
 router.get("/:id/presets", async (req, res) => {

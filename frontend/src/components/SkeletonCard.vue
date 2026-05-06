@@ -1,5 +1,5 @@
 <template>
-  <div class="rounded-xl border p-4 space-y-3 animate-pulse">
+  <div class="rounded-xl border p-4 space-y-3 animate-pulse opacity-0 animate-[fadeIn_0.2s_ease-in_0.2s_forwards]">
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="h-5 w-40 rounded bg-muted" />

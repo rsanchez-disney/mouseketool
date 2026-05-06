@@ -1,0 +1,24 @@
+{
+  "name": "mouseketool",
+  "version": "0.13.0",
+  "private": true,
+  "main": "electron/dist/main.js",
+  "type": "module",
+  "description": "Developer workbench for Java Lambda functions and batch jobs on LocalStack",
+  "scripts": {
+    "dev": "concurrently -n be,fe,el -c blue,green,magenta \"cd ../backend && npm run dev\" \"cd ../frontend && npm run dev\" \"wait-on http://localhost:3001/api/health && cd electron && npx electron .\"",
+    "build:frontend": "cd ../frontend && npx vite build",
+    "build:backend": "cd ../backend && npm run build",
+    "build:electron": "cd electron && npm run build",
+    "build:all": "npm run build:frontend && npm run build:backend && npm run build:electron",
+    "package:win": "npm run build:all && npx electron-builder --win --config electron-builder.yml",
+    "package:mac": "npm run build:all && npx electron-builder --mac --config electron-builder.yml",
+    "package": "npm run build:all && npx electron-builder --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "wait-on": "^8.0.3"
+  }
+}

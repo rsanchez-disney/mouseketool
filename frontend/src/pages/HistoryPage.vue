@@ -221,7 +221,7 @@ onMounted(async () => {
     <!-- Filters toolbar -->
     <div v-if="runs.length" class="flex items-center gap-3 flex-wrap rounded-lg border bg-muted/20 px-3 py-2">
       <div class="flex items-center gap-1.5">
-        <button v-for="s in [{v:'all',l:'All'},{v:'success',l:'Success'},{v:'error',l:'Error'},{v:'filtered',l:'Filtered'},{v:'diagnosing',l:'Verifying'}]" :key="s.v" @click="stateFilter = s.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="stateFilter === s.v ? s.v === 'success' ? 'bg-green-500/20 text-green-400 ring-1 ring-green-500/40' : s.v === 'error' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/40' : s.v === 'filtered' ? 'bg-indigo-400/20 text-indigo-400 ring-1 ring-indigo-400/40' : s.v === 'diagnosing' ? 'bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/40' : 'bg-foreground/10 text-foreground ring-1 ring-foreground/20' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
+        <button v-for="s in [{v:'all',l:'All'},{v:'success',l:'Success'},{v:'error',l:'Error'},{v:'filtered',l:'Filtered'},{v:'diagnosing',l:'Verifying'}]" :key="s.v" @click="stateFilter = s.v" class="px-2.5 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer" :class="stateFilter === s.v ? s.v === 'success' ? 'bg-green-500/20 text-green-400 ring-1 ring-green-500/40' : s.v === 'error' ? 'bg-red-500/20 text-red-400 ring-1 ring-red-500/40' : s.v === 'filtered' ? 'bg-indigo-400/20 text-indigo-400 ring-1 ring-indigo-400/40' : s.v === 'diagnosing' ? 'bg-cyan-500/20 text-cyan-400 ring-1 ring-cyan-500/40' : 'bg-primary/20 text-primary ring-1 ring-primary/40' : 'text-muted-foreground hover:text-foreground hover:bg-muted'">
           {{ s.l }}
         </button>
       </div>

@@ -91,7 +91,7 @@ const deployEnvVars = ref<{ key: string; value: string }[]>([]);
 const hasLocalhostEnv = computed(() => lsManaged.value && deployEnvVars.value.some(e => e.value?.includes("http://localhost")));
 function prettifyPayload() { try { payload.value = JSON.stringify(JSON.parse(payload.value), null, 2); } catch {} }
 const savingEnvVars = ref(false);
-const envVarsCollapsed = ref(localStorage.getItem("mk:envCollapsed") !== "false");
+const envVarsCollapsed = ref(typeof localStorage !== "undefined" && localStorage.getItem("mk:envCollapsed") !== "false");
 const invoking = ref(false);
 let invokeAbort: AbortController | null = null;
 function stopInvoke() { invokeAbort?.abort(); invoking.value = false; invokeAbort = null; invokeError.value = "Stopped by user"; }
@@ -488,8 +488,8 @@ onMounted(async () => { loadDeployments(); loadVaultConfig(); profileState.value
                 <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1"><Clock class="size-3" /> Built {{ timeAgo(d.buildTime) }}</span></TooltipTrigger><TooltipContent>{{ formatDate(d.buildTime) }}</TooltipContent></Tooltip>
                 <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1"><Rocket class="size-3" /> Deployed {{ timeAgo(d.deployedAt) }}</span></TooltipTrigger><TooltipContent>{{ formatDate(d.deployedAt) }}</TooltipContent></Tooltip>
                 <template v-if="d.config">
-                  <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1"><Cpu class="size-3" /> {{ d.config.memorySize ?? '—' }} MB</span></TooltipTrigger><TooltipContent>Memory allocated</TooltipContent></Tooltip>
-                  <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1"><Timer class="size-3" /> {{ d.config.timeout ?? '—' }}s</span></TooltipTrigger><TooltipContent>Execution timeout</TooltipContent></Tooltip>
+                  <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1"><Cpu class="size-3" /> {{ d.config.memorySize ?? '-' }} MB</span></TooltipTrigger><TooltipContent>Memory allocated</TooltipContent></Tooltip>
+                  <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1"><Timer class="size-3" /> {{ d.config.timeout ?? '-' }}s</span></TooltipTrigger><TooltipContent>Execution timeout</TooltipContent></Tooltip>
                   <Tooltip><TooltipTrigger as-child><span class="flex items-center gap-1"><HardDrive class="size-3" /> {{ formatBytes(d.config.codeSize) }}</span></TooltipTrigger><TooltipContent>Package size</TooltipContent></Tooltip>
                 </template>
                 <Tooltip v-if="d.lastInvocation">
@@ -517,7 +517,7 @@ onMounted(async () => { loadDeployments(); loadVaultConfig(); profileState.value
               <Button variant="ghost" size="icon" class="size-8 cursor-pointer" @click="backToList"><ArrowLeft class="size-4" /></Button>
               <div class="flex-1">
                 <h2 class="text-base font-semibold flex items-center gap-2"><Plug class="size-4" /> Invoke Settings</h2>
-                <p class="text-xs text-muted-foreground">{{ selected.functionName }} — configure add-ons and AI settings before invoking</p>
+                <p class="text-xs text-muted-foreground">{{ selected.functionName }} - configure add-ons and AI settings before invoking</p>
               </div>
             </div>
 
@@ -626,7 +626,7 @@ onMounted(async () => { loadDeployments(); loadVaultConfig(); profileState.value
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <!-- Env Vars -->
               <div class="lg:col-span-2 space-y-2">
-                <div class="flex items-center justify-between cursor-pointer select-none" @click="envVarsCollapsed = !envVarsCollapsed; localStorage.setItem('mk:envCollapsed', String(envVarsCollapsed))">
+                <div class="flex items-center justify-between cursor-pointer select-none" @click="envVarsCollapsed = !envVarsCollapsed; try { localStorage.setItem('mk:envCollapsed', String(envVarsCollapsed)) } catch {}">
                   <label class="text-sm font-medium flex items-center gap-2 cursor-pointer">
                     Environment Variables
                     <Badge variant="outline" class="text-[10px]">{{ deployEnvVars.length }}</Badge>

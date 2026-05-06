@@ -30,7 +30,7 @@ const kiroAvailable = inject<import("vue").Ref<boolean>>("kiroAvailable", ref(fa
 const toastMsg = ref("");
 const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
 const confettiEnabled = ref(true);
-onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onWorkflow; } catch {} });
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled !== false && s.confetti?.onWorkflow !== false; } catch {} });
 const toastType = ref<"warning" | "success">("warning");
 const route = useRoute();
 function showToast(msg: string, type: "warning" | "success" = "warning") { toastMsg.value = msg; toastType.value = type; setTimeout(() => toastMsg.value = "", 3000); }
@@ -120,8 +120,12 @@ function startNewWorkflow() {
 }
 
 async function editWorkflow(wf: BatchWorkflow) {
+  if (activeWfEventSource) { activeWfEventSource.close(); activeWfEventSource = null; }
+  if (activeWfAbort && wf.id !== runningWorkflowId.value) { activeWfAbort.abort(); activeWfAbort = null; }
+  currentWfRunId.value = "";
   selectedWorkflowId.value = wf.id;
-  workflowLogs.value = [];
+  workflowLogs.value = []; wfBuildComplete.value = false;
+  workflowRunning.value = (wf.id === runningWorkflowId.value && !!runningWorkflowId.value);
   openConsoleTabs.value = []; activeConsoleTab.value = "all"; consolePanelCollapsed.value = true;
   if (wf.type === 'scratch' && !wf.complete) {
     try { const r = await fetch(`/api/batch-workflows/${wf.id}/effective-compose`); const { content } = await r.json(); composeYaml.value = content || ""; } catch { composeYaml.value = ""; }
@@ -134,6 +138,8 @@ async function editWorkflow(wf: BatchWorkflow) {
   editorMode.value = true;
   composeStudioMode.value = false;
   syncFlowFromWorkflow();
+  await nextTick();
+  loadWorkflowLogs(wf.id);
 }
 
 function createAndProceed() {
@@ -263,7 +269,7 @@ async function switchToCodeMode() {
 
 async function handleComposeApply(yamlStr: string) {
   if (!selectedWorkflow.value) return;
-  if (!yamlStr.trim()) { showToast("The compose file is empty — write or generate a compose first", "warning"); return; }
+  if (!yamlStr.trim()) { showToast("The compose file is empty - write or generate a compose first", "warning"); return; }
   try {
     if (!/^services:/m.test(yamlStr)) {
       showToast("The compose file must have a 'services' section", "warning"); return;
@@ -418,6 +424,10 @@ function onOpenConsole(containerName: string) {
 }
 provide("onOpenConsole", onOpenConsole);
 
+const wfBuildLogs = computed(() => workflowLogs.value.filter(l => (l as any).phase === "build"));
+const wfRunLogs = computed(() => workflowLogs.value.filter(l => (l as any).phase === "run"));
+const wfActiveLogTab = ref<"build" | "run">("build");
+
 const activeTabLogs = computed(() => {
   if (activeConsoleTab.value === "all") return workflowLogs.value;
   return workflowLogs.value.filter(l => l.container === activeConsoleTab.value).map(l => ({ ...l, line: l.line.replace(/^\S+\s+\|\s+/, "") }));
@@ -460,20 +470,29 @@ const showMoreMenu = ref(false);
 const workflowLogSection = ref<HTMLElement | null>(null);
 const workflowStopping = ref(false);
 const workflowLogs = ref<{ line: string; container?: string }[]>([]);
+const wfBuildComplete = ref(false);
+let activeWfEventSource: EventSource | null = null;
+let activeWfAbort: AbortController | null = null;
+const runningWorkflowId = ref("");
+const currentWfRunId = ref("");
 const portRemaps = ref<any[]>([]);
 const selectedNodeContainer = ref("");
 const filteredLogs = computed(() => selectedNodeContainer.value ? workflowLogs.value.filter(l => l.container === selectedNodeContainer.value) : workflowLogs.value);
 
 async function runWorkflow() {
   if (!selectedWorkflow.value?.composePath) return;
+  if (activeWfEventSource) { activeWfEventSource.close(); activeWfEventSource = null; }
+  if (activeWfAbort) { activeWfAbort.abort(); activeWfAbort = null; }
+  activeWfAbort = new AbortController();
+  runningWorkflowId.value = selectedWorkflow.value.id;
   workflowRunning.value = true; workflowLogs.value = []; portRemaps.value = []; selectedNodeContainer.value = "";
-  consolePanelCollapsed.value = false; activeConsoleTab.value = "all";
+  consolePanelCollapsed.value = false; activeConsoleTab.value = rebuildImages.value ? "build" : "all"; wfBuildComplete.value = false;
   await nextTick();
   workflowLogSection.value?.scrollIntoView({ behavior: "smooth" });
   for (const n of flowNodes.value) n.data = { ...n.data, status: "idle" };
   try {
     const res = await fetch("/api/batch-runs/workflow", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: activeWfAbort!.signal,
       body: JSON.stringify({ workflowId: selectedWorkflow.value.id, composePath: (selectedWorkflow.value as any).composePath, originalProjectPath: (selectedWorkflow.value as any).originalComposePath ? (selectedWorkflow.value as any).originalComposePath.replace(/[/\\][^/\\]+$/, '') : undefined, rebuild: rebuildImages.value, portRemap: wfPortRemap.value }),
     });
     const reader = res.body!.getReader();
@@ -490,7 +509,9 @@ async function runWorkflow() {
         if (line.startsWith("event: ")) event = line.slice(7);
         else if (line.startsWith("data: ")) {
           const data = JSON.parse(line.slice(6));
-          if (event === "log") workflowLogs.value.push(data);
+          if (event === "run-id") { currentWfRunId.value = data.runId; }
+          else if (event === "log") { if (!currentWfRunId.value || currentWfRunId.value === data.runId || !data.runId) workflowLogs.value.push({ ...data, phase: wfBuildComplete.value ? "run" : "build" }); }
+          else if (event === "build-complete") { wfBuildComplete.value = true; activeConsoleTab.value = "all"; }
           else if (event === "status") {
             const match = flowNodes.value.find(n => n.data.label === data.container || data.container?.endsWith(n.data.label) || data.container?.includes(n.data.label));
             if (match) {
@@ -499,13 +520,14 @@ async function runWorkflow() {
             }
           }
           else if (event === "remaps") portRemaps.value = data;
-          else if (event === "complete") { showToast("Workflow completed", "success"); if (confettiEnabled.value && flowNodes.value.every(n => n.data?.status === "exited" || n.data?.status === "healthy")) confettiRef.value?.fire(); }
+          else if (event === "complete") { showToast("Workflow completed", "success"); if (confettiEnabled.value) confettiRef.value?.fire(); }
           else if (event === "error") showToast(data.message || "Workflow failed", "warning");
         }
       }
     }
-  } catch (e: any) { showToast(e.message, "warning"); }
-  workflowRunning.value = false;
+  } catch (e: any) { if (e.name !== 'AbortError') showToast(e.message, "warning"); }
+  if (selectedWorkflow.value?.id === runningWorkflowId.value) workflowRunning.value = false;
+  runningWorkflowId.value = ""; activeWfAbort = null;
 }
 
 async function stopWorkflow() {
@@ -515,6 +537,70 @@ async function stopWorkflow() {
   workflowRunning.value = false;
   workflowStopping.value = false;
   showToast("Workflow stopped", "success");
+  // Reload to get cancelled statuses
+  if (selectedWorkflow.value) {
+    try {
+      const r = await fetch(`/api/batch-runs/workflow/logs/${selectedWorkflow.value.id}`);
+      const data = await r.json();
+      if (data.found && data.statuses) {
+        for (const [container, status] of Object.entries(data.statuses)) {
+          const match = flowNodes.value.find(n => n.data.label === container || container?.endsWith(n.data.label) || (container as string)?.includes(n.data.label));
+          if (match) { const vfNode = findNode(match.id); if (vfNode) vfNode.data = { ...vfNode.data, status }; }
+        }
+      }
+    } catch {}
+  }
+}
+
+
+async function loadWorkflowLogs(wfId: string) {
+  try {
+    const r = await fetch(`/api/batch-runs/workflow/logs/${wfId}`);
+    const data = await r.json();
+    if (!data.found) return;
+    workflowLogs.value = data.logs || [];
+    wfBuildComplete.value = data.buildComplete || false;
+    portRemaps.value = data.remaps || [];
+    consolePanelCollapsed.value = false;
+    // Restore node statuses
+    if (data.statuses) {
+      for (const [container, status] of Object.entries(data.statuses)) {
+        const match = flowNodes.value.find(n => n.data.label === container || container?.endsWith(n.data.label) || container?.includes(n.data.label));
+        if (match) {
+          const vfNode = findNode(match.id);
+          if (vfNode) vfNode.data = { ...vfNode.data, status };
+        }
+      }
+    }
+    if (data.running) {
+      workflowRunning.value = true;
+      activeConsoleTab.value = wfBuildComplete.value ? "all" : "build";
+      // Resume SSE stream
+      if (activeWfEventSource) { activeWfEventSource.close(); activeWfEventSource = null; }
+      const es = new EventSource(`/api/batch-runs/workflow/logs/${wfId}/stream`);
+      activeWfEventSource = es;
+      es.addEventListener("log", (e) => { workflowLogs.value.push({ ...JSON.parse(e.data), phase: wfBuildComplete.value ? "run" : "build" }); });
+      es.addEventListener("build-complete", () => { wfBuildComplete.value = true; activeConsoleTab.value = "all"; });
+      es.addEventListener("status", (e) => {
+        const data = JSON.parse(e.data);
+        const match = flowNodes.value.find(n => n.data.label === data.container || data.container?.endsWith(n.data.label) || data.container?.includes(n.data.label));
+        if (match) { const vfNode = findNode(match.id); if (vfNode) vfNode.data = { ...vfNode.data, status: data.status }; }
+      });
+      es.addEventListener("remaps", (e) => { portRemaps.value = JSON.parse(e.data); });
+      es.addEventListener("complete", (e) => { showToast("Workflow completed", "success"); workflowRunning.value = false; es.close(); activeWfEventSource = null; if (confettiEnabled.value) confettiRef.value?.fire(); });
+      es.addEventListener("error", () => { workflowRunning.value = false; es.close(); activeWfEventSource = null; });
+      es.onerror = () => { workflowRunning.value = false; es.close(); activeWfEventSource = null; };
+    } else {
+      activeConsoleTab.value = "all";
+    }
+  } catch {}
+}
+
+async function deleteWorkflowLogs() {
+  if (!selectedWorkflow.value) return;
+  await fetch(`/api/batch-runs/workflow/logs/${selectedWorkflow.value.id}`, { method: "DELETE" });
+  workflowLogs.value = []; openConsoleTabs.value = []; wfBuildComplete.value = false; portRemaps.value = [];
+  for (const n of flowNodes.value) n.data = { ...n.data, status: "idle" };
 }
 
 function onNodeClick(nodeId: string) {
@@ -582,7 +668,7 @@ onMounted(async () => {
       </template>
     </div>
 
-    <!-- Step 0: Landing — Workflow List -->
+    <!-- Step 0: Landing - Workflow List -->
     <div v-if="wizardStep === 0" class="space-y-4">
       <div class="flex items-center justify-between">
         <div>
@@ -798,10 +884,13 @@ onMounted(async () => {
         <button class="w-full flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted/80 transition-colors cursor-pointer" @click="consolePanelCollapsed = !consolePanelCollapsed">
           <component :is="consolePanelCollapsed ? ChevronRight : ChevronDown" class="size-3.5 text-muted-foreground" />
           <span class="text-xs font-medium">Consoles</span>
+          <button v-if="workflowLogs.length && !workflowRunning" class="ml-auto text-[10px] text-muted-foreground hover:text-red-500 cursor-pointer" @click.stop="deleteWorkflowLogs">Delete latest run</button>
           <Badge variant="secondary" class="text-[10px]">{{ openConsoleTabs.length + 1 }}</Badge>
         </button>
         <div v-if="!consolePanelCollapsed">
           <div class="flex items-center gap-0.5 px-2 py-1 border-t bg-background overflow-x-auto">
+            <button v-if="rebuildImages && (wfBuildLogs.length || (workflowRunning && !wfBuildComplete))" class="flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer whitespace-nowrap" :class="activeConsoleTab === 'build' ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'" @click="activeConsoleTab = 'build'">Build</button>
+            <div v-if="rebuildImages && (wfBuildLogs.length || (workflowRunning && !wfBuildComplete))" class="w-px h-4 bg-border mx-0.5"></div>
             <button class="flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer whitespace-nowrap" :class="activeConsoleTab === 'all' ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'" @click="activeConsoleTab = 'all'">All</button>
             <button v-for="tab in openConsoleTabs" :key="tab" class="flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer whitespace-nowrap" :class="activeConsoleTab === tab ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'" @click="activeConsoleTab = tab">
               {{ tab }}
@@ -809,7 +898,8 @@ onMounted(async () => {
             </button>
           </div>
           <div class="border-t">
-            <LogViewer v-if="activeConsoleTab === 'all'" :logs="workflowLogs.map(l => l.line)" :loading="workflowRunning" loading-text="Starting workflow..." empty-text="Workflow output will appear here" />
+            <LogViewer v-if="activeConsoleTab === 'build'" :logs="wfBuildLogs.map(l => l.line)" :loading="workflowRunning && !wfBuildComplete" loading-text="Building JAR and Docker image..." empty-text="Build output will appear here" />
+            <LogViewer v-else-if="activeConsoleTab === 'all'" :logs="(rebuildImages ? wfRunLogs : workflowLogs).map(l => l.line)" :loading="workflowRunning && wfBuildComplete" loading-text="Starting containers..." empty-text="Workflow output will appear here" />
             <LogViewer v-else :logs="activeTabLogs.map(l => l.line)" :loading="workflowRunning" loading-text="Starting workflow..." empty-text="No output for this container yet" :root-cause-lines="activeTabRootCause" :kiro-available="kiroAvailable" :ai-explaining="aiExplaining" :ai-explanation="aiExplanation" @explain="explainContainerErrors" />
           </div>
         </div>
@@ -907,7 +997,7 @@ onMounted(async () => {
       {{ toastMsg }}
     </div>
   </div>
-
+  <ParticleBurst ref="confettiRef" />
 </template>
 
 <style>

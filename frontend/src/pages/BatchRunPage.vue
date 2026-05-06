@@ -134,11 +134,12 @@ async function savePreset(presetId: string) {
 
 // Run
 const simpleRunning = ref(false);
+const currentRunId = ref("");
 const rebuildImage = ref(true);
 const portRemapEnabled = ref(true);
 const confettiRef = ref<InstanceType<typeof ParticleBurst>>();
 const confettiEnabled = ref(true);
-onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled && s.confetti?.onBatch; } catch {} });
+onMounted(async () => { try { const s = await (await fetch("/api/settings")).json(); confettiEnabled.value = s.confetti?.enabled !== false && s.confetti?.onBatch !== false; } catch {} });
 const simpleLogs = ref<{ line: string }[]>([]);
 const showAllLogs = ref(false);
 const activeLogTab = ref<"build" | "run">("build");
@@ -199,7 +200,7 @@ async function explainBatchError() {
 
 async function runSimple() {
   if (!project.value) return;
-  simpleRunning.value = true; simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; portRemaps.value = []; buildPhaseComplete.value = false; activeLogTab.value = rebuildImage.value ? "build" : "run";
+  simpleRunning.value = true; simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; portRemaps.value = []; buildPhaseComplete.value = false; currentRunId.value = ""; activeLogTab.value = rebuildImage.value ? "build" : "run";
   await nextTick();
   logSection.value?.scrollIntoView({ behavior: "smooth" });
   try {
@@ -221,9 +222,10 @@ async function runSimple() {
         if (line.startsWith("event: ")) event = line.slice(7);
         else if (line.startsWith("data: ")) {
           const data = JSON.parse(line.slice(6));
-          if (event === "log") { simpleLogs.value.push(data); if (!buildPhaseComplete.value && (data.line?.startsWith("$ cd ") || data.line?.startsWith("$ docker compose"))) { buildPhaseComplete.value = true; activeLogTab.value = "run"; } }
+          if (event === "run-id") { currentRunId.value = data.runId; }
+          else if (event === "log") { simpleLogs.value.push(data); if (!buildPhaseComplete.value && (data.line?.startsWith("$ cd ") || data.line?.startsWith("$ docker compose"))) { buildPhaseComplete.value = true; activeLogTab.value = "run"; } }
           else if (event === "remaps") portRemaps.value = data;
-          else if (event === "complete") simpleResult.value = data;
+          else if (event === "complete") { simpleResult.value = data; if (confettiEnabled.value) confettiRef.value?.fire(); }
           else if (event === "error") { simpleError.value = data.message || `Exit code: ${data.exitCode}`; simpleResult.value = data; }
         }
       }
@@ -240,6 +242,42 @@ async function teardown() {
 async function stopSimple() {
   await fetch("/api/batch-runs/simple/stop", { method: "POST" });
   simpleRunning.value = false; teardown();
+}
+
+async function loadSimpleLogs() {
+  if (!project.value) return;
+  try {
+    const r = await fetch(`/api/batch-runs/simple/logs/${project.value.id}`);
+    const data = await r.json();
+    if (!data.found) return;
+    simpleLogs.value = data.logs || [];
+    portRemaps.value = data.remaps || [];
+    buildPhaseComplete.value = data.buildComplete || false;
+    if (data.result) simpleResult.value = data.result;
+    if (data.error) simpleError.value = data.error;
+    if (data.running) {
+      simpleRunning.value = true;
+      activeLogTab.value = buildPhaseComplete.value ? "run" : "build";
+      const es = new EventSource(`/api/batch-runs/simple/logs/${project.value.id}/stream`);
+      es.addEventListener("log", (e) => {
+        const d = JSON.parse(e.data);
+        simpleLogs.value.push(d);
+        if (!buildPhaseComplete.value && (d.line?.startsWith("$ cd ") || d.line?.startsWith("$ docker compose"))) { buildPhaseComplete.value = true; activeLogTab.value = "run"; }
+      });
+      es.addEventListener("remaps", (e) => { portRemaps.value = JSON.parse(e.data); });
+      es.addEventListener("complete", (e) => { simpleResult.value = JSON.parse(e.data); simpleRunning.value = false; es.close(); if (confettiEnabled.value) confettiRef.value?.fire(); });
+      es.addEventListener("error", (e) => { try { const d = JSON.parse(e.data); simpleError.value = d.message || "Error"; simpleResult.value = d; } catch {} simpleRunning.value = false; es.close(); });
+      es.onerror = () => { simpleRunning.value = false; es.close(); };
+    } else {
+      activeLogTab.value = "run";
+    }
+  } catch {}
+}
+
+async function deleteSimpleLogs() {
+  if (!project.value) return;
+  await fetch(`/api/batch-runs/simple/logs/${project.value.id}`, { method: "DELETE" });
+  simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; portRemaps.value = []; buildPhaseComplete.value = false;
 }
 
 // Effective config
@@ -305,7 +343,7 @@ let watchReady = false;
 
 onMounted(async () => {
   await loadProject();
-  if (project.value) { loadProjectEnvVars(); loadPresets(); }
+  if (project.value) { loadProjectEnvVars(); loadPresets(); await nextTick(); loadSimpleLogs(); }
   watchSource = new EventSource("/api/batch-builds/watch");
   setTimeout(() => { watchReady = true; }, 1000);
   watchSource.onmessage = (e) => {
@@ -423,7 +461,7 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
         </div>
         <div class="rounded-md bg-muted/30 border border-muted px-3 py-2 text-[11px] text-muted-foreground flex items-start gap-2">
           <Info class="size-3.5 shrink-0 mt-0.5" />
-          <span>By default, the project runs with the env var configuration detected from your compose and .env files. To customize, click <strong>Fork Env Vars</strong> to create a named preset. <span v-if="!activePreset">No preset is active — using scanned defaults.</span><span v-else>Active preset: <strong>{{ activePreset.name }}</strong></span></span>
+          <span>By default, the project runs with the env var configuration detected from your compose and .env files. To customize, click <strong>Fork Env Vars</strong> to create a named preset. <span v-if="!activePreset">No preset is active - using scanned defaults.</span><span v-else>Active preset: <strong>{{ activePreset.name }}</strong></span></span>
         </div>
         <div v-if="!presets.length" class="text-xs text-muted-foreground text-center py-4">No presets yet. Fork the scanned env vars to create one.</div>
         <div v-for="preset in presets" :key="preset.id" class="rounded-lg border">
@@ -477,6 +515,7 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
           <Tooltip v-if="activePreset"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px] text-emerald-500 border-emerald-500/30 gap-1"><Settings2 class="size-2.5" /> {{ activePreset.name }}</Badge></TooltipTrigger><TooltipContent>Running with preset "{{ activePreset.name }}"</TooltipContent></Tooltip>
           <Tooltip v-if="portRemaps.length"><TooltipTrigger as-child><Badge variant="outline" class="text-[10px] text-amber-500 border-amber-500/30 gap-1">{{ portRemaps.length }} port(s) remapped</Badge></TooltipTrigger><TooltipContent>Some ports were in use and were automatically remapped</TooltipContent></Tooltip>
           <div v-if="activeLogTab === 'run' || !rebuildImage" class="ml-auto flex items-center gap-1.5"><span class="text-[10px] text-muted-foreground">All logs</span><Toggle v-model="showAllLogs" /></div>
+          <button v-if="simpleLogs.length && !simpleRunning" class="text-[10px] text-muted-foreground hover:text-red-500 cursor-pointer" :class="{ 'ml-auto': activeLogTab === 'build' && rebuildImage }" @click="deleteSimpleLogs">Delete latest run</button>
         </div>
         <LogViewer v-if="!rebuildImage || activeLogTab === 'run'" :logs="filteredRunLogs" :loading="simpleRunning && buildPhaseComplete" loading-text="Starting containers..." empty-text="Run output will appear here" :root-cause-lines="rootCauseLines" :kiro-available="kiroAvailable" :ai-explaining="aiExplaining" :ai-explanation="aiExplanation" @explain="explainBatchError">
           <template #after-root-cause-mini><p v-if="kiroAvailable" class="mt-2 text-[10px] text-violet-400/60 italic">Expand log to explain with Kiro</p></template>
@@ -557,6 +596,7 @@ watch(selectedCompose, () => { if (project.value) loadProjectEnvVars(); });
     <div v-if="toastMsg" :key="toastMsg" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg animate-in fade-in slide-in-from-bottom-3 duration-300" :class="toastType === 'warning' ? 'bg-amber-600' : 'bg-green-600'">
       <AlertTriangle v-if="toastType === 'warning'" class="size-4" />{{ toastMsg }}
     </div>
+  <ParticleBurst ref="confettiRef" />
   </div>
 </template>
 

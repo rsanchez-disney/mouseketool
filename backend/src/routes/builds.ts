@@ -43,6 +43,42 @@ const SHADE_PLUGIN = `
       </executions>
     </plugin>`;
 
+async function patchLog4j2(jarPath: string, buildDir: string): Promise<void> {
+  const { execFile: ef } = await import("child_process");
+  const { promisify } = await import("util");
+  const { readdirSync, mkdirSync: mkSync, copyFileSync: cpSync } = await import("fs");
+  const execFileAsync = promisify(ef);
+  const tmpFix = join(buildDir, "_mrfix");
+  await mkdir(tmpFix, { recursive: true });
+  const sep = process.platform === "win32" ? ";" : ":";
+
+  // 1. Fix StackLocator (multi-release)
+  try {
+    await execFileAsync("jar", ["xf", jarPath, "META-INF/versions/9/org/apache/logging/log4j/util/StackLocator.class"], { cwd: tmpFix });
+    mkSync(join(tmpFix, "org", "apache", "logging", "log4j", "util"), { recursive: true });
+    cpSync(join(tmpFix, "META-INF", "versions", "9", "org", "apache", "logging", "log4j", "util", "StackLocator.class"), join(tmpFix, "org", "apache", "logging", "log4j", "util", "StackLocator.class"));
+    await execFileAsync("jar", ["uf", jarPath, "org/apache/logging/log4j/util/StackLocator.class"], { cwd: tmpFix });
+  } catch {}
+
+  // 2. Merge Log4j2Plugins.dat
+  try {
+    const mergerSrc = `import org.apache.logging.log4j.core.config.plugins.processor.PluginCache;import java.io.*;import java.net.*;import java.util.*;import java.util.jar.*;public class PluginMerger{public static void main(String[] args)throws Exception{PluginCache cache=new PluginCache();String datPath="META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat";List<URL> urls=new ArrayList<>();for(int i=0;i<args.length-1;i++){try{urls.add(new URL("jar:file:"+args[i]+"!/"+datPath));}catch(Exception e){}}cache.loadCacheFiles(Collections.enumeration(urls));File out=new File(args[args.length-1]);out.getParentFile().mkdirs();try(OutputStream os=new FileOutputStream(out)){cache.writeCache(os);}}}`;
+    await writeFile(join(tmpFix, "PluginMerger.java"), mergerSrc);
+    await execFileAsync("javac", ["-cp", jarPath, "-proc:none", join(tmpFix, "PluginMerger.java")], { cwd: tmpFix });
+    const m2 = join(process.env.USERPROFILE || process.env.HOME || "", ".m2", "repository", "org", "apache", "logging", "log4j", "log4j-core");
+    let log4jJars: string[] = [];
+    try {
+      const findJarsIn = (dir: string): string[] => { const r: string[] = []; for (const e of readdirSync(dir, { withFileTypes: true })) { const p = join(dir, e.name); if (e.isDirectory()) r.push(...findJarsIn(p)); else if (e.name.endsWith(".jar") && !e.name.includes("sources") && !e.name.includes("javadoc")) r.push(p); } return r; };
+      log4jJars = findJarsIn(m2);
+    } catch {}
+    const datOut = join(tmpFix, "META-INF", "org", "apache", "logging", "log4j", "core", "config", "plugins", "Log4j2Plugins.dat");
+    await execFileAsync("java", ["-cp", `${tmpFix}${sep}${jarPath}`, "PluginMerger", jarPath, ...log4jJars, datOut], { cwd: tmpFix });
+    await execFileAsync("jar", ["uf", jarPath, "META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat"], { cwd: tmpFix });
+  } catch {}
+
+  await rm(tmpFix, { recursive: true, force: true });
+}
+
 async function injectShadePlugin(projectPath: string): Promise<string | null> {
   const pomPath = join(projectPath, "pom.xml");
   try {
@@ -97,7 +133,7 @@ router.post("/", (req, res) => {
     if (tool === "maven") {
       send("log", { line: "Checking for shade plugin..." });
       tempPom = await injectShadePlugin(projectPath);
-      if (tempPom) send("log", { line: "Shade plugin not found — injecting into temporary pom." });
+      if (tempPom) send("log", { line: "Shade plugin not found - injecting into temporary pom." });
       else send("log", { line: "Shade plugin already configured." });
     }
 
@@ -149,6 +185,7 @@ router.post("/", (req, res) => {
         rm(`${logFile}.exit`, { force: true }).catch(() => {});
 
         if (exitCode !== 0) { send("error", { message: `Build failed with exit code ${exitCode}` }); finish(); return; }
+        send("phase", { phase: "post-build" });
 
         await mkdir(BUILDS_DIR, { recursive: true });
         const targetDir = tool === "maven" ? join(projectPath, "target") : join(projectPath, "build", "libs");
@@ -160,21 +197,26 @@ router.post("/", (req, res) => {
         await mkdir(buildDir);
         const jarName = jarPath.split(/[/\\]/).pop()!;
         const destJar = join(buildDir, jarName);
+        send("post-log", { line: "Copying artifact to cache..." });
         await copyFile(jarPath, destJar);
 
+        send("post-log", { line: "Patching Log4j2 multi-release classes..." });
         // Fix log4j multi-release: Lambda runtime doesn't load META-INF/versions/9/ classes,
         // so replace the base StackLocator with the Java 9+ (StackWalker) version.
-        // Also merge Log4j2Plugins.dat from all JARs — shade plugin can't do this natively.
+        // Also merge Log4j2Plugins.dat from all JARs - shade plugin can't do this natively.
         try {
-          const { execFileSync } = await import("child_process");
+          const { execFile: ef } = await import("child_process");
+          const { promisify } = await import("util");
+          const execFileAsync = promisify(ef);
           const tmpFix = join(buildDir, "_mrfix");
           await mkdir(tmpFix, { recursive: true });
 
           // 1. Fix StackLocator
-          execFileSync("jar", ["xf", destJar, "META-INF/versions/9/org/apache/logging/log4j/util/StackLocator.class"], { cwd: tmpFix });
+          await execFileAsync("jar", ["xf", destJar, "META-INF/versions/9/org/apache/logging/log4j/util/StackLocator.class"], { cwd: tmpFix });
           await mkdir(join(tmpFix, "org", "apache", "logging", "log4j", "util"), { recursive: true });
           await copyFile(join(tmpFix, "META-INF", "versions", "9", "org", "apache", "logging", "log4j", "util", "StackLocator.class"), join(tmpFix, "org", "apache", "logging", "log4j", "util", "StackLocator.class"));
-          execFileSync("jar", ["uf", destJar, "org/apache/logging/log4j/util/StackLocator.class"], { cwd: tmpFix });
+          send("post-log", { line: "  [OK] StackLocator patched" });
+          await execFileAsync("jar", ["uf", destJar, "org/apache/logging/log4j/util/StackLocator.class"], { cwd: tmpFix });
 
           // 2. Merge Log4j2Plugins.dat using log4j's own PluginCache
           const mergerSrc = `
@@ -203,13 +245,14 @@ public class PluginMerger {
           const { writeFile: wf } = await import("fs/promises");
           await wf(mergerJava, mergerSrc);
           const sep = process.platform === "win32" ? ";" : ":";
-          execFileSync("javac", ["-cp", destJar, "-proc:none", mergerJava], { cwd: tmpFix });
+          send("post-log", { line: "  Compiling plugin merger..." });
+          await execFileAsync("javac", ["-cp", destJar, "-proc:none", mergerJava], { cwd: tmpFix });
 
           // Find log4j-core jar in Maven cache
           const m2 = join(process.env.USERPROFILE || process.env.HOME || "", ".m2", "repository", "org", "apache", "logging", "log4j", "log4j-core");
           let log4jJars: string[] = [];
           try {
-            const { readdirSync } = await import("fs");
+            const { readdirSync } = await import("fs"); // sync is fine for dir listing
             const findJars = (dir: string): string[] => {
               const results: string[] = [];
               for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -223,15 +266,19 @@ public class PluginMerger {
           } catch { /* no m2 cache */ }
 
           const datOut = join(tmpFix, "META-INF", "org", "apache", "logging", "log4j", "core", "config", "plugins", "Log4j2Plugins.dat");
-          execFileSync("java", ["-cp", `${tmpFix}${sep}${destJar}`, "PluginMerger", destJar, ...log4jJars, datOut], { cwd: tmpFix });
-          execFileSync("jar", ["uf", destJar, "META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat"], { cwd: tmpFix });
+          send("post-log", { line: "  Merging Log4j2 plugin caches..." });
+          await execFileAsync("java", ["-cp", `${tmpFix}${sep}${destJar}`, "PluginMerger", destJar, ...log4jJars, datOut], { cwd: tmpFix });
+          await execFileAsync("jar", ["uf", destJar, "META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat"], { cwd: tmpFix });
+          send("post-log", { line: "  [OK] Log4j2 plugins merged" });
 
           await rm(tmpFix, { recursive: true, force: true });
         } catch { /* non-fatal */ }
 
+        send("post-log", { line: "Writing build metadata..." });
         const meta = { id: buildId, projectPath, buildTool: tool, handler: handler || "", jarPath: destJar, createdAt: new Date().toISOString(), projectName: projectPath.split(/[/\\]/).pop() || "unknown" };
         await writeFile(join(buildDir, "meta.json"), JSON.stringify(meta, null, 2));
 
+        send("post-log", { line: "Checking previous environment variables..." });
         // Carry over envvars from previous build of the same project
         try {
           const allBuilds = await readdir(BUILDS_DIR, { withFileTypes: true });
@@ -250,6 +297,7 @@ public class PluginMerger {
         } catch { /* non-fatal */ }
 
 
+        send("post-log", { line: "Scanning for environment variables..." });
         // If no envvars.json yet, detect from SAM template / .env files
         try {
           await readFile(join(buildDir, "envvars.json"), "utf-8");
@@ -261,6 +309,7 @@ public class PluginMerger {
           } catch {}
         }
 
+        send("post-log", { line: "[OK] Build ready for deployment" });
         send("complete", meta);
       } catch (e: any) { send("error", { message: e.message }); }
       finish();
@@ -268,8 +317,8 @@ public class PluginMerger {
   })();
 });
 
-// POST /api/builds/sync — synchronous build for provisioning (blocks until complete)
-// POST /api/builds/sync — synchronous build for provisioning (blocks until complete)
+// POST /api/builds/sync - synchronous build for provisioning (blocks until complete)
+// POST /api/builds/sync - synchronous build for provisioning (blocks until complete)
 router.post("/sync", async (req, res) => {
   const { projectPath, freshClone } = req.body;
   if (!projectPath) return res.status(400).json({ error: "projectPath required" });
@@ -286,7 +335,15 @@ router.post("/sync", async (req, res) => {
   const tool = isMaven ? "maven" : "gradle";
   const isWin = process.platform === "win32";
   const cmd = tool === "maven" ? (isWin ? "mvn.cmd" : "mvn") : (isWin ? "gradle.bat" : "gradle");
-  const args = tool === "maven" ? "package -DskipTests -B -q" : "shadowJar --console=plain -q";
+
+  // Inject shade plugin if missing (same as streaming build)
+  let pomFlag = "";
+  if (isMaven) {
+    const tempPom = await injectShadePlugin(projectPath);
+    if (tempPom) { pomFlag = ` -f .pom-shaded.xml`; console.log(`[profile:build] Shade plugin not found - injecting temporary pom`); }
+  }
+
+  const args = tool === "maven" ? `package -DskipTests -B -q${pomFlag}` : "shadowJar --console=plain -q";
 
   // EXCEPTION: mvn versions:update-parent is the ONLY allowed modification to workspace files.
   let parentUpdated = false;
@@ -294,15 +351,15 @@ router.post("/sync", async (req, res) => {
     console.log(`[profile:build] Running versions:update-parent for freshly cloned project`);
     try {
       await run(`${cmd} versions:update-parent -DgenerateBackupPoms=false -B -q`, { cwd: projectPath, timeout: 60000, env: { ...process.env, TERM: "dumb", NO_COLOR: "1" } });
-      console.log(`[profile:build] ✓ Parent POM updated`); parentUpdated = true;
-    } catch { console.log(`[profile:build] ⚠ versions:update-parent failed, continuing anyway`); }
+      console.log(`[profile:build] [OK] Parent POM updated`); parentUpdated = true;
+    } catch { console.log(`[profile:build] [WARN] versions:update-parent failed, continuing anyway`); }
   }
 
   console.log(`[profile:build] Building ${projectPath} with ${tool}`);
   try {
     await run(`${cmd} ${args}`, { cwd: projectPath, timeout: 300000, env: { ...process.env, TERM: "dumb", NO_COLOR: "1" } });
   } catch (e: any) {
-    console.log(`[profile:build] ✗ Build failed: ${e.message.substring(0, 100)}`);
+    console.log(`[profile:build] [FAIL] Build failed: ${e.message.substring(0, 100)}`);
     return res.status(400).json({ error: "Build failed" });
   }
 
@@ -318,6 +375,12 @@ router.post("/sync", async (req, res) => {
     mkdirSync(buildDir, { recursive: true });
     const jarName = jars[0]!;
     copyFileSync(pjoin(targetDir, jarName), pjoin(buildDir, jarName));
+
+    // Patch Log4j2 (same as streaming build)
+    if (isMaven) {
+      console.log(`[profile:build] Patching Log4j2 multi-release classes...`);
+      try { await patchLog4j2(pjoin(buildDir, jarName), buildDir); console.log(`[profile:build] [OK] Log4j2 patched`); } catch {}
+    }
 
     // Detect handler: SAM template first
     let handler = "";
@@ -344,10 +407,10 @@ router.post("/sync", async (req, res) => {
           if (/implements\s+(RequestHandler|RequestStreamHandler|SQSHandler)/.test(src) || /public\s+\S+\s+handleRequest\s*\(/.test(src)) {
             const pkg = src.match(/^package\s+([\w.]+)\s*;/m);
             const cls = src.match(/public\s+class\s+(\w+)/);
-            if (pkg && cls) { handler = `${pkg[1]}.${cls[1]}::handleRequest`; console.log(`[profile:build] ✓ Detected handler: ${handler}`); break; }
+            if (pkg && cls) { handler = `${pkg[1]}.${cls[1]}::handleRequest`; console.log(`[profile:build] [OK] Detected handler: ${handler}`); break; }
           }
         }
-        if (!handler) console.log(`[profile:build] ⚠ No handler found in ${javaFiles.length} source files`);
+        if (!handler) console.log(`[profile:build] [WARN] No handler found in ${javaFiles.length} source files`);
       }
     }
 
@@ -365,7 +428,7 @@ router.post("/sync", async (req, res) => {
           const content = readFileSync(envPath, "utf-8");
           for (const line of content.split(/\r?\n/)) {
             const m = line.match(/^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)/);
-            if (m) envVars.push({ key: m[1], value: m[2].replace(/^["\']+|["\']+$/g, "") });
+            if (m) envVars.push({ key: m[1], value: m[2].replace(/\s+#.*$/, "").replace(/^["']+|["']+$/g, "").trim() });
           }
           if (envVars.length) { envSource = ef; break; }
         }
@@ -388,7 +451,7 @@ router.post("/sync", async (req, res) => {
                 const lineIndent = line.match(/^(\s*)/)?.[1].length || 0;
                 if (lineIndent <= baseIndent) break;
                 const m = line.match(/^\s+(\w+):\s*(.*)/);
-                if (m && m[1] !== "Variables") envVars.push({ key: m[1], value: m[2].replace(/^["\']+ |["\']+ $/g, "").replace(/^!Ref\s+/, "") });
+                if (m && m[1] !== "Variables") envVars.push({ key: m[1], value: m[2].replace(/\s+#.*$/, "").replace(/^["']+|["']+$/g, "").replace(/^!Ref\s+/, "").trim() });
               }
             }
             if (envVars.length) { envSource = sp; break; }
@@ -416,7 +479,7 @@ router.post("/sync", async (req, res) => {
       }
       if (envVars.length) {
         writeFileSync(pjoin(buildDir, "envvars.json"), JSON.stringify({ vars: envVars, source: envSource }));
-        console.log(`[profile:build] ✓ Detected ${envVars.length} env vars from ${envSource}`);
+        console.log(`[profile:build] [OK] Detected ${envVars.length} env vars from ${envSource}`);
       }
     } catch {}
     writeFileSync(pjoin(buildDir, "meta.json"), JSON.stringify({
@@ -424,7 +487,7 @@ router.post("/sync", async (req, res) => {
       createdAt: new Date().toISOString(), projectName
     }));
 
-    console.log(`[profile:build] ✓ Built ${projectName} → ${buildId} (handler: ${handler || "none"})`);
+    console.log(`[profile:build] [OK] Built ${projectName} -> ${buildId} (handler: ${handler || "none"})`);
     res.json({ buildId, handler, projectName, jarPath: pjoin(buildDir, jarName), parentUpdated });
   } catch (e: any) {
     res.status(400).json({ error: e.message });

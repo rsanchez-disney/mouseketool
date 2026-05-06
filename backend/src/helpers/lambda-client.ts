@@ -10,7 +10,7 @@ export async function getLambdaClient(): Promise<LambdaClient> {
     credentials: { accessKeyId: s.aws.accessKeyId, secretAccessKey: s.aws.secretAccessKey },
     requestHandler: new NodeHttpHandler({
       connectionTimeout: 10000,
-      requestTimeout: 600000, // 10 min — Java Lambdas can be slow on cold start
+      requestTimeout: 600000, // 10 min - Java Lambdas can be slow on cold start
     }),
   });
 }

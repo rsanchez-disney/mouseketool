@@ -7,7 +7,7 @@ import { HelpCircle, Pencil, Trash2, Loader2, CheckCircle2, XCircle, Circle, Ter
 
 const props = defineProps<{
   id: string;
-  data: { label: string; imageName?: string; envCount?: number; command?: string; status?: "idle" | "running" | "success" | "error" | "unknown" };
+  data: { label: string; imageName?: string; envCount?: number; command?: string; status?: "idle" | "running" | "success" | "error" | "cancelled" | "unknown" };
 }>();
 
 const onEditNode = inject<(id: string) => void>("onEditNode", () => {});
@@ -19,6 +19,7 @@ const nodeClass = computed(() => {
     case "running": return "border-amber-500 bg-amber-100 dark:bg-amber-500/20 shadow-amber-500/20 shadow-md";
     case "success": return "border-emerald-500 bg-emerald-100 dark:bg-emerald-500/20 shadow-emerald-500/20 shadow-md";
     case "error": return "border-red-500 bg-red-100 dark:bg-red-500/20 shadow-red-500/20 shadow-md";
+    case "cancelled": return "border-red-400 bg-red-50 dark:bg-red-500/10 shadow-red-400/10 shadow-md";
     case "unknown": return "border-zinc-400 bg-zinc-100 dark:bg-zinc-500/20 shadow-zinc-400/20 shadow-md animate-pulse";
     default: return "border-primary/30 bg-background hover:border-primary/60";
   }
@@ -36,7 +37,7 @@ const nodeClass = computed(() => {
       <div class="flex items-center gap-1.5 min-w-0">
         <Loader2 v-if="data.status === 'running'" class="size-3.5 text-amber-500 animate-spin shrink-0" />
         <CheckCircle2 v-else-if="data.status === 'success'" class="size-3.5 text-emerald-500 shrink-0" />
-        <XCircle v-else-if="data.status === 'error'" class="size-3.5 text-red-500 shrink-0" />
+        <XCircle v-else-if="data.status === 'error' || data.status === 'cancelled'" class="size-3.5 text-red-500 shrink-0" />
         <Circle v-else class="size-3.5 text-muted-foreground/40 shrink-0" />
         <span class="text-sm font-medium truncate">{{ data.label }}</span>
       </div>
@@ -50,6 +51,7 @@ const nodeClass = computed(() => {
     </div>
     <p v-if="data.imageName" class="text-[10px] text-muted-foreground truncate mt-0.5">{{ data.imageName }}</p>
     <div class="flex items-center gap-1.5 mt-1.5">
+      <Badge v-if="data.status === 'cancelled'" class="text-[9px] px-1 py-0 bg-red-500/10 text-red-500 border-red-500/20">Cancelled</Badge>
       <Badge v-if="data.envCount" variant="outline" class="text-[9px] px-1 py-0">{{ data.envCount }} vars</Badge>
       <Badge v-if="data.command" variant="outline" class="text-[9px] px-1 py-0">cmd</Badge>
     </div>

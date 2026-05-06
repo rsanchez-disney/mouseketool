@@ -46,7 +46,7 @@ function lineClass(line: string, i: number, search: string): string {
   return "text-zinc-400";
 }
 
-// State — expanded supports v-model:expanded from parent
+// State - expanded supports v-model:expanded from parent
 const expanded = defineModel<boolean>("expanded", { default: false });
 const searchOpen = ref(false);
 const logSearch = ref("");

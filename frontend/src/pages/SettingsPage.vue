@@ -8,9 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import Toggle from "@/components/ui/Toggle.vue";
 import FolderBrowser from "@/components/FolderBrowser.vue";
-import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, ChevronDown, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container, Palette, UserCircle, FolderOpen, Download, Hammer, Workflow } from "lucide-vue-next";
+import { Save, Check, Loader2, AlertTriangle, RotateCcw, Power, Square, ChevronLeft, ChevronRight, ChevronDown, Server, KeyRound, Trash2, Clock, Cpu, Flame, Sparkles, Container, Palette, UserCircle, FolderOpen, Download, Hammer, Workflow, Info, ArrowUpCircle } from "lucide-vue-next";
 
-const tab = ref<"connection" | "lambda" | "builds" | "pipelines" | "ai" | "workflows" | "ui" | "profile">("connection");
+const tab = ref<"connection" | "lambda" | "builds" | "pipelines" | "ai" | "workflows" | "ui" | "profile" | "about">("connection");
 const _route = useRoute();
 const tabs = [
   { id: "connection" as const, label: "Connection", icon: Server },
@@ -21,6 +21,7 @@ const tabs = [
   { id: "workflows" as const, label: "Workflows", icon: Container },
   { id: "ui" as const, label: "UI", icon: Palette },
   { id: "profile" as const, label: "Profile", icon: UserCircle },
+  { id: "about" as const, label: "About", icon: Info },
 ];
 if (_route.query.tab && tabs.some(t => t.id === _route.query.tab)) tab.value = _route.query.tab as typeof tab.value;
 
@@ -65,6 +66,8 @@ const provisioningSteps = ref<{ label: string; status: "pending" | "running" | "
 const buildPanel = ref<{ name: string; status: "building" | "done" | "error" }[]>([]);
 const buildPanelOpen = ref(true);
 const lsHealthy = ref(false);
+const appVersion = ref("");
+const updateInfo = inject<{ updateAvailable: any; updateLatest: any; updateUrl: any }>("updateInfo", { updateAvailable: ref(false), updateLatest: ref(""), updateUrl: ref("") });
 
 const saved = ref(false);
 const toast = ref("");
@@ -78,6 +81,7 @@ onMounted(async () => {
   if (merged.localstackManaged) connMode.value = 'managed';
   checkDocker(); checkLsStatus();
   settings.value = merged;
+  try { const v = await (await fetch("/api/version")).json(); appVersion.value = v.version; } catch {}
 });
 
 
@@ -311,7 +315,7 @@ async function unloadProfile() {
     <div v-show="tab === 'connection'" class="space-y-6">
       <!-- Section selector -->
       <div class="flex gap-2">
-        <button @click="connMode = 'manual'" :disabled="lsManaged" :class="['flex-1 rounded-lg border px-4 py-3 text-left transition-all', connMode === 'manual' && !lsManaged ? 'border-primary/50 bg-primary/5 cursor-pointer' : lsManaged ? 'border-white/10 opacity-30 cursor-not-allowed' : 'border-white/10 opacity-50 cursor-pointer']">
+        <button @click="connMode = 'manual'" :class="['flex-1 rounded-lg border px-4 py-3 text-left transition-all cursor-pointer', connMode === 'manual' ? 'border-primary/50 bg-primary/5' : 'border-white/10 opacity-50']">
           <p class="text-sm font-medium">Manual</p>
           <p class="text-[11px] text-muted-foreground mt-0.5">Configure endpoint and credentials manually.</p>
         </button>
@@ -342,7 +346,7 @@ async function unloadProfile() {
                       <h2 class="text-sm font-medium">Managed LocalStack Instance</h2>
                       <p class="text-[11px] text-muted-foreground mt-0.5">Let Mouseketool manage a LocalStack container for you via Docker.</p>
                     </div>
-                    <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="lsManaged" @update:model-value="toggleManaged" :disabled="!dockerAvailable || portInUse || lsStatus === 'running' || lsStarting" /></span></TooltipTrigger><TooltipContent>{{ lsStarting ? "Can't disable while the container is starting" : lsStatus === "running" ? "Stop the container before disabling" : !dockerAvailable ? "Docker not detected" : portInUse ? "Port 4566 in use" : "Enable managed LocalStack" }}</TooltipContent></Tooltip>
+                    <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="lsManaged" @update:model-value="toggleManaged" :disabled="!dockerAvailable || lsStatus === 'running' || lsStarting" /></span></TooltipTrigger><TooltipContent>{{ lsStarting ? "Can't disable while the container is starting" : lsStatus === "running" ? "Stop the container before disabling" : !dockerAvailable ? "Docker not detected" : "Enable managed LocalStack" }}</TooltipContent></Tooltip>
                   </div>
                   <div v-if="!dockerAvailable" class="text-[11px] text-amber-500 flex items-center gap-1.5 mt-3"><AlertTriangle class="size-3" /> Docker not detected. Install Docker to enable this feature.</div>
                   <div v-if="dockerAvailable && portInUse && !lsManaged" class="text-[11px] text-amber-500 flex items-center gap-1.5 mt-3"><AlertTriangle class="size-3" /> Port 4566 is already in use.</div>
@@ -377,7 +381,7 @@ async function unloadProfile() {
                   <div class="flex items-center justify-between mb-3">
                     <div>
                       <h2 class="text-sm font-medium flex items-center gap-2">Managed MiniStack Instance <span class="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-medium">Coming soon</span></h2>
-                      <p class="text-[11px] text-muted-foreground mt-0.5">MIT-licensed AWS emulator — free forever, no account required.</p>
+                      <p class="text-[11px] text-muted-foreground mt-0.5">MIT-licensed AWS emulator - free forever, no account required.</p>
                     </div>
                     <Tooltip><TooltipTrigger as-child><span class="inline-flex"><Toggle :model-value="false" disabled /></span></TooltipTrigger><TooltipContent>Coming in a future release</TooltipContent></Tooltip>
                   </div>
@@ -387,7 +391,7 @@ async function unloadProfile() {
                       <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">Image Size</p><p class="font-mono mt-0.5">~270 MB</p></div>
                       <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">RAM at Idle</p><p class="font-mono mt-0.5">~21 MB</p></div>
                       <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">Startup</p><p class="font-mono mt-0.5">&lt; 2 seconds</p></div>
-                      <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">License</p><p class="font-mono mt-0.5">MIT — Free forever</p></div>
+                      <div class="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2"><p class="text-muted-foreground">License</p><p class="font-mono mt-0.5">MIT - Free forever</p></div>
                     </div>
                     <p class="text-[10px] text-muted-foreground">Drop-in LocalStack replacement with 40+ AWS services. No account, no API key, no telemetry.</p>
                   </div>
@@ -621,7 +625,7 @@ async function unloadProfile() {
     <!-- Destructive Load Modal -->
     <div v-if="showDestructiveModal" class="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 animate-in fade-in duration-200">
       <div class="bg-background border rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 space-y-4 animate-in zoom-in-95 duration-200">
-        <h2 class="text-lg font-semibold">Load Profile — Clean Slate Required</h2>
+        <h2 class="text-lg font-semibold">Load Profile - Clean Slate Required</h2>
         <p class="text-sm text-muted-foreground">Loading a profile will delete all existing resources in LocalStack to ensure a clean workspace. This includes:</p>
         <ul class="text-xs text-muted-foreground space-y-1 pl-4 list-disc">
           <li>All deployed Lambda functions</li>
@@ -705,6 +709,32 @@ async function unloadProfile() {
       </div>
     </div>
 
+    <!-- About Tab -->
+    <div v-show="tab === 'about'" class="space-y-6">
+      <div class="flex items-center gap-4">
+        <div class="flex aspect-square size-16 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="size-8 fill-current"><circle cx="50" cy="60" r="35"/><circle cx="22" cy="28" r="20"/><circle cx="78" cy="28" r="20"/></svg>
+        </div>
+        <div>
+          <h2 class="text-xl font-bold">Mouseketool</h2>
+          <p class="text-sm text-muted-foreground">Developer Workbench</p>
+          <p class="text-sm font-mono mt-1">v{{ appVersion }}</p>
+        </div>
+      </div>
+      <div v-if="updateInfo.updateAvailable.value" class="flex items-center gap-3 p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
+        <ArrowUpCircle class="size-5 text-emerald-500 shrink-0" />
+        <div class="flex-1">
+          <p class="text-sm font-medium">Update available: v{{ updateInfo.updateLatest.value }}</p>
+          <p class="text-xs text-muted-foreground mt-0.5">A newer version of Mouseketool is available.</p>
+        </div>
+        <a :href="updateInfo.updateUrl.value" target="_blank" class="text-xs font-medium text-emerald-500 hover:underline cursor-pointer">Download</a>
+      </div>
+      <div v-else class="flex items-center gap-2 text-sm text-muted-foreground"><Check class="size-4 text-emerald-500" /> You're on the latest version.</div>
+      <div class="space-y-2 text-sm text-muted-foreground">
+        <p>Build, deploy, and test Java Lambda functions on LocalStack from a single UI.</p>
+        <p class="text-xs">Internal tool - not for public distribution.</p>
+      </div>
+    </div>
 
     <FolderBrowser v-model="showProfileBrowser" title="Select Workspace Directory" description="Navigate to the root folder where your team repositories are cloned." @select="selectWorkspace" />
     <div v-if="toast" class="fixed bottom-6 right-6 z-[100] flex items-center gap-2 text-sm text-white rounded-lg px-4 py-3 shadow-lg bg-green-600 animate-in fade-in slide-in-from-bottom-3 duration-300">{{ toast }}</div>

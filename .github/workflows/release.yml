@@ -1,0 +1,86 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "*.md"
+      - "temp-docs/**"
+      - "playwright-tests/**"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root dependencies
+        run: cd desktop && npm install
+
+      - name: Install backend dependencies
+        run: cd backend && npm ci
+
+      - name: Install frontend dependencies
+        run: cd frontend && npm ci
+
+      - name: Install electron dependencies
+        run: cd desktop/electron && npm install
+
+      - name: Build all
+        run: cd desktop && npm run build:all
+
+      - name: Package (${{ matrix.platform }})
+        run: cd desktop && npx electron-builder --${{ matrix.platform }} --config electron-builder.yml --publish never
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mouseketool-${{ matrix.platform }}
+          path: desktop/release/*.*
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mouseketool-win
+          path: artifacts/
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mouseketool-mac
+          path: artifacts/
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p \"require('./desktop/package.json').version\")" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Mouseketool v${{ steps.version.outputs.version }}
+          draft: true
+          files: artifacts/*

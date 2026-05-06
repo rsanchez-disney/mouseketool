@@ -9,7 +9,7 @@ import { formatAwsError } from "../helpers/aws-error.js";
 
 const router = Router();
 
-// GET /api/deploy/check/:name — check if Lambda function exists
+// GET /api/deploy/check/:name - check if Lambda function exists
 router.get("/check/:name", async (req, res) => {
   try {
     const client = await getLambdaClient();

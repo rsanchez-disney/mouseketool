@@ -7,7 +7,7 @@ import { formatAwsError } from "../helpers/aws-error.js";
 
 const router = Router();
 
-// GET /api/sqs/queues — list all queues with attributes
+// GET /api/sqs/queues - list all queues with attributes
 router.get("/queues", async (_req, res) => {
   try {
     const client = await getSqsClient();
@@ -36,7 +36,7 @@ router.get("/queues", async (_req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// POST /api/sqs/queues — create a new queue
+// POST /api/sqs/queues - create a new queue
 router.post("/queues", async (req, res) => {
   const { queueName: rawName, createDlq, maxReceiveCount } = req.body;
   const queueName = rawName?.trim();

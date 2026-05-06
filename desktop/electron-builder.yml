@@ -1,0 +1,46 @@
+appId: com.mouseketool.app
+productName: Mouseketool
+directories:
+  output: release
+
+files:
+  - electron/dist/**/*
+  - "!node_modules"
+
+asar: false
+
+extraResources:
+  - from: ../backend/dist
+    to: backend/dist
+  - from: ../backend/node_modules
+    to: backend/node_modules
+  - from: ../backend/package.json
+    to: backend/package.json
+  - from: ../backend/templates
+    to: backend/templates
+  - from: ../backend/profiles
+    to: backend/profiles
+  - from: ../frontend/dist
+    to: frontend/dist
+  - from: assets/icon.ico
+    to: icon.ico
+
+win:
+  target: nsis
+  icon: assets/icon.ico
+  sign: false
+  artifactName: mouseketool_v${version}.${ext}
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: assets/icon.png
+  sign: false
+  artifactName: mouseketool_v${version}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
