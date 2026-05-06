@@ -1,7 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+backend/dist/
+frontend/dist/
+
+# Electron build output
+release/
+desktop/release/
+desktop/node_modules/
+desktop/electron/dist/
+desktop/electron/node_modules/
+
+# User data
+.data/
+backend/.data/
+*.log
+
+# IDE / OS
 .kiro
 .idea
-temp-docs
+.vscode
 .DS_Store
-*.log
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+
+# Test artifacts
+playwright-tests/test-results/
+playwright-tests/playwright-report/
+
+# Misc
+temp-docs
 kiro.txt
 img.png
+_tmp_patch.cjs

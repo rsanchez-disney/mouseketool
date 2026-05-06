@@ -35,16 +35,16 @@ async function createZip(files: { name: string; content: Buffer }[], outPath: st
 
 import { createHash } from "crypto";
 
-// Template Lambda definitions — hash computed from source at startup
+// Template Lambda definitions - hash computed from source at startup
 function templateHash(sourceFile: string): string {
-  const srcPath = join(__dirname, "..", "..", "src", "templates", sourceFile);
+  const srcPath = join(__dirname, "..", "..", "templates", sourceFile);
   return createHash("md5").update(readFileSync(srcPath)).digest("hex").slice(0, 8);
 }
 
 const TEMPLATES: any[] = [
   {
     id: "dynamodb-to-sns",
-    name: "DynamoDB Stream → SNS Forwarder",
+    name: "DynamoDB Stream -> SNS Forwarder",
     description: "Reads DynamoDB stream records and publishes them to an SNS topic",
     runtime: "nodejs20.x",
     handler: "index.handler",
@@ -55,15 +55,15 @@ const TEMPLATES: any[] = [
   },
 ];
 
-// GET /api/triggers/types — list available pipeline types
+// GET /api/triggers/types - list available pipeline types
 router.get("/types", (_req, res) => { res.json(PIPELINE_TYPES); });
 
-// GET /api/triggers/templates — list available template lambdas
+// GET /api/triggers/templates - list available template lambdas
 router.get("/templates", (_req, res) => {
   res.json(TEMPLATES.map(t => ({ id: t.id, name: t.name, description: t.description, envVars: t.envVars, hash: t.hash })));
 });
 
-// POST /api/triggers/templates/deploy — deploy a template lambda to LocalStack
+// POST /api/triggers/templates/deploy - deploy a template lambda to LocalStack
 router.post("/templates/deploy", async (req, res) => {
   const { templateId, functionName, envVars = {} } = req.body;
   const template = TEMPLATES.find(t => t.id === templateId);
@@ -81,14 +81,14 @@ router.post("/templates/deploy", async (req, res) => {
     } catch {}
 
     if (existed) {
-      // Already deployed and up to date — just return
+      // Already deployed and up to date - just return
       return res.json({ deployed: true, functionName, alreadyExisted: true });
     }
 
     // Build zip
     const projectRoot = join(__dirname, "..", "..");
-    const srcPath = join(projectRoot, "src", "templates", template.sourceFile);
-    const tmpDir = join(projectRoot, ".data", "tmp");
+    const srcPath = join(projectRoot, "templates", template.sourceFile);
+    const tmpDir = join(SETTINGS_DIR, "tmp");
     mkdirSync(tmpDir, { recursive: true });
     const zipPath = join(tmpDir, `${template.id}.zip`);
 
@@ -111,7 +111,7 @@ router.post("/templates/deploy", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// GET /api/triggers/functions — list deployed Lambda functions from LocalStack
+// GET /api/triggers/functions - list deployed Lambda functions from LocalStack
 router.get("/functions", async (_req, res) => {
   try {
     const client = await getLambdaClient();
@@ -135,7 +135,7 @@ router.get("/functions", async (_req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// POST /api/triggers/wire — full chain: DynamoDB Stream → Stream Handler, SNS→SQS subscription, SQS → target Lambda
+// POST /api/triggers/wire - full chain: DynamoDB Stream -> Stream Handler, SNS->SQS subscription, SQS -> target Lambda
 router.post("/wire", async (req, res) => {
   const { type, streamArn, glueFunctionName, topicArn, queueUrl, targetFunctionName, pipelineName, addons, filterPolicy, filterPolicyScope, topicCreatedByUs, queueCreatedByUs, vaultConfig, heavyLoad } = req.body;
   const typeDef = type ? (await import("../services/pipeline-types.js")).getPipelineType(type) : undefined;
@@ -185,23 +185,23 @@ router.post("/wire", async (req, res) => {
 
     let SubscriptionArn: string | undefined;
 
-    // DynamoDB Stream → Stream Handler (APP Pipeline)
+    // DynamoDB Stream -> Stream Handler (APP Pipeline)
     if (steps.includes("dynamodb") && steps.includes("stream-handler")) {
       const streamUuid = await findOrCreateMapping(streamArn, glueFunctionName, "LATEST");
-      results.push({ step: "DynamoDB Stream → Stream Handler", detail: `UUID: ${streamUuid}` });
+      results.push({ step: "DynamoDB Stream -> Stream Handler", detail: `UUID: ${streamUuid}` });
     }
 
-    // DynamoDB Stream → Target Lambda directly (Direct Stream)
+    // DynamoDB Stream -> Target Lambda directly (Direct Stream)
     if (steps.includes("dynamodb") && !steps.includes("stream-handler")) {
       const streamUuid = await findOrCreateMapping(streamArn, targetFunctionName, "LATEST");
-      results.push({ step: "DynamoDB Stream → Target Lambda", detail: `UUID: ${streamUuid}` });
+      results.push({ step: "DynamoDB Stream -> Target Lambda", detail: `UUID: ${streamUuid}` });
     }
 
-    // SNS → SQS subscription
+    // SNS -> SQS subscription
     if (steps.includes("sns") && steps.includes("sqs")) {
       const sub = await snsClient.send(new SubscribeCommand({ TopicArn: topicArn, Protocol: "sqs", Endpoint: queueArn }));
       SubscriptionArn = sub.SubscriptionArn ?? undefined;
-      results.push({ step: "SNS → SQS Subscription", detail: `Sub: ${SubscriptionArn}` });
+      results.push({ step: "SNS -> SQS Subscription", detail: `Sub: ${SubscriptionArn}` });
 
       // Apply filter policy if provided
       if (filterPolicy && SubscriptionArn) {
@@ -211,17 +211,17 @@ router.post("/wire", async (req, res) => {
       }
     }
 
-    // SQS → Target Lambda (only for types without relay — Direct Stream has no SQS step so this is effectively dead code now)
+    // SQS -> Target Lambda (only for types without relay - Direct Stream has no SQS step so this is effectively dead code now)
     if (steps.includes("sqs") && steps.includes("lambda") && pipelineType !== "queue-consumer") { // Queue Consumer uses relay queue via shadow-deploy
       const sqsUuid = await findOrCreateMapping(queueArn!, targetFunctionName);
-      results.push({ step: "SQS → Target Lambda", detail: `UUID: ${sqsUuid}` });
+      results.push({ step: "SQS -> Target Lambda", detail: `UUID: ${sqsUuid}` });
     }
 
     // Save pipeline
     const tableName = streamArn ? (streamArn.split("/")[1] ?? streamArn) : "";
     const queueName = queueUrl ? (queueUrl.split("/").pop() ?? "") : "";
     const topicName = topicArn ? (topicArn.split(":").pop() ?? "") : "";
-    const defaultName = tableName ? `${tableName} → ${targetFunctionName}` : queueName ? `${queueName} → ${targetFunctionName}` : topicName ? `${topicName} → ${targetFunctionName}` : targetFunctionName;
+    const defaultName = tableName ? `${tableName} -> ${targetFunctionName}` : queueName ? `${queueName} -> ${targetFunctionName}` : topicName ? `${topicName} -> ${targetFunctionName}` : targetFunctionName;
     const pipeline: Pipeline = {
       id: crypto.randomUUID(),
       type: pipelineType,
@@ -283,12 +283,12 @@ router.post("/wire", async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: formatAwsError(err) }); }
 });
 
-// GET /api/triggers/pipelines — list saved pipelines
+// GET /api/triggers/pipelines - list saved pipelines
 router.get("/pipelines", (_req, res) => {
   res.json(loadPipelines());
 });
 
-// POST /api/triggers/pipelines/check-vault — verify vault secrets exist for all pipelines with vault config
+// POST /api/triggers/pipelines/check-vault - verify vault secrets exist for all pipelines with vault config
 router.post("/pipelines/check-vault", async (_req, res) => {
   const pipelines = loadPipelines();
   const updates: string[] = [];
@@ -353,7 +353,7 @@ router.put("/pipelines/:id/env", async (req, res) => {
 
   res.json({ saved: true });
 });
-// GET /api/triggers/pipelines/:id/resources — resource metadata for pipeline edit page
+// GET /api/triggers/pipelines/:id/resources - resource metadata for pipeline edit page
 router.get("/pipelines/:id/resources", async (req, res) => {
   const pipeline = loadPipelines().find(p => p.id === req.params.id);
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
@@ -392,7 +392,7 @@ router.get("/pipelines/:id/resources", async (req, res) => {
   res.json(results);
 });
 
-// PUT /api/triggers/pipelines/:id/edit — save pipeline edits (filter policy, heavy load, add-ons)
+// PUT /api/triggers/pipelines/:id/edit - save pipeline edits (filter policy, heavy load, add-ons)
 router.put("/pipelines/:id/edit", async (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
@@ -456,12 +456,12 @@ router.put("/pipelines/:id/edit", async (req, res) => {
     }
     // Change target Lambda
     if (newTargetFunctionName && (newTargetFunctionName !== pipeline.targetFunctionName || (pipeline as any).targetMissing)) {
-      // Delete old SQS → Target ESM
+      // Delete old SQS -> Target ESM
       try {
         const { DeleteEventSourceMappingCommand } = await import("@aws-sdk/client-lambda");
         if (pipeline.uuids[1]) await (await getLambdaClient()).send(new DeleteEventSourceMappingCommand({ UUID: pipeline.uuids[1] }));
       } catch {}
-      // Create new SQS → Target ESM
+      // Create new SQS -> Target ESM
       try {
         const sqsClient = await getSqsClient();
         const { Attributes = {} } = await sqsClient.send(new GetQueueAttributesCommand({ QueueUrl: pipeline.queueUrl, AttributeNames: [QueueAttributeName.QueueArn] }));
@@ -483,7 +483,7 @@ router.put("/pipelines/:id/edit", async (req, res) => {
 });
 
 
-// DELETE /api/triggers/pipelines/:id — delete pipeline + its event source mappings
+// DELETE /api/triggers/pipelines/:id - delete pipeline + its event source mappings
 router.delete("/pipelines/:id", async (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
@@ -506,7 +506,7 @@ router.delete("/pipelines/:id", async (req, res) => {
     await client.send(new DeleteFunctionCommand({ FunctionName: pipeline.glueFunctionName }));
   } catch (e: any) { errors.push(`Stream handler cleanup: ${e.message}`); }
 
-  // 3. Unsubscribe SNS → SQS (always, even if topic/queue are preserved)
+  // 3. Unsubscribe SNS -> SQS (always, even if topic/queue are preserved)
   if (pipeline.subscriptionArn) {
     try {
       const { getSnsClient } = await import("../helpers/sns-client.js");
@@ -575,7 +575,7 @@ async function getCWClient() {
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-// POST /api/triggers/pipelines/:id/execute — insert item, watcher handles the rest
+// POST /api/triggers/pipelines/:id/execute - insert item, watcher handles the rest
 router.post("/pipelines/:id/execute", async (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
@@ -640,24 +640,24 @@ router.post("/pipelines/:id/execute", async (req, res) => {
     if (steps.includes("stream-handler")) {
       send("glue", "running", ["Waiting for DynamoDB Stream to trigger stream handler..."]);
     } else if (steps.includes("dynamodb") && !steps.includes("stream-handler")) {
-      // Direct stream — waiting for target Lambda
+      // Direct stream - waiting for target Lambda
       send("target", "running", ["Waiting for DynamoDB Stream to trigger target Lambda..."]);
     } else {
-      // Queue Consumer / SNS Fan-out — waiting for target Lambda
+      // Queue Consumer / SNS Fan-out - waiting for target Lambda
       send("target", "running", ["Waiting for event source mapping to trigger target Lambda..."]);
     }
 
     let done = false;
     req.on("close", () => { done = true; });
 
-    // Timeout for stream handler detection — if ESM doesn't trigger within 60s, notify user
+    // Timeout for stream handler detection - if ESM doesn't trigger within 60s, notify user
     const esmTimeout = setTimeout(async () => {
       if (!done && !esmDetected) {
         if (steps.includes("stream-handler")) {
-          send("glue", "timeout", ["DynamoDB Stream ESM did not trigger the stream handler within 60 seconds.", "", "This is a known LocalStack issue — the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
-          if (steps.includes("sns")) send("sns", "error", ["Skipped — stream handler not triggered"]);
-          if (steps.includes("sqs")) send("sqs", "error", ["Skipped — stream handler not triggered"]);
-          send("target", "error", ["Skipped — stream handler not triggered"]);
+          send("glue", "timeout", ["DynamoDB Stream ESM did not trigger the stream handler within 60 seconds.", "", "This is a known LocalStack issue - the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
+          if (steps.includes("sns")) send("sns", "error", ["Skipped - stream handler not triggered"]);
+          if (steps.includes("sqs")) send("sqs", "error", ["Skipped - stream handler not triggered"]);
+          send("target", "error", ["Skipped - stream handler not triggered"]);
         } else {
           // For non-stream-handler types, check if Lambda failed during init
           let diagReqId = "diag-" + Date.now().toString(36);
@@ -670,7 +670,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
               send("target", "error", diagTargetLogs);
             } else {
               // Try diagnostic invoke
-              send("target", "diagnosing", ["ESM timeout — running diagnostic invoke..."]);
+              send("target", "diagnosing", ["ESM timeout - running diagnostic invoke..."]);
               try {
                 const { InvokeCommand: InvCmd } = await import("@aws-sdk/client-lambda");
                 const stubPayload = triggerKind === "dynamodb-insert"
@@ -688,11 +688,11 @@ router.post("/pipelines/:id/execute", async (req, res) => {
                 diagTargetLogs = diagLogs;
                 send("target", "error", diagLogs);
               } catch (diagErr: any) {
-                send("target", "error", ["ESM did not trigger the target Lambda within 60 seconds.", "Diagnostic invoke also failed: " + diagErr.message, "", "This is a known LocalStack issue — the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
+                send("target", "error", ["ESM did not trigger the target Lambda within 60 seconds.", "Diagnostic invoke also failed: " + diagErr.message, "", "This is a known LocalStack issue - the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
               }
             }
           } catch {
-            send("target", "timeout", ["ESM did not trigger the target Lambda within 60 seconds.", "", "This is a known LocalStack issue — the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
+            send("target", "timeout", ["ESM did not trigger the target Lambda within 60 seconds.", "", "This is a known LocalStack issue - the ESM poller may have stopped.", "Try restarting LocalStack to reset the pollers, then re-run."]);
           }
           // Update the persisted stub run with the error result
           try {
@@ -727,9 +727,9 @@ router.post("/pipelines/:id/execute", async (req, res) => {
         send("glue", event.run.handler.error ? "error" : "success", event.run.handler.logs, (event.run.handler as any).elapsed);
       }
       if (event.run.handler.error) {
-        if (steps.includes("sns")) send("sns", "error", ["Skipped — stream handler failed"]);
-        if (steps.includes("sqs")) send("sqs", "error", ["Skipped — stream handler failed"]);
-        send("target", "error", ["Skipped — handler failed"]);
+        if (steps.includes("sns")) send("sns", "error", ["Skipped - stream handler failed"]);
+        if (steps.includes("sqs")) send("sqs", "error", ["Skipped - stream handler failed"]);
+        send("target", "error", ["Skipped - handler failed"]);
         send("done", "complete", []);
         done = true; runSub.unsubscribe(); stepSub.unsubscribe(); try { res.end(); } catch {};
       }
@@ -754,7 +754,7 @@ router.post("/pipelines/:id/execute", async (req, res) => {
   }
 });
 
-// GET /api/triggers/pipelines/:id/history — return persisted runs
+// GET /api/triggers/pipelines/:id/history - return persisted runs
 // GET /api/triggers/pipelines/:id/learned-items
 router.get("/pipelines/:id/learned-items", async (req, res) => {
   try {
@@ -772,7 +772,7 @@ router.get("/pipelines/:id/history", async (req, res) => {
   res.json({ pipelineId: pipeline.id, pipelineName: pipeline.name, runs: sorted });
 });
 
-// DELETE /api/triggers/pipelines/:id/history — clear all runs
+// DELETE /api/triggers/pipelines/:id/history - clear all runs
 router.delete("/pipelines/:id/history", (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);
@@ -783,7 +783,7 @@ router.delete("/pipelines/:id/history", (req, res) => {
   res.json({ cleared: true });
 });
 
-// GET /api/triggers/pipelines/:id/runs/:runId/stream — SSE for a specific run
+// GET /api/triggers/pipelines/:id/runs/:runId/stream - SSE for a specific run
 router.get("/pipelines/:id/runs/:runId/stream", async (req, res) => {
   const pipeline = loadPipelines().find(p => p.id === req.params.id);
   if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
@@ -804,7 +804,7 @@ router.get("/pipelines/:id/runs/:runId/stream", async (req, res) => {
   req.on("close", () => { sub.unsubscribe(); });
 });
 
-// GET /api/triggers/pipelines/:id/history/live — SSE stream for real-time updates
+// GET /api/triggers/pipelines/:id/history/live - SSE stream for real-time updates
 router.get("/pipelines/:id/history/live", async (req, res) => {
   const pipelines = loadPipelines();
   const pipeline = pipelines.find(p => p.id === req.params.id);

@@ -112,15 +112,15 @@ const filterEnabled = ref(false);
 const filterScope = ref<"MessageBody" | "MessageAttributes">("MessageBody");
 const filterRules = ref<FilterRule[]>([]);
 const filterOps: { value: FilterOp; label: string }[] = [
-  { value: "exact-string", label: "String — exact match" },
-  { value: "prefix", label: "String — prefix" },
-  { value: "anything-but", label: "String — anything-but" },
-  { value: "anything-but-prefix", label: "String — anything-but prefix" },
-  { value: "suffix", label: "String — suffix" },
-  { value: "wildcard", label: "String — wildcard" },
-  { value: "exact-number", label: "Number — exact match" },
-  { value: "number-range", label: "Number — range" },
-  { value: "exists", label: "Key — exists / not exists" },
+  { value: "exact-string", label: "String - exact match" },
+  { value: "prefix", label: "String - prefix" },
+  { value: "anything-but", label: "String - anything-but" },
+  { value: "anything-but-prefix", label: "String - anything-but prefix" },
+  { value: "suffix", label: "String - suffix" },
+  { value: "wildcard", label: "String - wildcard" },
+  { value: "exact-number", label: "Number - exact match" },
+  { value: "number-range", label: "Number - range" },
+  { value: "exists", label: "Key - exists / not exists" },
 ];
 function newRule(): FilterRule { return { field: "", op: "exact-string", values: [], chipInput: "", rangeMin: "", rangeMax: "", rangeLow: ">=", rangeHigh: "<=", existsVal: true }; }
 function addFilterRule() { filterRules.value.push(newRule()); }
@@ -191,8 +191,8 @@ interface Pipeline { id: string; name: string; type?: string; sourceType: string
 
 function getWarnings(p: Pipeline): { message: string }[] {
   const w: { message: string }[] = [];
-  if (p.targetMissing) w.push({ message: "Target Lambda build not found — select a deployment on the edit page" });
-  if (p.vaultIncomplete) w.push({ message: "Vault secrets may be missing — check the add-ons section" });
+  if (p.targetMissing) w.push({ message: "Target Lambda build not found - select a deployment on the edit page" });
+  if (p.vaultIncomplete) w.push({ message: "Vault secrets may be missing - check the add-ons section" });
   return w;
 }
 const mappings = ref<Pipeline[]>([]);
@@ -606,14 +606,14 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
           <div class="flex items-center gap-3 min-w-0 flex-1">
             <input type="checkbox" :checked="selectedPipelines.has(m.id)" @change="toggleSelect(m.id)" class="accent-primary size-4 shrink-0 cursor-pointer" />
             <div class="min-w-0 flex-1 space-y-1">
-              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled — large batch size and window</TooltipContent></Tooltip><Tooltip v-if="getWarnings(m).length"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>{{ getWarnings(m)[0].message }}</TooltipContent></Tooltip></p>
+              <p class="font-semibold text-sm flex items-center gap-1.5">{{ m.name }}<Tooltip v-if="m.heavyLoad"><TooltipTrigger as-child><Flame class="size-3.5 text-orange-500 animate-flicker" /></TooltipTrigger><TooltipContent>Heavy load enabled - large batch size and window</TooltipContent></Tooltip><Tooltip v-if="getWarnings(m).length"><TooltipTrigger as-child><AlertTriangle class="size-3.5 text-amber-500" /></TooltipTrigger><TooltipContent>{{ getWarnings(m)[0].message }}</TooltipContent></Tooltip></p>
               <div class="flex items-center gap-1.5 text-muted-foreground">
                 <Zap class="size-3.5 shrink-0" /><span class="font-mono text-xs">{{ m.targetFunctionName }}</span><span v-if="m.type" class="text-[10px] text-muted-foreground ml-1">·</span><span v-if="m.type" class="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-muted-foreground">{{ m.type.replace('-', ' ') }}</span>
               </div>
             </div>
           </div>
           <div class="flex items-center gap-1 shrink-0">
-            <Tooltip v-if="m.sourceType"><TooltipTrigger as-child><span class="inline-flex"><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="m.heavyLoad" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></span></TooltipTrigger><TooltipContent>{{ m.heavyLoad ? 'Manual execution is disabled in heavy load mode — insert items directly into DynamoDB' : 'Run pipeline with a test item' }}</TooltipContent></Tooltip>
+            <Tooltip v-if="m.sourceType"><TooltipTrigger as-child><span class="inline-flex"><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="m.heavyLoad" @click="triggerRouter.push(`/triggers/${m.id}/execute`)"><Play class="size-3.5" /> Execute</Button></span></TooltipTrigger><TooltipContent>{{ m.heavyLoad ? 'Manual execution is disabled in heavy load mode - insert items directly into DynamoDB' : 'Run pipeline with a test item' }}</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/history`)"><Clock class="size-3.5" /> History</Button></TooltipTrigger><TooltipContent>View invocation history from CloudWatch logs</TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="triggerRouter.push(`/triggers/${m.id}/edit`)"><Pencil class="size-3.5" /> Edit</Button></TooltipTrigger><TooltipContent>Edit pipeline settings</TooltipContent></Tooltip>
           </div>
@@ -688,7 +688,7 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
         <div v-if="currentStepKind === 'dynamodb'" class="space-y-3">
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select a DynamoDB table</span></div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToPrevStep();selectedTable=null"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="stepIndex === 0" @click="goToPrevStep();selectedTable=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTables"><RefreshCw class="size-3.5" /> Refresh</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreate=true"><Plus class="size-3.5" /> Create Table</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadSchemas(); showRestore=true"><HardDrive class="size-3.5" /> Restore Table</Button>
@@ -716,7 +716,7 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select an SNS topic</span></div>
           <div v-if="selectedPipelineType?.id === 'sns-fanout'" class="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-2"><Info class="size-3.5 shrink-0 text-blue-400" /><span>Multi-subscriber fan-out (multiple SQS queues per topic) will be available in a future release.</span></div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(1);selectedTopic=null"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="stepIndex === 0" @click="goToPrevStep();selectedTopic=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadTopics"><RefreshCw class="size-3.5" /> Refresh</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreateTopic=true"><Plus class="size-3.5" /> Create Topic</Button>
           </div>
@@ -799,7 +799,7 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
         <div v-if="currentStepKind === 'sqs'" class="space-y-3">
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select an SQS queue</span></div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(2);selectedQueue=null"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="stepIndex === 0" @click="goToPrevStep();selectedQueue=null"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadQueues"><RefreshCw class="size-3.5" /> Refresh</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="showCreateQueue=true"><Plus class="size-3.5" /> Create Queue</Button>
           </div>
@@ -819,7 +819,7 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
         <div v-if="currentStepKind === 'lambda' && selectedPipelineType?.requiresStreamHandler" class="space-y-3">
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select Lambdas &amp; wire pipeline</span></div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToStep(3);selectedGlueFunction=null;selectedTargetFunction=null;wireResult=null;wireError=''"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="stepIndex === 0" @click="goToPrevStep();selectedGlueFunction=null;selectedTargetFunction=null;wireResult=null;wireError=''"><ArrowLeft class="size-3.5" /> Back</Button>
             <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="loadFunctions"><RefreshCw class="size-3.5" /> Refresh</Button>
           </div>
           <!-- Summary -->
@@ -875,7 +875,7 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
         <div v-if="currentStepKind === 'lambda' && !selectedPipelineType?.requiresStreamHandler" class="space-y-3">
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Select a target Lambda</span></div>
           <div class="flex items-center gap-2">
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToPrevStep()"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" :disabled="stepIndex === 0" @click="goToPrevStep()"><ArrowLeft class="size-3.5" /> Back</Button>
           </div>
           <TargetLambdaSelector :used-functions="usedTargets" @select="fn => { selectedTargetFunction = fn; }" />
           <div v-if="selectedTargetFunction" class="space-y-3 pt-2">
@@ -891,7 +891,7 @@ onMounted(async () => { await loadMappings(); loadPipelineStats(); fetch("/api/t
         <div v-if="currentStepKind === 'addons'" class="space-y-3">
           <div class="flex items-center gap-2 text-xs text-muted-foreground"><Badge variant="default" class="text-[10px]">Step {{ stepIndex + 1 }}</Badge><span>Configure add-ons (optional)</span></div>
           <div class="flex items-center gap-2">
-            <Button v-if="!wireResult" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="stepIndex = 4"><ArrowLeft class="size-3.5" /> Back</Button>
+            <Button v-if="!wireResult" variant="outline" size="sm" class="gap-1.5 cursor-pointer active:scale-95 transition-transform" @click="goToPrevStep()"><ArrowLeft class="size-3.5" /> Back</Button>
           </div>
 
           <!-- Vault Add-on Card -->

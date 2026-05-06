@@ -1,7 +1,8 @@
 {
   "name": "mouseketool-backend",
-  "version": "0.12.0",
-  "description": "",
+  "version": "0.13.0",
+  "description": "Mouseketool backend server",
+  "repository": "manjm010/mouseketool",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

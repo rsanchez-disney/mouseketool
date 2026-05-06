@@ -93,8 +93,13 @@ async function analyzeProject() {
 // --- Build ---
 const building = ref(false);
 const buildLogs = ref<{ line: string; isError?: boolean }[]>([]);
+const buildCardRef = ref<HTMLElement>();
+const deployBtnRef = ref<any>();
 const buildResult = ref<Build | null>(null);
 const buildError = ref("");
+const postBuildLogs = ref<{ line: string }[]>([]);
+const postBuildPhase = ref(false);
+const activeLogTab = ref<"build" | "post">("build");
 const buildStartTime = ref(0);
 const buildElapsed = ref(0);
 const buildTotalTime = ref(0);
@@ -138,9 +143,11 @@ function rebuildFromCache(b: Build) {
 async function startBuild() {
   building.value = true;
   buildLogs.value = [];
+  postBuildLogs.value = []; postBuildPhase.value = false; activeLogTab.value = "build";
   buildResult.value = null;
   buildError.value = "";
   startTimer();
+  setTimeout(() => { buildCardRef.value?.$el?.scrollIntoView?.({ behavior: "smooth", block: "start" }) || buildCardRef.value?.scrollIntoView?.({ behavior: "smooth", block: "start" }); }, 300);
 
   const res = await fetch("/api/builds", {
     method: "POST",
@@ -168,7 +175,9 @@ async function startBuild() {
       else if (line.startsWith("data: ")) {
         const data = JSON.parse(line.slice(6));
         if (event === "log") buildLogs.value.push(data);
-        else if (event === "complete") { buildResult.value = data; loadBuilds(); }
+        else if (event === "phase") { postBuildPhase.value = true; activeLogTab.value = "post"; }
+        else if (event === "post-log") postBuildLogs.value.push(data);
+        else if (event === "complete") { buildResult.value = data; loadBuilds(); setTimeout(() => { const el = deployBtnRef.value?.$el || deployBtnRef.value; el?.scrollIntoView?.({ behavior: "smooth", block: "center" }); }, 500); }
         else if (event === "error") buildError.value = data.message;
       }
     }
@@ -289,7 +298,7 @@ onMounted(async () => {
       functionName.value = autoPath.split(/[\\/]/).pop() || "";
       await nextTick();
       startBuild();
-      setTimeout(() => { document.querySelector("[data-log-viewer]")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 500);
+      setTimeout(() => { buildCardRef.value?.$el?.scrollIntoView?.({ behavior: "smooth", block: "start" }) || buildCardRef.value?.scrollIntoView?.({ behavior: "smooth", block: "start" }); }, 500);
     }
   }
 });
@@ -388,7 +397,7 @@ onMounted(async () => {
     </Card>
 
     <!-- Build Console -->
-    <Card v-if="buildLogs.length || building" data-log-viewer>
+    <Card v-if="buildLogs.length || building" data-log-viewer ref="buildCardRef">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Package class="size-5" />
@@ -423,10 +432,7 @@ onMounted(async () => {
 
         <div v-if="buildResult" class="space-y-3">
           <div class="flex items-center gap-3">
-            <div class="flex items-center gap-2 text-sm text-green-600">
-              <CheckCircle2 class="size-4" /> Build complete
-            </div>
-            <Button @click="startDeploy(buildResult!)" :disabled="deploying" size="sm" class="gap-2 cursor-pointer active:scale-95 transition-transform">
+            <Button ref="deployBtnRef" @click="startDeploy(buildResult!)" :disabled="deploying" size="sm" class="gap-2 cursor-pointer active:scale-95 transition-transform">
               <Loader2 v-if="deploying" class="size-4 animate-spin" />
               <Rocket v-else class="size-4" />
               {{ deploying ? "Deploying..." : "Deploy to LocalStack" }}

@@ -119,7 +119,7 @@ class PipelineWatcher {
     if (this.interval) return;
     const pipelines = loadPipelines();
     for (const p of pipelines) for (const r of p.runs) this.knownRequestIds.add(r.id);
-    console.log(`[watcher] Started — monitoring ${pipelines.length} pipeline(s), ${this.knownRequestIds.size} known run(s)`);
+    console.log(`[watcher] Started - monitoring ${pipelines.length} pipeline(s), ${this.knownRequestIds.size} known run(s)`);
     this.interval = setInterval(() => this.poll(), 2000);
   }
 
@@ -133,7 +133,7 @@ class PipelineWatcher {
     const pipelines = loadPipelines();
     if (!pipelines.length) return;
     this.pollCount++;
-    if (this.pollCount % 15 === 0) console.log(`[watcher] Poll #${this.pollCount} — ${pipelines.length} pipeline(s), ${this.knownRequestIds.size} known run(s)`);
+    if (this.pollCount % 15 === 0) console.log(`[watcher] Poll #${this.pollCount} - ${pipelines.length} pipeline(s), ${this.knownRequestIds.size} known run(s)`);
 
     const cw = await getCWClient();
     for (const pipeline of pipelines) {
@@ -193,6 +193,7 @@ class PipelineWatcher {
             savePipelines(pps);
           }
           this.newRun$.next({ pipelineId: pipeline.id, run });
+          this.knownRequestIds.add(run.id);
           // Move files to processed
           await moveToProcessed(pipeline.shadow.folder, [eventFile, itemsFile]);
           // Update eventFile to processed path so diagnostic invoke can find it
@@ -246,7 +247,7 @@ class PipelineWatcher {
         if (changed) savePipelines(pipelines);
       } catch {}
     }
-    } catch (e: any) { /* LocalStack unreachable — silently skip this poll cycle */ }
+    } catch (e: any) { /* LocalStack unreachable - silently skip this poll cycle */ }
 
   }
 
@@ -264,7 +265,7 @@ class PipelineWatcher {
     const items = itemLines.length > 1 ? itemLines : undefined;
     const source = checkManualRun(pipeline.id, timestamp) ? "manual" as const : "external" as const;
 
-    console.log(`[watcher] New run detected — pipeline: ${pipeline.name}, requestId: ${requestId.slice(0, 8)}, source: ${source}, error: ${error}`);
+    console.log(`[watcher] New run detected - pipeline: ${pipeline.name}, requestId: ${requestId.slice(0, 8)}, source: ${source}, error: ${error}`);
 
     // Extract handler duration from REPORT line
     const reportLine = logs.find(l => l.includes("REPORT RequestId"));
@@ -274,8 +275,8 @@ class PipelineWatcher {
     const run: PipelineRun = {
       id: randomUUID(), timestamp, item, items, source,
       handler: { requestId, logs, error, elapsed: handlerElapsed },
-      sns: error ? { status: "skipped", logs: ["Skipped — stream handler failed"] } : undefined,
-      sqs: error ? { status: "skipped", logs: ["Skipped — stream handler failed"] } : undefined,
+      sns: error ? { status: "skipped", logs: ["Skipped - stream handler failed"] } : undefined,
+      sqs: error ? { status: "skipped", logs: ["Skipped - stream handler failed"] } : undefined,
       target: null, status: error ? "error" : "pending",
     };
 
@@ -303,14 +304,14 @@ class PipelineWatcher {
     this.newRun$.next({ pipelineId: pipeline.id, run });
 
     if (isDirectTarget) {
-      // No observer needed — detection IS the final result
-      console.log(`[watcher] Direct target run ${requestId.slice(0, 8)} — ${run.status}`);
+      // No observer needed - detection IS the final result
+      console.log(`[watcher] Direct target run ${requestId.slice(0, 8)} - ${run.status}`);
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: run.status, logs, elapsed: handlerElapsed });
     } else if (!error) {
       console.log(`[watcher] Spawning observer thread for run ${requestId.slice(0, 8)}`);
       this.spawnObserver(pipeline, run);
     } else {
-      console.log(`[watcher] Stream handler failed for run ${requestId.slice(0, 8)} — no observer needed`);
+      console.log(`[watcher] Stream handler failed for run ${requestId.slice(0, 8)} - no observer needed`);
     }
   }
 
@@ -369,9 +370,9 @@ class PipelineWatcher {
       }, 2000, timeout);
 
       if (!sqsCapture) {
-        // No SQS delivery detected — message was filtered by SNS
-        console.log(`${tag} SNS filtered — no SQS delivery within ${timeout}ms`);
-        updateRun({ status: 'filtered', sns: { status: 'filtered', logs: ['Message filtered by SNS subscription filter policy'] }, sqs: { status: 'filtered', logs: ['No message received'] }, target: { requestId: '', logs: ['Skipped — message was filtered'], error: false } });
+        // No SQS delivery detected - message was filtered by SNS
+        console.log(`${tag} SNS filtered - no SQS delivery within ${timeout}ms`);
+        updateRun({ status: 'filtered', sns: { status: 'filtered', logs: ['Message filtered by SNS subscription filter policy'] }, sqs: { status: 'filtered', logs: ['No message received'] }, target: { requestId: '', logs: ['Skipped - message was filtered'], error: false } });
         this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sns', status: 'filtered', logs: ['Filtered by SNS subscription filter policy'] });
         this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sqs', status: 'filtered', logs: ['No message received'] });
         this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'target', status: 'filtered', logs: ['Skipped'] });
@@ -380,7 +381,7 @@ class PipelineWatcher {
 
       console.log(`${tag} sqsCapture keys:`, Object.keys(sqsCapture), 'eventFile:', sqsCapture.eventFile?.split('/').pop());
       // SNS delivered to SQS
-      const sqsLogs = sqsCapture.items ? ['Received:', '', JSON.stringify(sqsCapture.items), ...(pipeline.heavyLoad ? ['', '⚠ Under heavy load, some captures may be missed due to LocalStack ESM polling limitations.'] : [])] : ['Message delivered to queue'];
+      const sqsLogs = sqsCapture.items ? ['Received:', '', JSON.stringify(sqsCapture.items), ...(pipeline.heavyLoad ? ['', '[WARN] Under heavy load, some captures may be missed due to LocalStack ESM polling limitations.'] : [])] : ['Message delivered to queue'];
       updateRun({ sns: { status: 'success', logs: ['Items passed to SQS queue'] }, sqs: { status: 'success', logs: sqsLogs } });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sns', status: 'success', logs: ['Items passed to SQS queue'] });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: 'sqs', status: 'success', logs: sqsLogs });
@@ -490,7 +491,7 @@ class PipelineWatcher {
     // 2.5s timeout: LocalStack ESM polling is unreliable (30s-2min+), so we fall back to diagnostic invoke quickly.
     // The diagnostic invoke uses the full captured event from S3 (with all SQS/DynamoDB attributes), so the Lambda
     // receives the exact same payload it would from the ESM. To revert to real CW polling, increase this timeout.
-    }, 500, 0); // Skip CW polling — always use diagnostic invoke with captured event
+    }, 500, 0); // Skip CW polling - always use diagnostic invoke with captured event
     clearInterval(progressInterval);
     if (targetResult) {
       const status = targetResult.error ? "error" : "success";
@@ -503,7 +504,7 @@ class PipelineWatcher {
           const envVars = fnConfig.Configuration?.Environment?.Variables || {};
           const { diagnoseError, extractLogsFromPayload } = await import("../helpers/lambda-diagnostics.js");
           const hints = diagnoseError(null, envVars);
-          if (hints.length) finalLogs = [...finalLogs, "", "── Diagnostics ──", ...hints];
+          if (hints.length) finalLogs = [...finalLogs, "", "-- Diagnostics --", ...hints];
         } catch {}
       }
       console.log(`${tag} Target Lambda ${status} (${targetResult.elapsed}ms)`);
@@ -513,8 +514,8 @@ class PipelineWatcher {
     }
 
     clearInterval(progressInterval);
-    // --- No CW logs found — poll S3 for shadow event file, then diagnostic invoke ---
-    console.log(`${tag} No target logs — waiting for shadow event file, then diagnostic invoke`);
+    // --- No CW logs found - poll S3 for shadow event file, then diagnostic invoke ---
+    console.log(`${tag} No target logs - waiting for shadow event file, then diagnostic invoke`);
     updateRun({ status: "diagnosing" });
     this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: "diagnosing", logs: ["Verifying invocation..."] });
 
@@ -538,10 +539,10 @@ class PipelineWatcher {
         if (captured) diagPayload = captured;
         console.log(`${tag} Using stored event file: ${run.eventFile.split("/").pop()}`);
       } else {
-        console.log(`${tag} No event file on run — invoking with empty payload`);
+        console.log(`${tag} No event file on run - invoking with empty payload`);
       }
 
-      // Note: no container kill for speed — warm container may be reused
+      // Note: no container kill for speed - warm container may be reused
       const depInfo = await getDeploymentInfo(pipeline.targetFunctionName);
       const result = await invokeFunction(lambdaClient, pipeline.targetFunctionName, diagPayload, depInfo?.buildId, depInfo?.handler);
       clearInterval(verifyInterval);
@@ -562,11 +563,11 @@ class PipelineWatcher {
       const responseLine = result.payload ? JSON.stringify(result.payload, null, 2) : null;
       const startIdx = filteredLogs.findIndex(l => l.includes("START RequestId:"));
       const isWarm = startIdx === 0;
-      const warmWarning = isWarm ? ["⚠ Warm container was reused — INIT logs will not appear"] : [];
+      const warmWarning = isWarm ? ["[WARN] Warm container was reused - INIT logs will not appear"] : [];
       const diagLogs = filteredLogs.length ? [...(responseLine ? [responseLine, "", "Lambda Logs:"] : []), ...warmWarning, ...filteredLogs] : ["Diagnostic invoke returned no logs"];
       const hasLogErrors = diagLogs.some(l => /ERROR|Exception|FunctionError/.test(l) || /"Level"\s*:\s*"ERROR"/.test(l));
       const diagStatus = (result.functionError || hasLogErrors) ? "error" : "success";
-      console.log(`${tag} Diagnostic complete — ${diagStatus}`);
+      console.log(`${tag} Diagnostic complete - ${diagStatus}`);
       updateRun({ status: diagStatus, target: { requestId: "", logs: diagLogs, error: diagStatus === "error" } as any });
       this.stepUpdate$.next({ pipelineId: pipeline.id, runId: run.id, step: "target", status: diagStatus, logs: diagLogs });
     } catch (e: any) {

@@ -1,6 +1,7 @@
 // force restart
 import express from "express";
 import cors from "cors";
+import path from "path";
 import settingsRoutes from "./routes/settings.js";
 import filesystemRoutes from "./routes/filesystem.js";
 import analyzeRoutes from "./routes/analyze.js";
@@ -19,6 +20,7 @@ import batchRunsRoutes from "./routes/batch-runs.js";
 import statsRoutes from "./routes/stats.js";
 import localstackRoutes from "./routes/localstack.js";
 import profileRoutes from "./routes/profile.js";
+import { startContainerWatchdog } from "./services/container-watchdog.js";
 import { watcher } from "./services/pipeline-watcher.js";
 import { initPipelineWs } from "./services/pipeline-ws.js";
 import { initShadowInfra, ensureBucketExists } from "./services/shadow-infra.js";
@@ -44,6 +46,24 @@ app.get("/api/health", async (_req, res) => {
     res.json({ status: "ok", localstack: false, reconciling });
   } catch { res.json({ status: "ok", localstack: false, reconciling }); }
 });
+app.get("/api/version", (_req, res) => {
+  const pkg = require("../package.json");
+  res.json({ version: pkg.version });
+});
+app.get("/api/update-check", async (_req, res) => {
+  try {
+    const pkg = require("../package.json");
+    const repo = pkg.repository?.url?.replace(/\.git$/, "")?.replace("https://github.com/", "") || pkg.repository || "";
+    if (!repo) return res.json({ available: false });
+    const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { signal: AbortSignal.timeout(5000), headers: { Accept: "application/vnd.github.v3+json" } });
+    if (!r.ok) return res.json({ available: false });
+    const data = await r.json() as any;
+    const latest = data.tag_name?.replace(/^v/, "") || "";
+    const current = pkg.version;
+    const available = latest && latest !== current && latest.localeCompare(current, undefined, { numeric: true }) > 0;
+    res.json({ available, latest, current, url: data.html_url });
+  } catch { res.json({ available: false }); }
+});
 app.use("/api/stats", statsRoutes);
 app.use("/api/localstack", localstackRoutes);
 app.use("/api/settings", settingsRoutes);
@@ -67,12 +87,22 @@ app.use("/api/profile", profileRoutes);
 setInterval(cleanupBuilds, 30 * 60 * 1000);
 cleanupBuilds();
 
+// In production (Electron), serve the frontend static files
+if (process.env.NODE_ENV === "production") {
+  const frontendDist = path.join(process.cwd(), "..", "frontend", "dist");
+  console.log(`[static] Serving frontend from: ${frontendDist} (exists: ${existsSync(frontendDist)})`);
+  if (existsSync(frontendDist)) {
+    app.use(express.static(frontendDist));
+    app.use((req, res, next) => { if (req.path.startsWith("/api/") || req.path.startsWith("/ws/")) return next(); res.sendFile(path.join(frontendDist, "index.html")); });
+  }
+}
+
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
   watcher.start();
-  initShadowInfra();
   initPipelineWs(server);
+  initShadowInfra();
   startHealthMonitor();
 });
 
@@ -91,7 +121,7 @@ function startHealthMonitor() {
   setInterval(async () => {
     const up = await checkLocalStack();
     if (up && lsWasDown) {
-      console.log("[health] LocalStack recovered — running reconciliation");
+      console.log("[health] LocalStack recovered - running reconciliation");
       lsWasDown = false;
       reconciling = true;
       try { await reconcileDeployments(); } catch (e: any) { console.error("[health] Lambda reconciliation failed:", e.message); }

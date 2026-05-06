@@ -42,7 +42,7 @@ function sanitizeName(name: string): string {
 }
 
 function templatePath(filename: string): string {
-  return join(__dirname, "..", "..", "src", "templates", filename);
+  return join(__dirname, "..", "..", "templates", filename);
 }
 
 async function zipTemplate(templateFile: string): Promise<Buffer> {
@@ -96,7 +96,7 @@ async function createEsm(functionName: string, sourceArn: string, batchSize: num
   const params: any = { FunctionName: functionName, EventSourceArn: sourceArn, BatchSize: batchSize, Enabled: true };
   if (startingPosition) params.StartingPosition = startingPosition;
   const result = await client.send(new CreateEventSourceMappingCommand(params));
-  console.log(`${TAG} Created ESM: ${sourceArn.split(":").pop()} → ${functionName} (${result.UUID})`);
+  console.log(`${TAG} Created ESM: ${sourceArn.split(":").pop()} -> ${functionName} (${result.UUID})`);
   return result.UUID!;
 }
 
@@ -151,7 +151,7 @@ async function deployQueueConsumer(pipeline: Pipeline, existingFolder?: string):
 async function deployAppPipeline(pipeline: Pipeline, existingFolder?: string): Promise<ShadowMeta> {
   const folder = existingFolder || `${sanitizeName(pipeline.name)}-${pipeline.id}-app-pipeline-${Date.now()}`;
 
-  // Lambda A — DynamoDB stream capture
+  // Lambda A - DynamoDB stream capture
   const lambdaAName = `mk-shadow-a-${pipeline.id.slice(0, 8)}`;
   const zipA = await zipTemplate("shadow-app-pipeline-a.js");
   const envA = buildEnvVars(pipeline, folder);
@@ -182,7 +182,7 @@ async function deployAppPipeline(pipeline: Pipeline, existingFolder?: string): P
     console.log(`${TAG} Applied filter policy to shadow subscription`);
   }
 
-  // Lambda B — shadow SQS capture (observational, no relay needed)
+  // Lambda B - shadow SQS capture (observational, no relay needed)
   const lambdaBName = `mk-shadow-b-${pipeline.id.slice(0, 8)}`;
   const zipB = await zipTemplate("shadow-app-pipeline-b.js");
   const envB = buildEnvVars(pipeline, folder);
@@ -245,9 +245,9 @@ async function queueExists(url: string): Promise<boolean> {
 }
 
 export async function reconcileShadow(pipeline: Pipeline): Promise<ShadowMeta | null> {
-  if (!pipeline.type) { console.log(`${TAG} Pipeline "${pipeline.name}" has no type — skipping reconcile`); return null; }
+  if (!pipeline.type) { console.log(`${TAG} Pipeline "${pipeline.name}" has no type - skipping reconcile`); return null; }
   const shadow = (pipeline as any).shadow as ShadowMeta | undefined;
-  if (!shadow) { console.log(`${TAG} No shadow for pipeline "${pipeline.name}" — deploying fresh`); return deployShadowForPipeline(pipeline); }
+  if (!shadow) { console.log(`${TAG} No shadow for pipeline "${pipeline.name}" - deploying fresh`); return deployShadowForPipeline(pipeline); }
 
   console.log(`${TAG} Reconciling shadow for pipeline "${pipeline.name}"`);
   let healthy = true;
@@ -264,7 +264,7 @@ export async function reconcileShadow(pipeline: Pipeline): Promise<ShadowMeta | 
   }
 
   if (!healthy) {
-    console.log(`${TAG} Shadow resources missing — recreating`);
+    console.log(`${TAG} Shadow resources missing - recreating`);
     await destroyShadow(pipeline);
     return deployShadowForPipeline(pipeline, shadow.folder);
   }

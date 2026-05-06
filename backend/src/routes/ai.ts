@@ -33,7 +33,7 @@ router.post("/explain", async (req, res) => {
   const prompt = [
     isDocker
       ? "You are a concise Docker debugging assistant. The containers are running via docker-compose locally. Explain the error in 2-3 sentences, then suggest a fix."
-      : "You are a concise AWS Lambda debugging assistant. The Lambda is running locally on LocalStack (not real AWS). LocalStack emulates AWS services but has quirks — timeouts, cold starts, and container reuse can cause issues that wouldn't happen in production.",
+      : "You are a concise AWS Lambda debugging assistant. The Lambda is running locally on LocalStack (not real AWS). LocalStack emulates AWS services but has quirks - timeouts, cold starts, and container reuse can cause issues that wouldn't happen in production.",
     isDocker ? "" : "Explain the error in 2-3 sentences, then suggest a fix. If the error looks LocalStack-specific, say so.",
     `--- Lambda metadata ---`,
     `Function: ${functionName || "unknown"}`,
@@ -108,7 +108,7 @@ router.post("/generate-payload", async (req, res) => {
 
     const prompt = [
       "You are a JSON payload generator for AWS Lambda functions running on LocalStack.",
-      "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
+      "Generate ONLY valid JSON - no explanation, no markdown, no code fences. Just the raw JSON object.",
       "",
       `Generate ${intentLabel}.`,
       samples.length ? `\n--- Sample JSON files (use these as structural reference) ---` : "",
@@ -197,9 +197,9 @@ router.post("/generate-item", async (req, res) => {
         edge: "an edge case DynamoDB item with boundary values or unusual but valid data",
       },
       "sqs-send": {
-        "dynamodb-event": "a DynamoDB Streams event record (the JSON body that DynamoDB Streams produces when a table item changes — include eventName, dynamodb.Keys, dynamodb.NewImage, dynamodb.OldImage with AttributeValue format like {S:'value'}, {N:'123'})",
-        "s3-event": "an S3 event notification record (the JSON body that S3 produces for object events — include eventName like ObjectCreated:Put, s3.bucket.name, s3.object.key, s3.object.size)",
-        "sns-notification": "an SNS notification message (the JSON body that SNS wraps when forwarding — include Type, MessageId, TopicArn, Subject, Message with a nested JSON payload, Timestamp)",
+        "dynamodb-event": "a DynamoDB Streams event record (the JSON body that DynamoDB Streams produces when a table item changes - include eventName, dynamodb.Keys, dynamodb.NewImage, dynamodb.OldImage with AttributeValue format like {S:'value'}, {N:'123'})",
+        "s3-event": "an S3 event notification record (the JSON body that S3 produces for object events - include eventName like ObjectCreated:Put, s3.bucket.name, s3.object.key, s3.object.size)",
+        "sns-notification": "an SNS notification message (the JSON body that SNS wraps when forwarding - include Type, MessageId, TopicArn, Subject, Message with a nested JSON payload, Timestamp)",
         "custom": "a generic JSON message body with realistic fields that the target Lambda can process",
         "error": "a malformed or unexpected message body likely to cause the target Lambda to fail (missing required fields, wrong types, null values)",
       },
@@ -215,7 +215,7 @@ router.post("/generate-item", async (req, res) => {
     if (triggerKind === "sqs-send") {
       promptParts = [
         "You are generating the message body that will be SENT to an SQS queue. Generate ONLY the raw event content (e.g. the DynamoDB stream record, S3 notification, or SNS message itself). Do NOT wrap it in a Records array, do NOT add SQS envelope fields like messageId/receiptHandle/body. The user will send this directly as the SQS message body.",
-        "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
+        "Generate ONLY valid JSON - no explanation, no markdown, no code fences. Just the raw JSON object.",
         "",
         `Queue: ${pipeline.queueUrl || "unknown"}`,
         `Target Lambda: ${pipeline.targetFunctionName}`,
@@ -229,7 +229,7 @@ router.post("/generate-item", async (req, res) => {
     } else if (triggerKind === "sns-publish") {
       promptParts = [
         "You are an SNS message body generator for pipeline testing on LocalStack.",
-        "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
+        "Generate ONLY valid JSON - no explanation, no markdown, no code fences. Just the raw JSON object.",
         "",
         `Topic: ${pipeline.topicArn || "unknown"}`,
         pipeline.filterPolicy ? `SNS filter policy (${pipeline.filterPolicyScope || "MessageAttributes"}): ${JSON.stringify(pipeline.filterPolicy)}` : "",
@@ -242,7 +242,7 @@ router.post("/generate-item", async (req, res) => {
     } else {
       promptParts = [
         "You are a DynamoDB item generator for pipeline testing on LocalStack.",
-        "Generate ONLY valid JSON — no explanation, no markdown, no code fences. Just the raw JSON object.",
+        "Generate ONLY valid JSON - no explanation, no markdown, no code fences. Just the raw JSON object.",
         "The item should be a plain JSON object (NOT DynamoDB marshalled format). Use simple key-value pairs.",
         "",
         `Table: ${pipeline.tableName}`,

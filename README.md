@@ -32,7 +32,10 @@ consolidates that entire workflow into one place.
 | Port conflict auto-detection and remapping | ✗ | ✗ | ✓ |
 | Env var presets for batch runs | ✗ | ✗ | ✓ |
 | Visual workflow editor for batch jobs | ✗ | ✗ | ✓ |
-| Full build → deploy → configure → wire → test loop | Across 4-5 tools | Partial | Single UI |
+| Log isolation between concurrent workflows | ✗ | ✗ | ✓ |
+| Container lifecycle management (orphan cleanup) | ✗ | ✗ | ✓ |
+| In-app update notifications | ✗ | ✗ | ✓ |
+| Full build -> deploy -> configure -> wire -> test loop | Across 4-5 tools | Partial | Single UI |
 
 ## Prerequisites
 
@@ -49,7 +52,7 @@ Before running Mouseketool, make sure you have the following installed:
 ### Step 1: Clone and install dependencies
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/manjm010/mouseketool.git
 cd mouseketool
 
 # Install backend dependencies
@@ -137,7 +140,8 @@ Configure the LocalStack connection (protocol, host, port, credentials), build c
 Lambda memory, heavy load batch settings (batch size and window), and history retention (by age or
 amount). Changes to heavy load settings are applied retroactively to all pipelines with heavy load
 runs on startup and is accessible from the Settings page. AI learned data storage (local or S3) is configurable.
-Pipeline self-healing automatically recreates resources after LocalStack restarts.
+Pipeline self-healing automatically recreates resources after LocalStack restarts. The About tab
+displays the current app version and checks for updates from GitHub Releases.
 
 ### Profiles
 Load pre-configured development environments with one click. A profile defines which Lambda projects and
@@ -155,7 +159,7 @@ via a background watcher. Environment variables are scanned from compose files a
 ### Launchpad
 Run docker-compose projects directly from the UI with automatic port conflict detection and remapping.
 Create and manage environment variable presets to customize runs without modifying source files.
-Mouseketool manages Docker images with a consistent tagging scheme — before each run it can
+Mouseketool manages Docker images with a consistent tagging scheme - before each run it can
 rebuild the JAR (Maven/Gradle), remove the old image, and build a fresh one from the Dockerfile.
 Run Settings (rebuild image, port remapping) are configurable per run. The log viewer separates
 build output from container output in tabs, with a toggle to filter infrastructure container logs.
@@ -166,7 +170,9 @@ compose builder with a Monaco editor and structured actions (Generate, Add Batch
 Add Healthchecks). Workflows can be executed in foreground docker compose mode with per-node status
 tracking. Imported workflows auto-register batch projects from their compose files. The canvas includes
 an infrastructure services panel for managing supporting containers. Workflows support search, filters,
-multi-select deletion, and completion state tracking.
+multi-select deletion, and completion state tracking. Logs are fully isolated between workflows using
+unique run IDs - switching workflows never leaks logs from another run. A container watchdog
+automatically kills orphaned containers (labeled MK_CREATED_BY) when no workflow is running.
 
 ### Help & Guides
 In-app documentation covering every feature with detailed explanations, code examples, and troubleshooting tips.
@@ -185,6 +191,31 @@ In-app documentation covering every feature with detailed explanations, code exa
 - **Backend**: Node.js + Express 5 + TypeScript, AWS SDK v3
 - **Infrastructure**: LocalStack (Lambda, DynamoDB, DynamoDB Streams, SNS, SQS, CloudWatch Logs, S3), HashiCorp Vault
 - **Target**: Java Lambda functions (Maven/Gradle, JDK 21)
+
+## Desktop App
+
+Mouseketool is distributed as an Electron desktop application. Download the latest installer from
+[GitHub Releases](https://github.com/manjm010/mouseketool/releases):
+
+- **Windows**: `mouseketool_v<version>.exe` (NSIS installer)
+- **macOS**: `mouseketool_v<version>.dmg` (universal binary - Intel + Apple Silicon)
+
+The app bundles its own backend server and serves the frontend locally. No separate Node.js setup required
+for end users - just install and run.
+
+## Testing
+
+```bash
+# Unit/fast tests (mocked, runs in seconds)
+cd playwright-tests
+npx playwright test
+
+# Integration tests (spins up isolated LocalStack + backend)
+npx playwright test --config=playwright.integration.config.ts
+```
+
+Integration tests are fully isolated - they start their own LocalStack instance (port 4577) and backend
+(port 3099) with a temporary data directory. They never interfere with a running Mouseketool instance.
 
 ## Known Limitations
 

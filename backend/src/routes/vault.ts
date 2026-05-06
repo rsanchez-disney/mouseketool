@@ -21,7 +21,7 @@ router.post("/cleanup-secrets", async (req, res) => {
   res.json(await cleanupSecrets(url, token, paths));
 });
 
-// POST /api/vault/read-paths — get key count per path
+// POST /api/vault/read-paths - get key count per path
 router.post("/read-paths", async (req, res) => {
   const { url, token, paths } = req.body;
   if (!url || !token || !paths?.length) return res.status(400).json({ error: "url, token, and paths are required" });
@@ -39,7 +39,7 @@ router.post("/read-paths", async (req, res) => {
 });
 
 
-// POST /api/vault/read-secrets — get full key-value pairs per path
+// POST /api/vault/read-secrets - get full key-value pairs per path
 router.post("/read-secrets", async (req, res) => {
   const { url, token, paths } = req.body;
   if (!url || !token || !paths?.length) return res.status(400).json({ error: "url, token, and paths are required" });

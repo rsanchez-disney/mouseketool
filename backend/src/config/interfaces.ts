@@ -8,6 +8,7 @@ export interface Settings {
   ai: { learnedStorage: "local" | "s3" };
   workflow: { autoBumpHealthchecks: boolean };
   historyRetention: { mode: "amount" | "age"; maxRuns: number; maxDays: number };
+  theme: "dark" | "light";
 }
 
 export const DEFAULTS: Settings = {
@@ -20,6 +21,7 @@ export const DEFAULTS: Settings = {
   ai: { learnedStorage: "local" },
   workflow: { autoBumpHealthchecks: false },
   historyRetention: { mode: "age", maxRuns: 50, maxDays: 2 },
+  theme: "dark",
 };
 
 export interface BuildMeta {

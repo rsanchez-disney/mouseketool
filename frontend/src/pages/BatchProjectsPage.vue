@@ -180,7 +180,7 @@ function handleExport(p: BatchProject) {
     <!-- Project List -->
     <div class="space-y-2">
       <div v-for="p in filteredProjects" :key="p.id" class="flex items-center gap-3 rounded-xl border p-4 transition-all hover:bg-muted/30">
-        <Tooltip :disabled="!profileBatchNames.includes(p.name)"><TooltipTrigger as-child><input type="checkbox" :checked="selectedBatches.has(p.id)" @change="toggleSelect(p.id)" :disabled="profileBatchNames.includes(p.name)" :class="['accent-primary size-4 shrink-0', profileBatchNames.includes(p.name) ? 'cursor-not-allowed' : 'cursor-pointer']" /></TooltipTrigger><TooltipContent>Managed by active profile — cannot be deleted</TooltipContent></Tooltip>
+        <Tooltip :disabled="!profileBatchNames.includes(p.name)"><TooltipTrigger as-child><input type="checkbox" :checked="selectedBatches.has(p.id)" @change="toggleSelect(p.id)" :disabled="profileBatchNames.includes(p.name)" :class="['accent-primary size-4 shrink-0', profileBatchNames.includes(p.name) ? 'cursor-not-allowed' : 'cursor-pointer']" /></TooltipTrigger><TooltipContent>Managed by active profile - cannot be deleted</TooltipContent></Tooltip>
         <div class="min-w-0 flex-1 space-y-1">
           <div class="flex items-center gap-2">
             <span class="text-sm font-semibold">{{ p.name }}</span>

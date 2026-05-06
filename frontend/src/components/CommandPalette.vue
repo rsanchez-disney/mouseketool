@@ -28,6 +28,7 @@ const staticCommands: Cmd[] = [
   { label: "Batch Projects", path: "/batch-projects", icon: Container, keywords: "docker compose register" },
   { label: "Launchpad", path: "/launchpad", icon: Play, keywords: "run workflow execute" },
   { label: "Settings", path: "/settings", icon: Settings, keywords: "config connection localstack" },
+  { label: "Profiles", path: "/settings?tab=profile", icon: Settings, keywords: "profile load unload workspace team" },
   { label: "Help & Guides", path: "/help", icon: HelpCircle, keywords: "help docs guide" },
   { label: "New Pipeline", path: "/triggers", icon: Plus, keywords: "create new pipeline", section: "Actions", action: () => router.push("/triggers") },
   { label: "New Workflow", path: "/launchpad", icon: Plus, keywords: "create new workflow", section: "Actions" },

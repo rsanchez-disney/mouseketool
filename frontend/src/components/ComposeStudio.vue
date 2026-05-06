@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from "vue";
 import "@/monaco-env";
 import * as monaco from "monaco-editor";
+import yaml from "js-yaml";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -141,6 +142,8 @@ const hasYaml = computed(() => !!props.modelValue.trim());
 
 
 function scrollChat() { nextTick(() => chatScroll.value?.scrollTo({ top: chatScroll.value.scrollHeight, behavior: "smooth" })); }
+const yamlValid = computed(() => { try { const doc = yaml.load(props.modelValue); return doc && typeof doc === "object" && !!(doc as any).services; } catch { return false; } });
+
 function disableSaveAndApply(yaml: string) { savingDisabled = true; if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; } emit("apply", yaml); }
 function applyYaml(yaml: string) { disableSaveAndApply(yaml); }
 function emitAction(action: string, serviceName?: string) { loading.value = true; showAddServiceInput.value = false; showBatchSelect.value = false; emit("action", { action, serviceName }); }
@@ -168,7 +171,7 @@ defineExpose({ pushAssistantMessage, setLoading });
         </Button>
         <Tooltip>
           <TooltipTrigger as-child>
-            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="loading" @click="disableSaveAndApply(modelValue)">
+            <Button variant="outline" size="sm" class="gap-1.5 cursor-pointer" :disabled="loading || !yamlValid" @click="disableSaveAndApply(modelValue)">
               <Wand2 class="size-3.5" /> Apply to Canvas
             </Button>
           </TooltipTrigger>

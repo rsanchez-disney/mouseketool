@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { watcher } from "./pipeline-watcher.js";
 
-const clients = new Map<string, Set<WebSocket>>(); // pipelineId → connected clients
+const clients = new Map<string, Set<WebSocket>>(); // pipelineId -> connected clients
 
 export function initPipelineWs(server: Server) {
   const wss = new WebSocketServer({ server, path: "/ws/pipelines" });

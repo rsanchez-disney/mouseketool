@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { loadSettings, saveSettings } from "../helpers/settings.js";
 import { DEFAULTS } from "../config/interfaces.js";
+import { SETTINGS_DIR } from "../config/constants.js";
 
 const router = Router();
 
@@ -8,7 +9,7 @@ router.get("/", async (_req, res) => {
   res.json(await loadSettings());
 });
 
-router.get("/defaults", async (_req, res) => { const { readFile } = await import("fs/promises"); const { join } = await import("path"); try { res.json(JSON.parse(await readFile(join(process.cwd(), ".data", "defaults.json"), "utf-8"))); } catch { res.json({}); } });
+router.get("/defaults", async (_req, res) => { const { readFile } = await import("fs/promises"); const { join } = await import("path"); try { res.json(JSON.parse(await readFile(join(SETTINGS_DIR, "defaults.json"), "utf-8"))); } catch { res.json({}); } });
 
 router.put("/", async (req, res) => {
   const settings = await saveSettings({ ...DEFAULTS, ...req.body });
@@ -34,5 +35,12 @@ router.put("/", async (req, res) => {
 
   res.json(settings);
 });
+
+router.put("/theme", async (req, res) => {
+  const current = await loadSettings();
+  await saveSettings({ ...current, theme: req.body.theme });
+  res.json({ ok: true });
+});
+
 
 export default router;

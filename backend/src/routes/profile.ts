@@ -1,9 +1,9 @@
-// ⚠️ WORKSPACE SAFETY RULE:
+// [WARN] WORKSPACE SAFETY RULE:
 // Mouseketool must NEVER perform destructive or modifying actions on the user's workspace folder.
 // The ONLY allowed operations on the workspace are:
-//   1. SCAN — read folder names to detect existing projects
-//   2. CLONE — add new project folders via git clone (only if not already present)
-//   3. mvn versions:update-parent — the sole exception, modifies pom.xml to fix parent resolution (not committed)
+//   1. SCAN - read folder names to detect existing projects
+//   2. CLONE - add new project folders via git clone (only if not already present)
+//   3. mvn versions:update-parent - the sole exception, modifies pom.xml to fix parent resolution (not committed)
 // NO deleting, moving, renaming, or writing to any file inside the workspace. Ever.
 //
 
@@ -15,11 +15,19 @@ import { detectKiro, askKiro } from "../helpers/kiro.js";
 import { loadSettings } from "../helpers/settings.js";
 import { DEPLOYMENTS_FILE, PIPELINES_FILE, BUILDS_DIR } from "../config/constants.js";
 
+import { SETTINGS_DIR } from "../config/constants.js";
+
+import { fileURLToPath } from "url";
+import { dirname } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const router = Router();
-const DATA_DIR = join(process.cwd(), ".data");
+const DATA_DIR = SETTINGS_DIR;
 const PROFILE_STATE_FILE = join(DATA_DIR, "profile-state.json");
 const CUSTOM_PROFILES_DIR = join(DATA_DIR, "profiles");
-const BUNDLED_PROFILES_DIR = join(process.cwd(), "profiles");
+const BUNDLED_PROFILES_DIR = join(__dirname, "..", "..", "profiles");
 
 // --- Helpers ---
 async function loadProfileState() {
@@ -47,17 +55,17 @@ async function listProfiles() {
   return profiles;
 }
 
-// GET /api/profile — list all profiles
+// GET /api/profile - list all profiles
 router.get("/", async (_req, res) => {
   res.json(await listProfiles());
 });
 
-// GET /api/profile/state — get active profile state
+// GET /api/profile/state - get active profile state
 router.get("/state", async (_req, res) => {
   res.json(await loadProfileState());
 });
 
-// POST /api/profile/load — load a profile (after frontend confirms destructive action)
+// POST /api/profile/load - load a profile (after frontend confirms destructive action)
 // Body: { profileId: string, workspacePath: string, autoDownload: boolean }
 router.post("/load", async (req, res) => {
   const { profileId, workspacePath, autoDownload } = req.body;
@@ -73,18 +81,18 @@ router.post("/load", async (req, res) => {
   res.json({ ok: true, profile });
 });
 
-// POST /api/profile/unload — unload active profile
+// POST /api/profile/unload - unload active profile
 router.post("/unload", async (_req, res) => {
   console.log("[profile:unload] Unloading active profile");
   await saveProfileState(null);
   // Clear deployments and pipelines
   await writeFile(DEPLOYMENTS_FILE, "[]");
   await writeFile(PIPELINES_FILE, "[]");
-  await writeFile(join(process.cwd(), ".data", "batch-projects.json"), "[]");
+  await writeFile(join(SETTINGS_DIR, "batch-projects.json"), "[]");
   res.json({ ok: true });
 });
 
-// POST /api/profile/cleanup — wipe all LocalStack resources
+// POST /api/profile/cleanup - wipe all LocalStack resources
 router.post("/cleanup", async (req, res) => {
   try {
     const settings = await loadSettings();
@@ -106,39 +114,41 @@ router.post("/cleanup", async (req, res) => {
     const fns = await lambda.send(new ListFunctionsCommand({}));
     console.log(`[profile:cleanup] Deleting ${fns.Functions?.length || 0} Lambda functions`);
     for (const fn of fns.Functions || []) {
-      try { await lambda.send(new DeleteFunctionCommand({ FunctionName: fn.FunctionName })); console.log(`[profile:cleanup]   ✓ ${fn.FunctionName}`); } catch (e: any) { console.log(`[profile:cleanup]   ✗ ${fn.FunctionName}: ${e.message}`); }
+      try { await lambda.send(new DeleteFunctionCommand({ FunctionName: fn.FunctionName })); console.log(`[profile:cleanup]   [OK] ${fn.FunctionName}`); } catch (e: any) { console.log(`[profile:cleanup]   [FAIL] ${fn.FunctionName}: ${e.message}`); }
     }
 
     // Delete all DynamoDB tables
     const tables = await dynamo.send(new ListTablesCommand({}));
     console.log(`[profile:cleanup] Deleting ${tables.TableNames?.length || 0} DynamoDB tables`);
     for (const t of tables.TableNames || []) {
-      try { await dynamo.send(new DeleteTableCommand({ TableName: t })); console.log(`[profile:cleanup]   ✓ ${t}`); } catch (e: any) { console.log(`[profile:cleanup]   ✗ ${t}: ${e.message}`); }
+      try { await dynamo.send(new DeleteTableCommand({ TableName: t })); console.log(`[profile:cleanup]   [OK] ${t}`); } catch (e: any) { console.log(`[profile:cleanup]   [FAIL] ${t}: ${e.message}`); }
     }
 
     // Delete all SNS topics
     const topics = await sns.send(new ListTopicsCommand({}));
     console.log(`[profile:cleanup] Deleting ${topics.Topics?.length || 0} SNS topics`);
     for (const t of topics.Topics || []) {
-      try { await sns.send(new DeleteTopicCommand({ TopicArn: t.TopicArn })); console.log(`[profile:cleanup]   ✓ ${t.TopicArn?.split(":").pop()}`); } catch (e: any) { console.log(`[profile:cleanup]   ✗ ${t.TopicArn}: ${e.message}`); }
+      try { await sns.send(new DeleteTopicCommand({ TopicArn: t.TopicArn })); console.log(`[profile:cleanup]   [OK] ${t.TopicArn?.split(":").pop()}`); } catch (e: any) { console.log(`[profile:cleanup]   [FAIL] ${t.TopicArn}: ${e.message}`); }
     }
 
     // Delete all SQS queues
     const queues = await sqs.send(new ListQueuesCommand({}));
     console.log(`[profile:cleanup] Deleting ${queues.QueueUrls?.length || 0} SQS queues`);
     for (const q of queues.QueueUrls || []) {
-      try { await sqs.send(new DeleteQueueCommand({ QueueUrl: q })); console.log(`[profile:cleanup]   ✓ ${q.split("/").pop()}`); } catch (e: any) { console.log(`[profile:cleanup]   ✗ ${q}: ${e.message}`); }
+      try { await sqs.send(new DeleteQueueCommand({ QueueUrl: q })); console.log(`[profile:cleanup]   [OK] ${q.split("/").pop()}`); } catch (e: any) { console.log(`[profile:cleanup]   [FAIL] ${q}: ${e.message}`); }
     }
 
     // Clear local data files
     await writeFile(DEPLOYMENTS_FILE, "[]");
     await writeFile(PIPELINES_FILE, "[]");
-    await writeFile(join(process.cwd(), ".data", "batch-projects.json"), "[]");
-    await writeFile(join(process.cwd(), ".data", "batch-workflows.json"), "[]");
+    await writeFile(join(SETTINGS_DIR, "batch-projects.json"), "[]");
+    await writeFile(join(SETTINGS_DIR, "batch-workflows.json"), "[]");
+    // Delete cached builds
+    try { await rm(BUILDS_DIR, { recursive: true, force: true }); await mkdir(BUILDS_DIR, { recursive: true }); } catch {}
     // Delete workflow folders
-    try { const wfDir = join(process.cwd(), ".data", "batch-workflows"); const { readdirSync, rmSync } = await import("fs"); for (const d of readdirSync(wfDir, { withFileTypes: true })) { if (d.isDirectory()) rmSync(join(wfDir, d.name), { recursive: true, force: true }); } } catch {}
+    try { const wfDir = join(SETTINGS_DIR, "batch-workflows"); const { readdirSync, rmSync } = await import("fs"); for (const d of readdirSync(wfDir, { withFileTypes: true })) { if (d.isDirectory()) rmSync(join(wfDir, d.name), { recursive: true, force: true }); } } catch {}
     // Delete effective compose cache
-    try { const compDir = join(process.cwd(), ".data", "batch-compose"); const { rmSync } = await import("fs"); rmSync(compDir, { recursive: true, force: true }); } catch {}
+    try { const compDir = join(SETTINGS_DIR, "batch-compose"); const { rmSync } = await import("fs"); rmSync(compDir, { recursive: true, force: true }); } catch {}
 
     res.json({ ok: true });
   } catch (e: any) {
@@ -146,7 +156,7 @@ router.post("/cleanup", async (req, res) => {
   }
 });
 
-// POST /api/profile/scan — scan workspace for profile projects
+// POST /api/profile/scan - scan workspace for profile projects
 // Body: { workspacePath: string, profileId: string }
 router.post("/scan", async (req, res) => {
   const { workspacePath, profileId } = req.body;
@@ -207,7 +217,7 @@ router.post("/scan", async (req, res) => {
   res.json(results);
 });
 
-// POST /api/profile/clone-project — clone a repo using git + token from MCP config
+// POST /api/profile/clone-project - clone a repo using git + token from MCP config
 // Body: { repoName: string, workspacePath: string }
 router.post("/clone-project", async (req, res) => {
   const { repoName, workspacePath, org: profileOrg } = req.body;
@@ -241,15 +251,15 @@ router.post("/clone-project", async (req, res) => {
     const { execSync } = await import("child_process");
     console.log(`[profile:clone] Cloning ${repoName} from ${host}/${profileOrg || ""}`);
     execSync(`git clone ${cloneUrl} "${targetPath}"`, { stdio: "pipe", timeout: 120000 });
-    console.log(`[profile:clone] ✓ Cloned ${repoName} to ${targetPath}`);
+    console.log(`[profile:clone] [OK] Cloned ${repoName} to ${targetPath}`);
     res.json({ ok: true, path: targetPath });
   } catch (e: any) {
     const msg = e.stderr?.toString() || e.message || "Clone failed";
-    res.status(400).json({ error: msg.includes("404") || msg.includes("not found") ? "Repository not found — check permissions" : msg.substring(0, 200) });
+    res.status(400).json({ error: msg.includes("404") || msg.includes("not found") ? "Repository not found - check permissions" : msg.substring(0, 200) });
   }
 });
 
-// GET /api/profile/github-status — check if Kiro + GitHub MCP is available
+// GET /api/profile/github-status - check if Kiro + GitHub MCP is available
 router.get("/github-status", async (_req, res) => {
   const kiro = await detectKiro();
   if (!kiro.available) return res.json({ available: false, error: "Kiro CLI not found" });
@@ -260,7 +270,7 @@ router.get("/github-status", async (_req, res) => {
     const configPaths = [
       join(home, ".kiro", "settings", "mcp.json"),
       join(home, ".kiro", "mcp.json"),
-      join(process.cwd(), ".kiro", "mcp", "mcp.json"),
+      join(home, ".kiro", "mcp", "mcp.json"),
     ];
     for (const cp of configPaths) {
       try {
@@ -283,7 +293,7 @@ router.get("/github-status", async (_req, res) => {
   }
 });
 
-// POST /api/profile/save-results — save provisioning results
+// POST /api/profile/save-results - save provisioning results
 router.post("/save-results", async (req, res) => {
   const state = await loadProfileState();
   if (!state) return res.status(400).json({ error: "No active profile" });

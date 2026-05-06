@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { readFile, writeFile, mkdir, copyFile, rm } from "fs/promises";
 import { join, dirname, basename } from "path";
+import { SETTINGS_DIR } from "../config/constants.js";
 import { tmpdir } from "os";
 import { existsSync, cpSync, mkdirSync, readFileSync } from "fs";
 import { execSync } from "child_process";
@@ -8,9 +9,9 @@ import { v4 as uuid } from "uuid";
 import * as yaml from "js-yaml";
 import { loadSettings } from "../helpers/settings.js";
 
-const WORKFLOWS_FILE = join(process.cwd(), ".data", "batch-workflows.json");
-const WORKFLOWS_DIR = join(process.cwd(), ".data", "batch-workflows");
-const BUILDS_FILE = join(process.cwd(), ".data", "batch-projects.json");
+const WORKFLOWS_FILE = join(SETTINGS_DIR, "batch-workflows.json");
+const WORKFLOWS_DIR = join(SETTINGS_DIR, "batch-workflows");
+const BUILDS_FILE = join(SETTINGS_DIR, "batch-projects.json");
 const router = Router();
 
 interface BatchJobNode {
@@ -58,7 +59,7 @@ async function loadWorkflows(): Promise<BatchWorkflow[]> {
 }
 
 async function saveWorkflows(wfs: BatchWorkflow[]) {
-  await mkdir(join(process.cwd(), ".data"), { recursive: true });
+  await mkdir(SETTINGS_DIR, { recursive: true });
   await writeFile(WORKFLOWS_FILE, JSON.stringify(wfs, null, 2));
 }
 
@@ -131,7 +132,7 @@ router.post("/:id/import", async (req, res) => {
   if (!wf) return res.status(404).json({ error: "Workflow not found" });
 
   // Load build metadata with parsed services
-  const BATCH_BUILDS_DIR = join(process.cwd(), ".data", "batch-builds");
+  const BATCH_BUILDS_DIR = join(SETTINGS_DIR, "batch-builds");
   let meta: any;
   try { meta = JSON.parse(await readFile(join(BATCH_BUILDS_DIR, buildId, "meta.json"), "utf-8")); }
   catch { return res.status(404).json({ error: "Build not found" }); }
@@ -278,7 +279,7 @@ router.post("/:id/import-file", async (req, res) => {
   const withEnvFile = envFileRefs.filter(r => r.files.length > 0);
   const withoutEnvFile = envFileRefs.filter(r => r.files.length === 0);
 
-  // If some have env_file and some don't → fail
+  // If some have env_file and some don't -> fail
   if (withEnvFile.length > 0 && withoutEnvFile.length > 0) {
     return res.status(400).json({
       error: "Inconsistent env_file usage",
@@ -286,7 +287,7 @@ router.post("/:id/import-file", async (req, res) => {
     });
   }
 
-  // If any have multiple env_file entries → fail
+  // If any have multiple env_file entries -> fail
   const multiFile = withEnvFile.filter(r => r.files.length > 1);
   if (multiFile.length) {
     return res.status(400).json({
@@ -324,11 +325,34 @@ router.post("/:id/import-file", async (req, res) => {
   const copiedCompose = join(wfDir, "docker-compose.yml");
   const warnings: string[] = [];
   await copyFile(filePath, copiedCompose);
+  // Copy volume-referenced files/folders into workflow directory
+  if (composeDir) {
+    try {
+      const { cpSync } = await import("fs");
+      const volDoc = yaml.load(await readFile(copiedCompose, "utf-8")) as any;
+      if (volDoc?.services) {
+        for (const svc of Object.values(volDoc.services) as any[]) {
+          if (!Array.isArray(svc.volumes)) continue;
+          for (const v of svc.volumes) {
+            const hostPath = String(v).split(":")[0];
+            if (hostPath.startsWith("./") || hostPath.startsWith("../")) {
+              const src = join(composeDir, hostPath);
+              const dest = join(wfDir, hostPath);
+              try {
+                await mkdir(dirname(dest), { recursive: true });
+                cpSync(src, dest, { recursive: true });
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {}
+  }
   if (envFilePath && existsSync(envFilePath)) {
     await copyFile(envFilePath, join(wfDir, envFileName!));
     if (envFileName !== ".env") try { await rm(join(wfDir, ".env")); } catch {}
   } else {
-    // No .env file — create an empty one
+    // No .env file - create an empty one
     await writeFile(join(wfDir, ".env"), "");
   }
 
@@ -433,6 +457,24 @@ router.post("/:id/import-file", async (req, res) => {
   }));
 
   const batchServices = allServices.filter(s => !excludeSet.has(s.name.toLowerCase()));
+  // Validate: all batch services must belong to the same project
+  if (!rawContent && batchServices.length > 1) {
+    let projects: any[] = [];
+    try { projects = JSON.parse(await readFile(BUILDS_FILE, "utf-8")); } catch {}
+    if (projects.length > 1) {
+      const matchedProjects = new Set<string>();
+      for (const svc of batchServices) {
+        const match = projects.find((p: any) => p.services?.some((s: any) => s.name === svc.name) || p.name?.toLowerCase().includes(svc.name.toLowerCase().replace(/-container$/, "").replace(/-cs-batch$/, "")));
+        if (match) matchedProjects.add(match.id);
+      }
+      if (matchedProjects.size > 1) {
+        return res.status(400).json({
+          error: "Multiple batch projects detected",
+          details: "This compose file references services from multiple batch projects. Multi-batch composing is a future feature. Please use a compose file that only contains services from a single batch project.",
+        });
+      }
+    }
+  }
   const auxiliaryNames = new Set(allServices.filter(s => excludeSet.has(s.name.toLowerCase())).map(s => s.name));
 
   const positions = layoutNodes(batchServices, auxiliaryNames);
@@ -453,7 +495,7 @@ router.post("/:id/import-file", async (req, res) => {
   for (const s of batchServices) {
     for (const dep of s.dependsOn) {
       if (auxiliaryNames.has(dep)) continue;
-      if (dep === s.name) { warnings.push(`Container "${s.name}" has a self-dependency — skipped`); continue; }
+      if (dep === s.name) { warnings.push(`Container "${s.name}" has a self-dependency - skipped`); continue; }
       const sourceId = nodeMap.get(dep);
       const targetId = nodeMap.get(s.name);
       if (sourceId && targetId) edges.push({ source: sourceId, target: targetId });
@@ -474,7 +516,7 @@ router.post("/:id/import-file", async (req, res) => {
   // Auto-register batch projects from compose
   if (!rawContent && composeDir) {
     try {
-      const bpFile = join(process.cwd(), ".data", "batch-projects.json");
+      const bpFile = join(SETTINGS_DIR, "batch-projects.json");
       let batchProjects: any[] = [];
       try { batchProjects = JSON.parse(await readFile(bpFile, "utf-8")); } catch {}
       // Register the compose project directory if not already registered

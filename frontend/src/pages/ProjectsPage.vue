@@ -108,7 +108,7 @@ function goRebuild(path: string) {
             <Check v-if="p.deployed" class="size-3" />
             <Check v-else-if="p.built" class="size-3" />
             <AlertTriangle v-else class="size-3" />
-            {{ p.deployed ? 'Deployed' : p.built ? 'Built — not deployed' : 'Build failed' }}
+            {{ p.deployed ? 'Deployed' : p.built ? 'Built - not deployed' : 'Build failed' }}
           </span>
           <Button variant="outline" size="sm" @click="goRebuild(p.path)" class="gap-1.5 cursor-pointer text-xs"><Hammer class="size-3" />Rebuild</Button>
         </div>

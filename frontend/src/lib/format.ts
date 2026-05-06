@@ -27,7 +27,7 @@ export function formatMs(ms?: number): string {
 }
 
 export function formatBytes(b: number | null | undefined): string {
-  if (b == null) return "—";
+  if (b == null) return "-";
   if (b < 1024) return `${b} B`;
   if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
   return `${(b / 1048576).toFixed(1)} MB`;

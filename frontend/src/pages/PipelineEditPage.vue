@@ -703,7 +703,7 @@ async function save() {
                       <Button variant="ghost" size="sm" class="h-6 text-xs gap-1 cursor-pointer w-full" @click="s.entries.push({ key: '', value: '' })"><Plus class="size-3" /> Add field</Button>
                     </div>
                   </div>
-                <p class="text-[10px] text-muted-foreground mt-3">Secret paths are saved with the pipeline. Key/value pairs are not stored — they are created in Vault during pipeline execution.</p>
+                <p class="text-[10px] text-muted-foreground mt-3">Secret paths are saved with the pipeline. Key/value pairs are not stored - they are created in Vault during pipeline execution.</p>
 
                 </div>
               </div>
@@ -755,7 +755,7 @@ async function save() {
                 
               </div>
             </div>
-            <CardDescription class="text-xs mt-2">These are applied directly to the target Lambda's configuration — they are NOT pipeline-specific. If other pipelines share the same target Lambda, changes here will affect them too.</CardDescription>
+            <CardDescription class="text-xs mt-2">These are applied directly to the target Lambda's configuration - they are NOT pipeline-specific. If other pipelines share the same target Lambda, changes here will affect them too.</CardDescription>
             <div v-if="hasLocalhostEnv" class="flex items-start gap-2 text-[11px] text-amber-500 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-1.5 mt-3"><AlertTriangle class="size-3 shrink-0" /> <span>Mouseketool's managed LocalStack runs on its own Docker network, so <code class="font-mono bg-amber-500/10 px-1 rounded text-[10px]">localhost</code> won't resolve to your host machine. Use <code class="font-mono bg-amber-500/10 px-1 rounded text-[10px]">host.docker.internal</code> instead.</span></div>
           </CardHeader>
           <CardContent class="space-y-2">

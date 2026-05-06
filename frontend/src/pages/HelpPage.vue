@@ -55,7 +55,7 @@ const sqsExample = JSON.stringify({ Records: [{ body: '{"key": "value"}' }] }, n
 // Search: map section IDs to their tab and text content
 const sectionContent: Record<string, { tab: string; text: string }> = {
   "start-home": { tab: "start", text: "home dashboard quick stats pipelines batch projects workflows pulse indicator quick actions" },
-  "start-settings": { tab: "start", text: "settings connection lambda builds pipelines ai workflows managed localstack restore defaults unsaved" },
+  "start-settings": { tab: "start", text: "settings connection lambda builds pipelines ai workflows managed localstack restore defaults unsaved about version update" },
   "lw-build": { tab: "lambda", text: "building build maven gradle handler artifact cached builds environment variables" },
   "lw-deploy": { tab: "lambda", text: "deploying deploy localstack memory configuration override" },
   "lw-status": { tab: "lambda", text: "status active failed unknown deleted refresh search runtime" },
@@ -68,7 +68,7 @@ const sectionContent: Record<string, { tab: string; text: string }> = {
   "pl-history": { tab: "pipelines", text: "history runs dlq detection live watch filtering state time range source" },
   "bj-registry": { tab: "batch", text: "project registry docker compose dockerfile file watcher" },
   "bj-run": { tab: "batch", text: "simple run environment variable presets port conflict detection container visualization rebuild image run settings log filtering auto-teardown maven docker" },
-  "bj-workflow": { tab: "batch", text: "workflow editor canvas vueflow compose studio ai generate execution infrastructure" },
+  "bj-workflow": { tab: "batch", text: "workflow editor canvas vueflow compose studio ai generate execution infrastructure log isolation container watchdog orphan cleanup" },
   "pf-overview": { tab: "profiles", text: "profiles workspace load unload clone github auto-download parallel build deploy register" },
   "pf-loading": { tab: "profiles", text: "loading profile destructive cleanup wipe localstack resources confirmation modal" },
   "pf-projects": { tab: "profiles", text: "projects page cards found missing clone rebuild handler detection" },
@@ -195,13 +195,15 @@ watch(searchQuery, (q) => {
                 <p class="font-medium text-foreground">Pipelines</p>
                 <p>Control history retention (by age or amount) and heavy load batch settings (batch size and window). Heavy load changes apply immediately to all pipelines with heavy load enabled.</p>
                 <p class="font-medium text-foreground">AI</p>
-                <p>Choose where Kiro stores learned data — locally in <code class="text-xs bg-muted px-1 rounded">.data/learned/</code> or in LocalStack S3.</p>
+                <p>Choose where Kiro stores learned data - locally in <code class="text-xs bg-muted px-1 rounded">.data/learned/</code> or in LocalStack S3.</p>
                 <p class="font-medium text-foreground">Workflows</p>
                 <p>Toggle auto-bump healthchecks for imported docker-compose files.</p>
                 <p class="font-medium text-foreground">UI</p>
                 <p>Toggle confetti celebrations on success events (deploy, invoke, pipeline, batch, workflow) with granular per-action control.</p>
                 <p class="font-medium text-foreground">Unsaved Changes & Restore</p>
                 <p>An amber indicator appears when you have unsaved modifications. A <strong>Restore Defaults</strong> button resets all settings to their original values.</p>
+                <p class="font-medium text-foreground">About</p>
+                <p>Displays the current app version and checks for updates from GitHub Releases. When a newer version is available, a green badge appears in the navigation bar with a link to download.</p>
               </div>
             </div>
           </div>
@@ -262,7 +264,7 @@ watch(searchQuery, (q) => {
             <div class="overflow-hidden">
               <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
                 <p>Deploy from the <strong>Deploy</strong> button on a cached build card or from the Deployments page. Make sure LocalStack is running and connection settings are correct.</p>
-                <p>If the function already exists, the deploy updates it with new code — no need to delete and recreate. The deploy override modal lets you confirm or skip redeployment.</p>
+                <p>If the function already exists, the deploy updates it with new code - no need to delete and recreate. The deploy override modal lets you confirm or skip redeployment.</p>
                 <p class="font-medium text-foreground">Memory configuration</p>
                 <p>Java Lambdas on LocalStack need more memory due to cold start overhead. Default is <strong>2048 MB</strong>. Change per-function via the Memory dropdown. Bump up if you see <code class="text-xs bg-muted px-1 rounded">OutOfMemoryError</code>.</p>
               </div>
@@ -309,9 +311,9 @@ watch(searchQuery, (q) => {
                 <pre class="bg-zinc-950 rounded-lg p-3 text-xs overflow-auto font-mono text-zinc-300 border border-zinc-800 relative"><span class="absolute top-1.5 right-2 text-[9px] text-zinc-600 font-sans">JSON</span>{{ sqsExample }}</pre>
                 <p class="font-medium text-foreground">Understanding results</p>
                 <ul class="list-disc list-inside space-y-1.5 ml-1">
-                  <li><strong>Root Cause panel</strong> — Extracts all <code class="text-xs bg-muted px-1 rounded">Caused by</code> lines from logs.</li>
-                  <li><strong>Diagnostics</strong> — Lists env vars pointing to unreachable services, checks handler class in jar.</li>
-                  <li><strong>Local Class Diagnostic</strong> — Runs the class locally to capture the full stack trace when <code class="text-xs bg-muted px-1 rounded">ExceptionInInitializerError</code> occurs.</li>
+                  <li><strong>Root Cause panel</strong> - Extracts all <code class="text-xs bg-muted px-1 rounded">Caused by</code> lines from logs.</li>
+                  <li><strong>Diagnostics</strong> - Lists env vars pointing to unreachable services, checks handler class in jar.</li>
+                  <li><strong>Local Class Diagnostic</strong> - Runs the class locally to capture the full stack trace when <code class="text-xs bg-muted px-1 rounded">ExceptionInInitializerError</code> occurs.</li>
                 </ul>
                 <p class="font-medium text-foreground">Debug mode & Re-invoke</p>
                 <p><strong>Debug Invoke</strong> runs with extra JVM flags for detailed traces. The <strong>Re-invoke</strong> button (⚡) re-runs with the last payload without opening the invoke panel.</p>
@@ -368,13 +370,13 @@ watch(searchQuery, (q) => {
                 <p>Click <strong>Execute</strong> on a pipeline card to watch each step run in real-time via SSE.</p>
                 <p class="font-medium text-foreground">Execution steps</p>
                 <ul class="list-disc list-inside space-y-1.5 ml-1">
-                  <li><strong>DynamoDB Insert</strong> — Inserts test item, purges queues, deletes log groups for clean slate.</li>
-                  <li><strong>Stream Handler</strong> — Polls CloudWatch for stream handler logs.</li>
-                  <li><strong>SNS Publish</strong> — Inferred from SQS evidence (SNS doesn't produce logs).</li>
-                  <li><strong>SQS Deliver</strong> — Checks queue attributes and DLQ.</li>
-                  <li><strong>Target Lambda</strong> — Polls CloudWatch. If no logs appear, performs a diagnostic invoke.</li>
+                  <li><strong>DynamoDB Insert</strong> - Inserts test item, purges queues, deletes log groups for clean slate.</li>
+                  <li><strong>Stream Handler</strong> - Polls CloudWatch for stream handler logs.</li>
+                  <li><strong>SNS Publish</strong> - Inferred from SQS evidence (SNS doesn't produce logs).</li>
+                  <li><strong>SQS Deliver</strong> - Checks queue attributes and DLQ.</li>
+                  <li><strong>Target Lambda</strong> - Polls CloudWatch. If no logs appear, performs a diagnostic invoke.</li>
                 </ul>
-                <p>Use <strong>Stop</strong> to abort at any time. If a step times out, it may be LocalStack's ESM pollers being slow — try again or check History.</p>
+                <p>Use <strong>Stop</strong> to abort at any time. If a step times out, it may be LocalStack's ESM pollers being slow - try again or check History.</p>
               </div>
             </div>
           </div>
@@ -452,7 +454,7 @@ watch(searchQuery, (q) => {
                   <div class="w-10 h-px flow-dash text-amber-500/40" />
                   <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-red-500/30 bg-red-500/5"><Zap class="size-3 text-red-400" /><span class="text-[10px] text-red-400 font-medium">Lambda</span></div>
                 </div>
-                <p>The simplest pipeline type. A DynamoDB Stream triggers your Lambda function directly via an event source mapping — no intermediary services. Best for cases where you don't need fan-out, filtering, or retry queues.</p>
+                <p>The simplest pipeline type. A DynamoDB Stream triggers your Lambda function directly via an event source mapping - no intermediary services. Best for cases where you don't need fan-out, filtering, or retry queues.</p>
                 <p class="font-medium text-foreground">When to use</p>
                 <p>Use Direct Stream when your Lambda is the only consumer of the table's change events and you want the lowest latency path from write to invocation.</p>
               </div>
@@ -475,7 +477,7 @@ watch(searchQuery, (q) => {
                   <div class="w-10 h-px flow-dash text-emerald-500/40" />
                   <div class="flex items-center gap-1 px-2.5 py-1 rounded-md border border-red-500/30 bg-red-500/5"><Zap class="size-3 text-red-400" /><span class="text-[10px] text-red-400 font-medium">Lambda</span></div>
                 </div>
-                <p>An SQS queue triggers your Lambda function. Best for testing Lambdas that consume messages from a queue — common in decoupled microservice architectures where upstream services publish to SQS.</p>
+                <p>An SQS queue triggers your Lambda function. Best for testing Lambdas that consume messages from a queue - common in decoupled microservice architectures where upstream services publish to SQS.</p>
                 <p class="font-medium text-foreground">When to use</p>
                 <p>Use Queue Consumer when your Lambda already expects SQS event payloads and you want to test it by sending messages directly to a queue.</p>
               </div>
@@ -544,7 +546,7 @@ watch(searchQuery, (q) => {
                 <p class="font-medium text-foreground">Image rebuild flow</p>
                 <p>When rebuild is enabled, Mouseketool runs the full pipeline: <code class="text-xs bg-muted px-1 rounded">mvn clean install</code> → remove old Docker image → <code class="text-xs bg-muted px-1 rounded">docker build</code> with the project's tagged image name. The effective compose file always uses <code class="text-xs bg-muted px-1 rounded">image:</code> instead of <code class="text-xs bg-muted px-1 rounded">build:</code> for consistency.</p>
                 <p class="font-medium text-foreground">Log filtering</p>
-                <p>The log viewer has Build and Run tabs when rebuild is enabled. The Run tab shows only your batch container's logs by default — infrastructure services (redis, localstack, etc.) are filtered out. Toggle "All logs" to see everything.</p>
+                <p>The log viewer has Build and Run tabs when rebuild is enabled. The Run tab shows only your batch container's logs by default - infrastructure services (redis, localstack, etc.) are filtered out. Toggle "All logs" to see everything.</p>
                 <p class="font-medium text-foreground">Auto-teardown</p>
                 <p>When the batch container exits, Mouseketool automatically stops all remaining containers and runs <code class="text-xs bg-muted px-1 rounded">docker compose down</code>. The Run button resets so you can start again immediately.</p>
               </div>
@@ -563,13 +565,17 @@ watch(searchQuery, (q) => {
               <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
                 <p>A visual canvas (VueFlow) for building job dependency graphs. Each node represents a Docker container job with image, command, timeout, and env var overrides.</p>
                 <p class="font-medium text-foreground">Creating workflows</p>
-                <p>Click "New" then "Add Job" to place nodes. Connect by dragging handles. Import from existing compose files — <code class="text-xs bg-muted px-1 rounded">depends_on</code> relationships become edges.</p>
+                <p>Click "New" then "Add Job" to place nodes. Connect by dragging handles. Import from existing compose files - <code class="text-xs bg-muted px-1 rounded">depends_on</code> relationships become edges.</p>
                 <p class="font-medium text-foreground">Compose Studio</p>
                 <p>AI-powered compose builder with Monaco editor. Actions: Generate (from prompt), Add Batch Project, Add Service, Add Healthchecks, Evaluate (review for issues).</p>
                 <p class="font-medium text-foreground">Execution</p>
                 <p>Clicking "Run" starts <code class="text-xs bg-muted px-1 rounded">docker compose up</code> in foreground. Each node shows live status (pending, running, healthy, exited, error). Logs stream in real-time.</p>
                 <p class="font-medium text-foreground">Infrastructure services</p>
                 <p>Supporting containers (databases, brokers, caches) are displayed in a separate panel to keep the dependency graph focused on batch jobs.</p>
+                <p class="font-medium text-foreground">Log isolation</p>
+                <p>Each workflow run gets a unique ID. Switching between workflows never leaks logs from another run. Streams are cancelled and reconnected cleanly.</p>
+                <p class="font-medium text-foreground">Container watchdog</p>
+                <p>A background process polls every 10 seconds for orphaned containers (labeled <code class="text-xs bg-muted px-1 rounded">MK_CREATED_BY</code>). When no workflow is running, orphans are automatically killed to prevent resource leaks.</p>
               </div>
             </div>
           </div>
@@ -633,7 +639,7 @@ watch(searchQuery, (q) => {
             <div class="overflow-hidden">
               <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
                 <p>The Projects page shows all Lambda projects from the active profile. Each card displays the project name, detected handler class, build tool (Maven/Gradle), and language version.</p>
-                <p>Cards have three states: <strong>Deployed</strong> (green), <strong>Built — not deployed</strong> (blue), or <strong>Not found</strong> (dashed border). Missing projects can be cloned individually.</p>
+                <p>Cards have three states: <strong>Deployed</strong> (green), <strong>Built - not deployed</strong> (blue), or <strong>Not found</strong> (dashed border). Missing projects can be cloned individually.</p>
                 <p>Click <strong>Rebuild</strong> to navigate to the Builder page with the project pre-loaded and build auto-started.</p>
               </div>
             </div>
@@ -663,11 +669,11 @@ watch(searchQuery, (q) => {
               <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
                 <p>All log viewers (Builder, Deployments, Execution, History, Launchpad) share consistent behavior:</p>
                 <ul class="list-disc list-inside space-y-1.5 ml-1">
-                  <li><strong>Auto-scroll</strong> — New lines scroll into view. Scrolling up disables follow; click arrow to re-enable.</li>
-                  <li><strong>Search</strong> — Expanded view dims non-matching lines to 20% opacity, keeping context visible.</li>
-                  <li><strong>Copy</strong> — Copies all content to clipboard with toast confirmation.</li>
-                  <li><strong>Root cause panel</strong> — Extracts <code class="text-xs bg-muted px-1 rounded">Caused by</code> and exception lines at the top.</li>
-                  <li><strong>Kiro explain</strong> — Sends error context to Kiro for plain-English explanation.</li>
+                  <li><strong>Auto-scroll</strong> - New lines scroll into view. Scrolling up disables follow; click arrow to re-enable.</li>
+                  <li><strong>Search</strong> - Expanded view dims non-matching lines to 20% opacity, keeping context visible.</li>
+                  <li><strong>Copy</strong> - Copies all content to clipboard with toast confirmation.</li>
+                  <li><strong>Root cause panel</strong> - Extracts <code class="text-xs bg-muted px-1 rounded">Caused by</code> and exception lines at the top.</li>
+                  <li><strong>Kiro explain</strong> - Sends error context to Kiro for plain-English explanation.</li>
                 </ul>
                 <p class="font-medium text-foreground">Color coding</p>
                 <div class="flex gap-4 text-xs">
@@ -691,9 +697,9 @@ watch(searchQuery, (q) => {
               <div class="px-4 pt-3 pb-4 pl-5 text-sm text-muted-foreground space-y-3 border-l-2 border-l-zinc-500/30 ml-4">
                 <p>Creates secrets in HashiCorp Vault before invocation. Configure Vault URL, root token, and secret paths with key-value entries.</p>
                 <ul class="list-disc list-inside space-y-1.5 ml-1">
-                  <li><strong>Existence guard</strong> — Existing secrets are skipped (not overwritten).</li>
-                  <li><strong>Auto-cleanup</strong> — Mouseketool-created secrets are deleted after invocation.</li>
-                  <li><strong>KV engine</strong> — Auto-detects KV v1 or v2.</li>
+                  <li><strong>Existence guard</strong> - Existing secrets are skipped (not overwritten).</li>
+                  <li><strong>Auto-cleanup</strong> - Mouseketool-created secrets are deleted after invocation.</li>
+                  <li><strong>KV engine</strong> - Auto-detects KV v1 or v2.</li>
                 </ul>
                 <p class="font-medium text-foreground">Docker networking</p>
                 <p>Lambda containers can't reach <code class="text-xs bg-muted px-1 rounded">localhost</code>. Use <code class="text-xs bg-muted px-1 rounded">host.docker.internal</code> for host services, or container hostnames for same-network services.</p>
@@ -749,7 +755,7 @@ watch(searchQuery, (q) => {
                 <p class="font-medium text-foreground">Pipeline Item Generation</p>
                 <p>Generate items matching the pipeline's expected input. Options: Successful, Filtered (fails SNS filter), and Failure. Uses learned data, key schema, filter policy, and favorites as context.</p>
                 <p class="font-medium text-foreground">Learning & Evaluation</p>
-                <p>Learns from successful executions (up to 50 items per pipeline). Use <strong>Evaluate</strong> to rate quality — good samples become favorites, bad samples include feedback for improvement.</p>
+                <p>Learns from successful executions (up to 50 items per pipeline). Use <strong>Evaluate</strong> to rate quality - good samples become favorites, bad samples include feedback for improvement.</p>
               </div>
             </div>
           </div>
@@ -769,15 +775,15 @@ watch(searchQuery, (q) => {
                 <p>A health monitor polls every 5 seconds. On recovery, a blocking overlay ("Restoring AWS Resources") appears while full reconciliation runs.</p>
                 <p class="font-medium text-foreground">What gets recreated</p>
                 <ul class="list-disc list-inside space-y-1.5 ml-1">
-                  <li><strong>DynamoDB tables</strong> — From saved schemas (or generic pk/sk if none saved).</li>
-                  <li><strong>SNS topics & SQS queues</strong> — Same names, DLQ and redrive policies re-established.</li>
-                  <li><strong>Stream handler</strong> — Redeployed from template with same env vars.</li>
-                  <li><strong>Target Lambda</strong> — Redeployed from cached build. Warning icon if build was deleted.</li>
-                  <li><strong>Event source mappings</strong> — DynamoDB→handler and SQS→Lambda with same batch settings.</li>
-                  <li><strong>SNS subscriptions</strong> — Same filter policy and scope.</li>
+                  <li><strong>DynamoDB tables</strong> - From saved schemas (or generic pk/sk if none saved).</li>
+                  <li><strong>SNS topics & SQS queues</strong> - Same names, DLQ and redrive policies re-established.</li>
+                  <li><strong>Stream handler</strong> - Redeployed from template with same env vars.</li>
+                  <li><strong>Target Lambda</strong> - Redeployed from cached build. Warning icon if build was deleted.</li>
+                  <li><strong>Event source mappings</strong> - DynamoDB→handler and SQS→Lambda with same batch settings.</li>
+                  <li><strong>SNS subscriptions</strong> - Same filter policy and scope.</li>
                 </ul>
                 <p class="font-medium text-foreground">Vault secrets</p>
-                <p>Secret values are never stored. After reconciliation, an amber "Secrets need recreation" badge appears — recreate manually via the Vault add-on.</p>
+                <p>Secret values are never stored. After reconciliation, an amber "Secrets need recreation" badge appears - recreate manually via the Vault add-on.</p>
               </div>
             </div>
           </div>
@@ -828,7 +834,7 @@ watch(searchQuery, (q) => {
           </div>
           <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
             <p class="font-medium text-foreground text-xs mb-1">ExceptionInInitializerError</p>
-            <p class="text-xs">Class crashed during static initialization — a dependency is unreachable from inside the Lambda container. Use <code class="text-[10px] bg-muted px-1 rounded">host.docker.internal</code> instead of <code class="text-[10px] bg-muted px-1 rounded">localhost</code>. The Local Class Diagnostic shows the full stack trace.</p>
+            <p class="text-xs">Class crashed during static initialization - a dependency is unreachable from inside the Lambda container. Use <code class="text-[10px] bg-muted px-1 rounded">host.docker.internal</code> instead of <code class="text-[10px] bg-muted px-1 rounded">localhost</code>. The Local Class Diagnostic shows the full stack trace.</p>
           </div>
           <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
             <p class="font-medium text-foreground text-xs mb-1">Vault URL mismatch</p>
@@ -836,7 +842,7 @@ watch(searchQuery, (q) => {
           </div>
           <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
             <p class="font-medium text-foreground text-xs mb-1">Pipeline step times out</p>
-            <p class="text-xs">LocalStack's ESM pollers can be slow on the free tier. Try again, restart LocalStack, or check History — the invocation may have happened after the timeout.</p>
+            <p class="text-xs">LocalStack's ESM pollers can be slow on the free tier. Try again, restart LocalStack, or check History - the invocation may have happened after the timeout.</p>
           </div>
           <div class="p-3 rounded-lg border border-red-500/10 hover:border-red-500/20 transition-colors">
             <p class="font-medium text-foreground text-xs mb-1">Stale logs from previous invocations</p>
