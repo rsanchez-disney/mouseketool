@@ -710,16 +710,14 @@ async function unloadProfile() {
     </div>
 
     <!-- About Tab -->
-    <div v-show="tab === 'about'" class="space-y-6">
-      <div class="flex items-center gap-4">
+    <div v-show="tab === 'about'" class="space-y-6 flex flex-col items-center text-center py-8">
+      <div class="flex flex-col items-center gap-3">
         <div class="flex aspect-square size-16 items-center justify-center rounded-xl bg-primary text-primary-foreground">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="size-8 fill-current"><circle cx="50" cy="60" r="35"/><circle cx="22" cy="28" r="20"/><circle cx="78" cy="28" r="20"/></svg>
         </div>
-        <div>
-          <h2 class="text-xl font-bold">Mouseketool</h2>
-          <p class="text-sm text-muted-foreground">Developer Workbench</p>
-          <p class="text-sm font-mono mt-1">v{{ appVersion }}</p>
-        </div>
+        <h2 class="text-xl font-bold">Mouseketool</h2>
+        <p class="text-sm text-muted-foreground">Developer Workbench</p>
+        <p class="text-sm font-mono">v{{ appVersion }}</p>
       </div>
       <div v-if="updateInfo.updateAvailable.value" class="flex items-center gap-3 p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5">
         <ArrowUpCircle class="size-5 text-emerald-500 shrink-0" />
@@ -731,7 +729,7 @@ async function unloadProfile() {
       </div>
       <div v-else class="flex items-center gap-2 text-sm text-muted-foreground"><Check class="size-4 text-emerald-500" /> You're on the latest version.</div>
       <div class="space-y-2 text-sm text-muted-foreground">
-        <p>Build, deploy, and test Java Lambda functions on LocalStack from a single UI.</p>
+        <p>Build, deploy, and invoke Lambdas. Create event pipelines. Orchestrate batch workflows. AI-assisted — all from one UI.</p>
         <p class="text-xs">Internal tool - not for public distribution.</p>
       </div>
     </div>

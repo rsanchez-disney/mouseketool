@@ -2,6 +2,8 @@
 import express from "express";
 import cors from "cors";
 import path from "path";
+import { fileURLToPath } from "url";
+const __pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "../package.json");
 import settingsRoutes from "./routes/settings.js";
 import filesystemRoutes from "./routes/filesystem.js";
 import analyzeRoutes from "./routes/analyze.js";
@@ -26,7 +28,7 @@ import { initPipelineWs } from "./services/pipeline-ws.js";
 import { initShadowInfra, ensureBucketExists } from "./services/shadow-infra.js";
 import { reconcilePipelines } from "./services/reconcile.js";
 import { reconcileDeployments } from "./routes/deployments.js";
-import { readdirSync, existsSync } from "fs";
+import { readdirSync, existsSync, readFileSync } from "fs";
 
 
 
@@ -47,12 +49,12 @@ app.get("/api/health", async (_req, res) => {
   } catch { res.json({ status: "ok", localstack: false, reconciling }); }
 });
 app.get("/api/version", (_req, res) => {
-  const pkg = require("../package.json");
+  const pkg = JSON.parse(readFileSync(__pkgPath, "utf-8"));
   res.json({ version: pkg.version });
 });
 app.get("/api/update-check", async (_req, res) => {
   try {
-    const pkg = require("../package.json");
+    const pkg = JSON.parse(readFileSync(__pkgPath, "utf-8"));
     const repo = pkg.repository?.url?.replace(/\.git$/, "")?.replace("https://github.com/", "") || pkg.repository || "";
     if (!repo) return res.json({ available: false });
     const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { signal: AbortSignal.timeout(5000), headers: { Accept: "application/vnd.github.v3+json" } });

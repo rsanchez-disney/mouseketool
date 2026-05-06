@@ -1,6 +1,6 @@
 {
   "name": "mouseketool-backend",
-  "version": "0.13.0",
+  "version": "1.0.0",
   "description": "Mouseketool backend server",
   "repository": "manjm010/mouseketool",
   "type": "module",
