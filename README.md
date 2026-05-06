@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>The developer workbench that makes LocalStack feel like home.</strong><br/>
+  <strong>The local AWS companion every Disney backend developer deserves.</strong><br/>
   Build, deploy, and invoke Lambdas. Create event pipelines. Orchestrate batch workflows. AI-assisted — all from one UI.
 </p>
 
