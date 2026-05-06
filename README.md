@@ -31,7 +31,7 @@ That's 4-5 different tools, a dozen terminal tabs, and a lot of context switchin
 
 ### Desktop App (Recommended)
 
-Download the latest installer from [GitHub Releases](https://github.com/manjm010/mouseketool/releases):
+Download the latest installer from [GitHub Releases](https://github.disney.com/manjm010/mouseketool/releases):
 
 | Platform | File | Notes |
 |---|---|---|
@@ -43,7 +43,7 @@ The app bundles everything — just install and run. No Node.js setup required.
 ### From Source
 
 ```bash
-git clone https://github.com/manjm010/mouseketool.git
+git clone https://github.disney.com/manjm010/mouseketool.git
 cd mouseketool
 
 # Backend

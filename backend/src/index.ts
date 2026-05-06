@@ -57,7 +57,7 @@ app.get("/api/update-check", async (_req, res) => {
     const pkg = JSON.parse(readFileSync(__pkgPath, "utf-8"));
     const repo = pkg.repository?.url?.replace(/\.git$/, "")?.replace("https://github.com/", "") || pkg.repository || "";
     if (!repo) return res.json({ available: false });
-    const r = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { signal: AbortSignal.timeout(5000), headers: { Accept: "application/vnd.github.v3+json" } });
+    const r = await fetch(`https://github.disney.com/api/v3/repos/${repo}/releases/latest`, { signal: AbortSignal.timeout(5000), headers: { Accept: "application/vnd.github.v3+json" } });
     if (!r.ok) return res.json({ available: false });
     const data = await r.json() as any;
     const latest = data.tag_name?.replace(/^v/, "") || "";
