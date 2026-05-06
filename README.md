@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>The developer workbench that makes LocalStack feel like production.</strong><br/>
-  Build, deploy, wire, invoke, and observe Java Lambda microservices — all from one UI.
+  <strong>The developer workbench that makes LocalStack feel like home.</strong><br/>
+  Build, deploy, and invoke Lambdas. Create event pipelines. Orchestrate batch workflows. AI-assisted — all from one UI.
 </p>
 
 <p align="center">
