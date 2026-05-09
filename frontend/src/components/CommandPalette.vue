@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { useRouter } from "vue-router";
-import { Hammer, Rocket, Database, Settings, Container, Play, HelpCircle, Home, Search, Zap, Plus, Moon, Sun, Workflow } from "lucide-vue-next";
+import { Hammer, Rocket, Database, Settings, Container, Play, HelpCircle, Home, Search, Zap, Plus, Moon, Sun, Workflow, UserCircle } from "lucide-vue-next";
 
 const router = useRouter();
 const open = ref(false);
@@ -24,11 +24,11 @@ const staticCommands: Cmd[] = [
   { label: "Home", path: "/", icon: Home, keywords: "dashboard stats" },
   { label: "Builder", path: "/builder", icon: Hammer, keywords: "build maven gradle java" },
   { label: "Deployments", path: "/deployments", icon: Rocket, keywords: "deploy invoke lambda" },
-  { label: "Triggers", path: "/triggers", icon: Database, keywords: "pipeline create trigger" },
+  { label: "Triggers", path: "/triggers", icon: Workflow, keywords: "pipeline create trigger" },
   { label: "Batch Projects", path: "/batch-projects", icon: Container, keywords: "docker compose register" },
   { label: "Launchpad", path: "/launchpad", icon: Play, keywords: "run workflow execute" },
   { label: "Settings", path: "/settings", icon: Settings, keywords: "config connection localstack" },
-  { label: "Profiles", path: "/settings?tab=profile", icon: Settings, keywords: "profile load unload workspace team" },
+  { label: "Profiles", path: "/settings?tab=profile", icon: UserCircle, keywords: "profile load unload workspace team" },
   { label: "Help & Guides", path: "/help", icon: HelpCircle, keywords: "help docs guide" },
   { label: "New Pipeline", path: "/triggers", icon: Plus, keywords: "create new pipeline", section: "Actions", action: () => router.push("/triggers") },
   { label: "New Workflow", path: "/launchpad", icon: Plus, keywords: "create new workflow", section: "Actions" },

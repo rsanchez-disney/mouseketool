@@ -134,6 +134,7 @@ async function savePreset(presetId: string) {
 
 // Run
 const simpleRunning = ref(false);
+let simpleAbort: AbortController | null = null;
 const currentRunId = ref("");
 const rebuildImage = ref(true);
 const portRemapEnabled = ref(true);
@@ -200,12 +201,13 @@ async function explainBatchError() {
 
 async function runSimple() {
   if (!project.value) return;
+  simpleAbort = new AbortController();
   simpleRunning.value = true; simpleLogs.value = []; simpleResult.value = null; simpleError.value = ""; portRemaps.value = []; buildPhaseComplete.value = false; currentRunId.value = ""; activeLogTab.value = rebuildImage.value ? "build" : "run";
   await nextTick();
   logSection.value?.scrollIntoView({ behavior: "smooth" });
   try {
     const res = await fetch("/api/batch-runs/simple", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: simpleAbort.signal,
       body: JSON.stringify({ projectId: project.value.id, projectPath: project.value.projectPath, composefile: selectedCompose.value, rebuild: rebuildImage.value, portRemap: portRemapEnabled.value, envOverrides: activePreset.value ? presetSections.value[activePreset.value.id]?.flatMap(s => s.vars).filter(e => e.key) || [] : [] }),
     });
     const reader = res.body!.getReader();
@@ -240,6 +242,7 @@ async function teardown() {
   tearing.value = false;
 }
 async function stopSimple() {
+  if (simpleAbort) simpleAbort.abort();
   await fetch("/api/batch-runs/simple/stop", { method: "POST" });
   simpleRunning.value = false; teardown();
 }

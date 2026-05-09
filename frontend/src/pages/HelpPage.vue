@@ -25,7 +25,7 @@ interface Section { id: string; tab: string; title: string; icon: string; html: 
 
 // Parse frontmatter and render markdown
 function parseMd(content: string): { id: string; tab: string; title: string; icon: string; body: string; group?: string; order: number } {
-  const fm = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (!fm) return { id: "", tab: "", title: "", icon: "", body: content, order: 99 };
   const attrs: Record<string, string> = {};
   fm[1].split("\n").forEach(line => { const [k, ...v] = line.split(":"); if (k.trim()) attrs[k.trim()] = v.join(":").trim(); });
