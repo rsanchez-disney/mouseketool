@@ -447,15 +447,23 @@ router.post("/simple", async (req, res) => {
           ? `wsl docker build -t ${imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
           : `docker build -t ${imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
         send("log", { line: `$ docker build -t ${imageTag} ...` });
-        try {
-          execSync(buildCmd, { timeout: 300000, encoding: "utf-8" });
-          send("log", { line: `[OK] Image built: ${imageTag}` });
-        } catch (e: any) {
-          send("log", { line: `[FAIL] Image build failed: ${e.message?.substring(0, 200)}` });
+        const imgBuildSuccess = await new Promise<boolean>((resolve) => {
+          const shell = process.platform === "win32" ? "cmd" : "bash";
+          const shellArgs = process.platform === "win32" ? ["/c", buildCmd] : ["-c", buildCmd];
+          const imgProc = spawn(shell, shellArgs, { cwd: projectPath });
+          activeBuildProc = imgProc;
+          imgProc.stdout?.on("data", (chunk: Buffer) => { for (const line of stripAnsi(chunk.toString()).split("\n")) { if (line.trim()) send("log", { line: line.trimEnd() }); } });
+          imgProc.stderr?.on("data", (chunk: Buffer) => { for (const line of stripAnsi(chunk.toString()).split("\n")) { if (line.trim()) send("log", { line: line.trimEnd() }); } });
+          imgProc.on("close", (code) => { activeBuildProc = null; resolve(code === 0); });
+          imgProc.on("error", () => { activeBuildProc = null; resolve(false); });
+        });
+        if (!imgBuildSuccess) {
+          send("log", { line: `[FAIL] Image build failed` });
           send("error", { message: "Image build failed" });
           finish("image-build-failed");
           return;
         }
+        send("log", { line: `[OK] Image built: ${imageTag}` });
       } else {
         // Check if image exists, build if not
         const checkCmd = process.platform === "win32" ? `wsl docker image inspect ${imageTag} > /dev/null 2>&1` : `docker image inspect ${imageTag} > /dev/null 2>&1`;
@@ -467,8 +475,18 @@ router.post("/simple", async (req, res) => {
           const buildCmd = process.platform === "win32"
             ? `wsl docker build -t ${imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
             : `docker build -t ${imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
-          try { execSync(buildCmd, { timeout: 300000, encoding: "utf-8" }); send("log", { line: `[OK] Image built: ${imageTag}` }); }
-          catch (e: any) { send("log", { line: `[FAIL] Image build failed: ${e.message?.substring(0, 200)}` }); send("error", { message: "Image build failed" }); finish("image-build-failed"); return; }
+          const fbBuildOk = await new Promise<boolean>((resolve) => {
+            const shell = process.platform === "win32" ? "cmd" : "bash";
+            const shellArgs = process.platform === "win32" ? ["/c", buildCmd] : ["-c", buildCmd];
+            const imgProc = spawn(shell, shellArgs, { cwd: projectPath });
+            activeBuildProc = imgProc;
+            imgProc.stdout?.on("data", (chunk: Buffer) => { for (const line of stripAnsi(chunk.toString()).split("\n")) { if (line.trim()) send("log", { line: line.trimEnd() }); } });
+            imgProc.stderr?.on("data", (chunk: Buffer) => { for (const line of stripAnsi(chunk.toString()).split("\n")) { if (line.trim()) send("log", { line: line.trimEnd() }); } });
+            imgProc.on("close", (code) => { activeBuildProc = null; resolve(code === 0); });
+            imgProc.on("error", () => { activeBuildProc = null; resolve(false); });
+          });
+          if (!fbBuildOk) { send("log", { line: `[FAIL] Image build failed` }); send("error", { message: "Image build failed" }); finish("image-build-failed"); return; }
+          send("log", { line: `[OK] Image built: ${imageTag}` });
         }
       }
     }
@@ -659,7 +677,12 @@ router.post("/simple/stop", async (_req, res) => {
         : `docker compose -f "${lastRunContext.composeFile}" kill 2>/dev/null; true`;
       execSync(killCmd, { stdio: "ignore", timeout: 10000 });
     } catch {}
-    await dockerDown(lastRunContext.projectPath, lastRunContext.composeFile);
+    try {
+      const downCmd = process.platform === "win32"
+        ? `wsl bash -c "docker compose -f '${lastRunContext.composeFile.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}' down --volumes --remove-orphans 2>/dev/null; true"`
+        : `docker compose -f "${lastRunContext.composeFile}" down --volumes --remove-orphans 2>/dev/null; true`;
+      execSync(downCmd, { stdio: "ignore", timeout: 15000 });
+    } catch {}
     await forceRemoveContainers(lastRunContext.composeFile);
   }
   if (stoppedId) { const activeId = getActiveRunId("simple:" + stoppedId); if (activeId) finishRun(activeId); }
@@ -851,7 +874,7 @@ router.post("/workflow", async (req, res) => {
                 p.on("close", (code) => resolve(code === 0));
                 p.on("error", () => resolve(false));
               });
-              if (!ok) { send("log", { line: "[FAIL] JAR build failed, skipping image rebuild" }); continue; }
+              if (!ok) { send("log", { line: "[FAIL] JAR build failed, skipping image rebuild" }); if (workflowAborted) break; continue; }
               send("log", { line: "[OK] JAR built" });
             }
             const rmCmd = process.platform === "win32" ? `wsl bash -c "docker rm -f \$(docker ps -aq --filter ancestor=${proj.imageTag}) 2>/dev/null; docker rmi -f ${proj.imageTag} 2>/dev/null; true"` : `bash -c 'docker rm -f $(docker ps -aq --filter ancestor=${proj.imageTag}) 2>/dev/null; docker rmi -f ${proj.imageTag} 2>/dev/null; true'`;
@@ -862,8 +885,18 @@ router.post("/workflow", async (req, res) => {
               ? `wsl docker build -t ${proj.imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
               : `docker build -t ${proj.imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
             send("log", { line: `$ docker build -t ${proj.imageTag} ...` });
-            try { execSync(buildCmd, { timeout: 300000, encoding: "utf-8" }); send("log", { line: `[OK] Image built: ${proj.imageTag}` }); }
-            catch (e: any) { send("log", { line: `[FAIL] Image build failed for ${proj.name}: ${e.message?.substring(0, 200)}` }); }
+            const wfBuildOk = await new Promise<boolean>((resolve) => {
+              const shell = process.platform === "win32" ? "cmd" : "bash";
+              const shellArgs = process.platform === "win32" ? ["/c", buildCmd] : ["-c", buildCmd];
+              const imgProc = spawn(shell, shellArgs, { cwd: proj.projectPath });
+              activeBuildProc = imgProc;
+              imgProc.stdout?.on("data", (chunk: Buffer) => { for (const l of stripAnsi(chunk.toString()).split("\n")) { if (l.trim()) send("log", { line: l.trimEnd() }); } });
+              imgProc.stderr?.on("data", (chunk: Buffer) => { for (const l of stripAnsi(chunk.toString()).split("\n")) { if (l.trim()) send("log", { line: l.trimEnd() }); } });
+              imgProc.on("close", (code) => { activeBuildProc = null; resolve(code === 0); });
+              imgProc.on("error", () => { activeBuildProc = null; resolve(false); });
+            });
+            if (!wfBuildOk) { send("log", { line: `[FAIL] Image build failed for ${proj.name}` }); }
+            else { send("log", { line: `[OK] Image built: ${proj.imageTag}` }); }
           } else {
             const checkCmd = process.platform === "win32" ? `wsl docker image inspect ${proj.imageTag} > /dev/null 2>&1` : `docker image inspect ${proj.imageTag} > /dev/null 2>&1`;
             try { execSync(checkCmd, { timeout: 5000 }); }
@@ -874,14 +907,25 @@ router.post("/workflow", async (req, res) => {
               const buildCmd = process.platform === "win32"
                 ? `wsl docker build -t ${proj.imageTag} -f "${dfPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" "${ctxPath.replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`)}" 2>&1`
                 : `docker build -t ${proj.imageTag} -f "${dfPath}" "${ctxPath}" 2>&1`;
-              try { execSync(buildCmd, { timeout: 300000, encoding: "utf-8" }); send("log", { line: `[OK] Image built: ${proj.imageTag}` }); }
-              catch (e: any) { send("log", { line: `[FAIL] Image build failed for ${proj.name}: ${e.message?.substring(0, 200)}` }); }
+              const fbOk = await new Promise<boolean>((resolve) => {
+                const shell = process.platform === "win32" ? "cmd" : "bash";
+                const shellArgs = process.platform === "win32" ? ["/c", buildCmd] : ["-c", buildCmd];
+                const imgProc = spawn(shell, shellArgs, { cwd: proj.projectPath });
+                activeBuildProc = imgProc;
+                imgProc.stdout?.on("data", (chunk: Buffer) => { for (const l of stripAnsi(chunk.toString()).split("\n")) { if (l.trim()) send("log", { line: l.trimEnd() }); } });
+                imgProc.stderr?.on("data", (chunk: Buffer) => { for (const l of stripAnsi(chunk.toString()).split("\n")) { if (l.trim()) send("log", { line: l.trimEnd() }); } });
+                imgProc.on("close", (code) => { activeBuildProc = null; resolve(code === 0); });
+                imgProc.on("error", () => { activeBuildProc = null; resolve(false); });
+              });
+              if (!fbOk) { send("log", { line: `[FAIL] Image build failed for ${proj.name}` }); }
+              else { send("log", { line: `[OK] Image built: ${proj.imageTag}` }); }
             }
           }
         }
       } catch {}
     }
 
+    if (workflowAborted) { finish("aborted"); return; }
     send("build-complete", {});
     send("log", { line: `$ docker compose up --build ...` });
     const wslCompose = process.platform === "win32" ? effectiveCompose.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_: string, d: string) => `/mnt/${d.toLowerCase()}`) : effectiveCompose;

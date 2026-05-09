@@ -30,3 +30,7 @@ Each workflow run gets a unique ID. Switching between workflows never leaks logs
 ## Container watchdog
 
 A background process polls every 10 seconds for orphaned containers (labeled `MK_CREATED_BY`). When no workflow is running, orphans are automatically killed to prevent resource leaks.
+
+## Stopping a run
+
+Click Stop at any point during a workflow or simple run - Maven build, Docker image build, or compose execution. The stop is immediate: active processes are killed, containers are torn down, and the UI resets cleanly.

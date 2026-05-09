@@ -12,10 +12,6 @@
     {
       "repoName": "wdpr-app-payment-stream-handler",
       "displayName": "Payment Stream Handler"
-    },
-    {
-      "repoName": "wdpr-app-dlp-payment-stream-handler",
-      "displayName": "DLP Payment Stream Handler"
     }
   ],
   "batches": [

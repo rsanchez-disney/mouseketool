@@ -109,7 +109,7 @@ watch(() => route.fullPath, () => { pageError.value = ""; });
     </div>
     <SidebarProvider>
       <Sidebar collapsible="icon" class="border-r">
-        <SidebarHeader>
+        <SidebarHeader class="h-14 justify-center">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton size="lg" as-child>
