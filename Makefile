@@ -13,13 +13,18 @@ build: ## Build frontend + backend + electron
 	cd desktop && npm ci
 	cd desktop/electron && npm install && npx tsc
 
-package-mac: build ## Package macOS app (dir target for portable install)
-	cd desktop && npx electron-builder --mac --dir --config electron-builder.yml
-	@echo "✅ macOS app built at $(RELEASE_DIR)/mac-arm64/"
+package-mac: build ## Package macOS app (arm64 + x64)
+	cd desktop && npx electron-builder --mac --dir --arm64 --x64 --config electron-builder.yml
+	@echo "✅ macOS apps built at $(RELEASE_DIR)/mac-arm64/ and $(RELEASE_DIR)/mac-x64/"
 
-package-win: build ## Package Windows app (portable exe)
-	cd desktop && npx electron-builder --win --dir --config electron-builder.yml
+package-win: build ## Package Windows app (x64, cross-built from macOS)
+	cd desktop && npx electron-builder --win --dir --x64 --config electron-builder.yml
 	@echo "✅ Windows app built at $(RELEASE_DIR)/win-unpacked/"
+
+package-all: build ## Package all platforms (macOS arm64+x64, Windows x64)
+	cd desktop && npx electron-builder --mac --dir --arm64 --x64 --config electron-builder.yml
+	cd desktop && npx electron-builder --win --dir --x64 --config electron-builder.yml
+	@echo "✅ All platforms built"
 
 encrypt: ## Encrypt release artifacts into .tar.gz.enc
 	@test -n "$(RELEASE_KEY)" || { echo "Usage: make encrypt RELEASE_KEY=..."; exit 1; }
@@ -58,7 +63,7 @@ encrypt: ## Encrypt release artifacts into .tar.gz.enc
 		echo "  ✅ $(APP)-windows-amd64.tar.gz.enc"; \
 	fi
 
-release: package-mac encrypt ## Build + encrypt macOS (local)
+release: package-all encrypt ## Build all platforms + encrypt
 	@echo "✅ Release artifacts ready in $(BIN_DIR)/"
 
 publish: ## Tag + publish encrypted artifacts to public repo (make publish TAG=v1.0.1)
