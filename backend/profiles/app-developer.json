@@ -6,20 +6,11 @@
   "org": "DisneyPaymentsOrg",
   "lambdas": [
     {
-      "repoName": "wdpr-app-retry-handler",
-      "displayName": "Payment Retry Handler"
-    },
-    {
       "repoName": "wdpr-app-payment-stream-handler",
       "displayName": "Payment Stream Handler"
     }
   ],
   "batches": [
-    {
-      "repoName": "wdpr-app-credit-settlement-batch",
-      "displayName": "Credit Settlement Batch",
-      "composeFile": "docker-compose-local.yml"
-    },
     {
       "repoName": "wdpr-app-apmp-contract-submission-batch",
       "displayName": "Contract Submission Batch",
