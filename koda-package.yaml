@@ -1,0 +1,16 @@
+name: mouseketool
+description: "Local AWS companion for Disney backend developers"
+type: app
+repository: rsanchez-disney/mouseketool
+platforms:
+  - { os: darwin, arch: arm64, artifact: mouseketool-darwin-arm64.tar.gz.enc }
+  - { os: darwin, arch: amd64, artifact: mouseketool-darwin-amd64.tar.gz.enc }
+  - { os: windows, arch: amd64, artifact: mouseketool-windows-amd64.tar.gz.enc }
+install:
+  type: bundle
+  dir: mouseketool
+  launch:
+    darwin: open Mouseketool.app
+    windows: Mouseketool.exe
+requires:
+  node: ">= 18"

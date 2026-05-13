@@ -29,7 +29,14 @@ That's 4-5 different tools, a dozen terminal tabs, and a lot of context switchin
 
 ## 🚀 Getting Started
 
-### Desktop App (Recommended)
+### Install via Koda (Recommended)
+
+```bash
+koda mouseketool install
+koda mouseketool          # launch
+```
+
+### Desktop App
 
 Download the latest installer from [GitHub Releases](https://github.disney.com/manjm010/mouseketool/releases):
 
@@ -57,6 +64,7 @@ Open `http://localhost:5173`, configure your LocalStack connection in Settings, 
 
 ### Prerequisites
 
+- **Node.js >= 18** — required for the backend runtime
 - **Docker** — for LocalStack and supporting containers
 - **LocalStack 3.x** — Community Edition works perfectly
 - **JDK 21** — for building Java Lambda projects
